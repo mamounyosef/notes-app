@@ -1,0 +1,38 @@
+# ---------------------------------------------------------------
+# Notes never belong in this repository.
+# They live in the notes folder chosen in Settings, Storage
+# (Documents\MyNotes by default), which sits outside this project.
+# The rules below are a safety net in case a notes folder is ever
+# created inside the project folder.
+# ---------------------------------------------------------------
+/MyNotes/
+/notes/
+/vault/
+/*/workspace.json
+/*/settings.json
+/*/pages/
+/*/assets/
+/*/.trash/
+
+# OneNote export and migration output (these hold note content)
+/.onenote-export/
+/import-report*.json
+*.one
+*.onetoc2
+
+# Build output
+node_modules/
+/dist/
+/dist-electron/
+/release/
+/build/icon.ico
+
+# Tooling noise
+.vscode/
+.idea/
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+*.tmp
+*.tmp-*
