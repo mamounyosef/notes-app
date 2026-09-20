@@ -76,6 +76,16 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
     </div>
   )
 
+  const Text = ({ k, label, sub }: { k: keyof Settings; label: string; sub?: string }) => (
+    <div className="set-row">
+      <label>
+        {label}
+        {sub && <span className="sub">{sub}</span>}
+      </label>
+      <input type="text" className="input" value={String(settings[k] || '')} onChange={(e) => set({ [k]: e.target.value } as any)} style={{ width: 120 }} />
+    </div>
+  )
+
   const Choice = ({ k, label, sub, options }: { k: keyof Settings; label: string; sub?: string; options: { v: string; l: string }[] }) => (
     <div className="set-row">
       <label>
@@ -207,6 +217,7 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
               <Toggle k="spellcheck" label="Check spelling" />
               <Toggle k="confirmDelete" label="Ask before deleting a notebook, section or page" />
               <Num k="autosaveMs" label="Autosave delay" min={200} max={4000} step={100} unit=" ms" />
+              <Text k="thickLineShortcut" label="Thick line shortcut" sub="Requires a reload to apply" />
             </div>
           )}
 

@@ -62,3 +62,5 @@ export const Layers = (p: P) => (<svg {...s(p)}><path d="M12 3l9 5-9 5-9-5z" /><
 export const Download = (p: P) => (<svg {...s(p)}><path d="M12 3v12M7 11l5 5 5-5M4 21h16" /></svg>)
 export const Sun = (p: P) => (<svg {...s(p)}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>)
 export const Moon = (p: P) => (<svg {...s(p)}><path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z" /></svg>)
+
+export const Archive = (p: P) => (<svg {...s(p)}><polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" /></svg>)

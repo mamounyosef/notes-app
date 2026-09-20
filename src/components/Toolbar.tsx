@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { useActiveEditor } from '../editor/activeEditor'
 import { useStore } from '../store'
 import { Menu, type MenuItem } from './Menu'
@@ -19,6 +19,133 @@ const PALETTE = [
   '#56b6c2', '#61afef', '#7c9cff', '#c678dd',
   '#f06292', '#8d6e63', '#26a69a', '#ffd75e',
 ]
+
+function FontSizeControl({ editor, can }: { editor: any; can: boolean }) {
+  const settings = useStore((s) => s.settings)
+  const currentSizeAttr = editor?.getAttributes('textStyle').fontSize
+  const currentSize = currentSizeAttr ? parseInt(currentSizeAttr, 10) : settings.bodySize
+
+  const [val, setVal] = useState<string | number>(currentSize)
+
+  useEffect(() => {
+    setVal(currentSize)
+  }, [currentSize])
+
+  const applySize = (newSize: number) => {
+    if (!editor) return
+    if (newSize > 0) {
+      if (editor.state.selection.empty) {
+        const { $from } = editor.state.selection
+        if ($from.parent.isTextblock) {
+          const text = $from.parent.textContent
+          const offset = $from.parentOffset
+          const isWordChar = (c: string) => /[\p{L}\p{N}_]/u.test(c)
+          let start = offset
+          while (start > 0 && isWordChar(text[start - 1])) start--
+          let end = offset
+          while (end < text.length && isWordChar(text[end])) end++
+          
+          if (start < end) {
+            const from = $from.pos - (offset - start)
+            const to = $from.pos + (end - offset)
+            editor.chain().focus().setTextSelection({ from, to }).setFontSize(`${newSize}px`).setTextSelection($from.pos).run()
+            return
+          }
+        }
+      }
+      editor.chain().focus().setFontSize(`${newSize}px`).run()
+    }
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      const num = parseInt(val.toString(), 10)
+      if (!isNaN(num)) applySize(num)
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault()
+      inc()
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault()
+      dec()
+    }
+  }
+
+  const handleBlur = () => {
+    const num = parseInt(val.toString(), 10)
+    if (!isNaN(num)) applySize(num)
+    else setVal(currentSize)
+  }
+  
+  const inc = () => {
+    const num = parseInt(val.toString(), 10) || currentSize
+    const n = num + 1
+    setVal(n)
+    applySize(n)
+  }
+  
+  const dec = () => {
+    const num = parseInt(val.toString(), 10) || currentSize
+    const n = num > 1 ? num - 1 : 1
+    setVal(n)
+    applySize(n)
+  }
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', margin: '0 4px' }}>
+      <input
+        type="text"
+        title="Text size"
+        disabled={!can}
+        value={val}
+        onChange={(e) => setVal(e.target.value)}
+        onKeyDown={handleKeyDown}
+        onBlur={handleBlur}
+        style={{
+          width: 32,
+          height: 24,
+          textAlign: 'center',
+          border: '1px solid var(--border)',
+          borderRadius: '4px 0 0 4px',
+          background: 'var(--surface)',
+          color: 'var(--text)',
+          fontSize: 12,
+          outline: 'none',
+          padding: 0
+        }}
+      />
+      <div style={{ display: 'flex', flexDirection: 'column', margin: '0 1px', gap: '1px' }}>
+        <button 
+          title="Increase size"
+          disabled={!can}
+          onClick={inc}
+          style={{ 
+            width: 16, height: 11, padding: 0, minWidth: 0, 
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'var(--surface-2)', border: '1px solid var(--border)', 
+            borderRadius: '0 4px 0 0', cursor: 'pointer',
+            color: 'var(--text-faint)'
+          }}
+        >
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="18 15 12 9 6 15"></polyline></svg>
+        </button>
+        <button 
+          title="Decrease size"
+          disabled={!can}
+          onClick={dec}
+          style={{ 
+            width: 16, height: 12, padding: 0, minWidth: 0, 
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            background: 'var(--surface-2)', border: '1px solid var(--border)', 
+            borderRadius: '0 0 4px 0', cursor: 'pointer',
+            color: 'var(--text-faint)'
+          }}
+        >
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"></polyline></svg>
+        </button>
+      </div>
+    </div>
+  )
+}
 
 export default function Toolbar() {
   const editor = useActiveEditor((s) => s.editor)
@@ -111,6 +238,7 @@ export default function Toolbar() {
         { separator: true },
         { label: 'Image from file', icon: <ImageI />, onClick: () => fileRef.current?.click() },
         { label: 'Horizontal line', icon: <Hr />, hint: '---', onClick: run((c) => c.setHorizontalRule().run()) },
+        { label: 'Thick horizontal line', icon: <Hr />, hint: settings.thickLineShortcut || 'Alt-S', onClick: run((c) => (c as any).setThickHorizontalRule().run()) },
         { label: 'Code block', icon: <CodeI />, hint: '```', onClick: run((c) => c.toggleCodeBlock().run()) },
         { label: 'Quote', icon: <Quote />, hint: '> ', onClick: run((c) => c.toggleBlockquote().run()) },
         { label: 'Checklist', icon: <Check />, hint: '[] ', onClick: run((c) => c.toggleTaskList().run()) },
@@ -133,8 +261,22 @@ export default function Toolbar() {
 
   return (
     <div className="toolbar">
-      <button className="tb-btn" title="Undo (Ctrl+Z)" onClick={() => (editor?.can().undo() ? editor.chain().focus().undo().run() : useStore.getState().undo())}><Undo /></button>
-      <button className="tb-btn" title="Redo (Ctrl+Y)" onClick={() => (editor?.can().redo() ? editor.chain().focus().redo().run() : useStore.getState().redo())}><Redo /></button>
+      <button className="tb-btn" title="Undo (Ctrl+Z)" onClick={() => {
+        const st = useStore.getState()
+        if (st.editingCellId && editor?.can().undo()) {
+          editor.chain().focus().undo().run()
+        } else {
+          st.undo()
+        }
+      }}><Undo /></button>
+      <button className="tb-btn" title="Redo (Ctrl+Y)" onClick={() => {
+        const st = useStore.getState()
+        if (st.editingCellId && editor?.can().redo()) {
+          editor.chain().focus().redo().run()
+        } else {
+          st.redo()
+        }
+      }}><Redo /></button>
       <div className="tb-sep" />
 
       <select
@@ -148,16 +290,7 @@ export default function Toolbar() {
         {FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
       </select>
 
-      <select
-        className="tb-select"
-        title="Text size"
-        value=""
-        onChange={(e) => e.target.value && editor?.chain().focus().setFontSize(`${e.target.value}px`).run()}
-        disabled={!can}
-      >
-        <option value="">Size</option>
-        {FONT_SIZES.map((n) => <option key={n} value={n}>{n}</option>)}
-      </select>
+      <FontSizeControl editor={editor} can={can} />
 
       <select
         className="tb-select"
@@ -216,10 +349,10 @@ export default function Toolbar() {
 
       <div className="tb-sep" />
       <button className={`tb-btn ${tool === 'select' ? 'on' : ''}`} title="Select (V)" onClick={() => setTool('select')}><Cursor /></button>
-      <button className={`tb-btn ${tool === 'pen' ? 'on' : ''}`} title="Pen (P)" onClick={() => setTool('pen')}><Pen /></button>
-      <button className={`tb-btn ${tool === 'highlighter' ? 'on' : ''}`} title="Highlighter (H)" onClick={() => setTool('highlighter')}><Highlighter /></button>
-      <button className={`tb-btn ${tool === 'eraser' ? 'on' : ''}`} title="Eraser (E)" onClick={() => setTool('eraser')}><Eraser /></button>
-      <button className={`tb-btn ${tool === 'space' ? 'on' : ''}`} title="Insert space (S): drag down to push everything below" onClick={() => setTool('space')}><SpaceI /></button>
+      <button className={`tb-btn ${tool === 'pen' ? 'on' : ''}`} title="Pen (P)" onClick={() => setTool(tool === 'pen' ? 'select' : 'pen')}><Pen /></button>
+      <button className={`tb-btn ${tool === 'highlighter' ? 'on' : ''}`} title="Highlighter (H)" onClick={() => setTool(tool === 'highlighter' ? 'select' : 'highlighter')}><Highlighter /></button>
+      <button className={`tb-btn ${tool === 'eraser' ? 'on' : ''}`} title="Eraser (E)" onClick={() => setTool(tool === 'eraser' ? 'select' : 'eraser')}><Eraser /></button>
+      <button className={`tb-btn ${tool === 'space' ? 'on' : ''}`} title="Insert space (S): drag down to push everything below" onClick={() => setTool(tool === 'space' ? 'select' : 'space')}><SpaceI /></button>
 
       {tool === 'pen' || tool === 'highlighter' ? (
         <>

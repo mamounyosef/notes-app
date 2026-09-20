@@ -7,6 +7,7 @@ export interface TreeNode {
   kind: NodeKind
   title: string
   color?: string
+  archived?: boolean
   /** Sections live inside notebooks, sections nest, pages nest under pages. */
   children: TreeNode[]
   collapsed?: boolean
@@ -112,6 +113,7 @@ export interface Settings {
   highlighterSize: number
 
   autosaveMs: number
+  thickLineShortcut: string
   spellcheck: boolean
   sidebarWidth: number
   pagelistWidth: number
@@ -166,6 +168,7 @@ export const DEFAULT_SETTINGS: Settings = {
   highlighterSize: 16,
 
   autosaveMs: 700,
+  thickLineShortcut: 'Alt-s',
   spellcheck: true,
   sidebarWidth: 230,
   pagelistWidth: 250,

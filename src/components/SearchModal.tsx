@@ -43,8 +43,13 @@ export default function SearchModal({ onClose }: { onClose(): void }) {
     return out.slice(0, 6)
   }, [q, workspace.tree])
 
-  const open = async (pageId: string) => {
+  const open = async (pageId: string, cellId?: string) => {
     await useStore.getState().openPage(pageId)
+    if (cellId) {
+      useStore.getState().setSearchResult({ cellId, query: q })
+    } else {
+      useStore.getState().setSearchResult(null)
+    }
     onClose()
   }
 
@@ -67,7 +72,10 @@ export default function SearchModal({ onClose }: { onClose(): void }) {
             onKeyDown={(e) => {
               if (e.key === 'ArrowDown') { e.preventDefault(); setActive((a) => Math.min(a + 1, flat.length - 1)) }
               if (e.key === 'ArrowUp') { e.preventDefault(); setActive((a) => Math.max(a - 1, 0)) }
-              if (e.key === 'Enter' && flat[active]) open(flat[active].pageId)
+              if (e.key === 'Enter' && flat[active]) {
+                const r = flat[active]
+                open(r.pageId, r.kind === 'body' && r.hits.length > 0 ? r.hits[0].cellId : undefined)
+              }
               if (e.key === 'Escape') onClose()
             }}
           />
@@ -80,7 +88,7 @@ export default function SearchModal({ onClose }: { onClose(): void }) {
               key={`${r.kind}-${r.pageId}-${i}`}
               className={`result ${i === active ? 'active' : ''}`}
               onMouseEnter={() => setActive(i)}
-              onClick={() => open(r.pageId)}
+              onClick={() => open(r.pageId, r.kind === 'body' && r.hits.length > 0 ? r.hits[0].cellId : undefined)}
             >
               <div className="r-title">{r.title || 'Untitled'}</div>
               <div className="r-path">{pathTo(workspace.tree, r.pageId).map((n) => n.title).join('  /  ')}</div>

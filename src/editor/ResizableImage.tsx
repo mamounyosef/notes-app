@@ -57,6 +57,7 @@ export function ResizableImageNode(props: NodeViewProps) {
         src={node.attrs.src}
         alt={node.attrs.alt}
         title={node.attrs.title}
+        data-drag-handle
         style={{
           display: 'block',
           width: width ? `${width}px` : 'auto',

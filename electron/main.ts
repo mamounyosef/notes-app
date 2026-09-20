@@ -113,8 +113,8 @@ function createWindow() {
 
 Menu.setApplicationMenu(null)
 
-// Makes Windows group the window under our own icon rather than Electron's.
-app.setAppUserModelId('com.mamoun.notesapp')
+// Makes Windows group the window under the pinned shortcut correctly.
+app.setAppUserModelId(process.execPath)
 
 // Serve pasted images from the vault without disabling web security.
 protocol.registerSchemesAsPrivileged([

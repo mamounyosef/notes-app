@@ -24,6 +24,7 @@ export default function Canvas() {
   const zoom = useStore((s) => s.zoom)
   const tool = useStore((s) => s.tool)
   const editingCellId = useStore((s) => s.editingCellId)
+  const searchResult = useStore((s) => s.searchResult)
   const store = useStore
 
   const wrapRef = useRef<HTMLDivElement>(null)
@@ -218,6 +219,35 @@ export default function Canvas() {
     }
   }, [drag.mode, snap, toCanvas, settings.gridSize, store])
 
+  /* -------- handle search result navigation -------- */
+  useEffect(() => {
+    if (searchResult && page) {
+      const cell = page.cells.find((c) => c.id === searchResult.cellId)
+      if (cell && wrapRef.current) {
+        const wrap = wrapRef.current
+        const cw = wrap.clientWidth
+        const ch = wrap.clientHeight
+        
+        // Timeout ensures DOM is ready
+        setTimeout(() => {
+          wrap.scrollTo({
+            left: cell.x * zoom - cw / 2 + cell.w * zoom / 2,
+            top: cell.y * zoom - ch / 2 + (cell.collapsed ? 30 : cell.h) * zoom / 2,
+            behavior: 'smooth'
+          })
+
+          const el = document.querySelector(`[data-cell-id="${cell.id}"]`)
+          if (el) {
+            el.classList.add('search-highlight')
+            setTimeout(() => el.classList.remove('search-highlight'), 3000)
+          }
+          
+          store.getState().setSearchResult(null)
+        }, 50)
+      }
+    }
+  }, [searchResult, page, zoom, store])
+
   /* -------- imported pages tidy themselves once -------- */
   useEffect(() => {
     if (!page?.needsReflow) return
@@ -260,7 +290,7 @@ export default function Canvas() {
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [page !== null])
 
   if (!page) {
     return (

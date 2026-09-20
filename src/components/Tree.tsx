@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import type { TreeNode } from '../types'
 import { Menu, type MenuItem } from './Menu'
-import { Chevron, File, Folder, Book, Plus, Star, Trash, Copy, Palette } from './Icons'
+import { Chevron, File, Folder, Book, Plus, Star, Trash, Copy, Palette, Archive } from './Icons'
 
 const NODE_COLORS = ['#7c9cff', '#e06c75', '#e5c07b', '#98c379', '#56b6c2', '#c678dd', '#f06292', '#a5a5a5']
 
@@ -33,6 +33,9 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint }: 
         : []),
       { separator: true },
       { label: 'Rename', hint: 'F2', onClick: () => setRenaming(n.id) },
+      ...(n.kind === 'notebook'
+        ? [{ label: n.archived ? 'Unarchive notebook' : 'Archive notebook', icon: <Archive />, onClick: () => s.archiveNode(n.id, !n.archived) }]
+        : []),
       ...(n.kind === 'page'
         ? [
             {

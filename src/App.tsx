@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Canvas from './components/Canvas'
+import { useActiveEditor } from './editor/activeEditor'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toolbar from './components/Toolbar'
 import Tree from './components/Tree'
@@ -11,7 +12,7 @@ import { isDesktop } from './lib/storage'
 import type { TreeNode } from './types'
 import {
   Book, File as FileIcon, Folder, Gear, Max, Min, PanelLeft, PanelMid, Plus, Search as SearchIcon,
-  Star, X, ZoomIn, ZoomOut,
+  Star, X, ZoomIn, ZoomOut, Archive, Chevron
 } from './components/Icons'
 
 export default function App() {
@@ -29,6 +30,7 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false)
   const [showKeys, setShowKeys] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
+  const [showArchive, setShowArchive] = useState(false)
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
 
   useEffect(() => {
@@ -93,21 +95,44 @@ export default function App() {
       }
       if (e.ctrlKey && e.key.toLowerCase() === 'd' && !typing) { e.preventDefault(); st.duplicateCells(st.selection); return }
 
+      if (e.ctrlKey && e.key.toLowerCase() === 'z') {
+        e.preventDefault()
+        if (typing) {
+          const editor = useActiveEditor.getState().editor
+          if (editor && editor.can().undo()) {
+            editor.chain().undo().run()
+            return
+          }
+        }
+        st.undo()
+        return
+      }
+      if (e.ctrlKey && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
+        e.preventDefault()
+        if (typing) {
+          const editor = useActiveEditor.getState().editor
+          if (editor && editor.can().redo()) {
+            editor.chain().redo().run()
+            return
+          }
+        }
+        st.redo()
+        return
+      }
+
       if (typing) return
 
       if (e.ctrlKey && e.key.toLowerCase() === 'a') { e.preventDefault(); st.setSelection((st.page?.cells || []).map((c) => c.id)); return }
-      if (e.ctrlKey && e.key.toLowerCase() === 'z') { e.preventDefault(); st.undo(); return }
-      if (e.ctrlKey && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) { e.preventDefault(); st.redo(); return }
       if ((e.key === 'Delete' || e.key === 'Backspace') && st.selection.length) { e.preventDefault(); st.deleteCells(st.selection); return }
       if (e.key === 'Escape') { st.setSelection([]); st.setTool('select'); return }
 
       if (!e.ctrlKey && !e.altKey) {
         const map: Record<string, () => void> = {
           v: () => st.setTool('select'),
-          p: () => st.setTool('pen'),
-          h: () => st.setTool('highlighter'),
-          e: () => st.setTool('eraser'),
-          s: () => st.setTool('space'),
+          p: () => st.setTool(st.tool === 'pen' ? 'select' : 'pen'),
+          h: () => st.setTool(st.tool === 'highlighter' ? 'select' : 'highlighter'),
+          e: () => st.setTool(st.tool === 'eraser' ? 'select' : 'eraser'),
+          s: () => st.setTool(st.tool === 'space' ? 'select' : 'space'),
         }
         const fn = map[e.key.toLowerCase()]
         if (fn) { fn(); return }
@@ -179,24 +204,64 @@ export default function App() {
                     <div style={{ height: 8 }} />
                   </>
                 )}
-                <Tree
-                  kinds={['notebook', 'section']}
-                  roots={workspace.tree}
-                  activeId={activeSectionId}
-                  onActivate={(n) => {
-                    if (n.kind === 'section') {
-                      setActiveSectionId(n.id)
-                      const firstPage = n.children.find((c) => c.kind === 'page')
-                      if (firstPage) useStore.getState().openPage(firstPage.id)
-                    } else {
-                      useStore.getState().toggleCollapse(n.id)
-                    }
-                  }}
-                  emptyHint="No notebooks yet. Use the plus button above to make one."
-                />
-                <button className="add-row" onClick={() => useStore.getState().addNode('notebook', null)}>
-                  <Plus size={14} /> New notebook
-                </button>
+                {(() => {
+                  const activeNotebooks = workspace.tree.filter((n) => !n.archived)
+                  const archivedNotebooks = workspace.tree.filter((n) => n.archived)
+                  return (
+                    <>
+                      <Tree
+                        kinds={['notebook', 'section']}
+                        roots={activeNotebooks}
+                        activeId={activeSectionId}
+                        onActivate={(n) => {
+                          if (n.kind === 'section') {
+                            setActiveSectionId(n.id)
+                            const firstPage = n.children.find((c) => c.kind === 'page')
+                            if (firstPage) useStore.getState().openPage(firstPage.id)
+                          } else {
+                            useStore.getState().toggleCollapse(n.id)
+                          }
+                        }}
+                        emptyHint="No notebooks yet. Use the plus button above to make one."
+                      />
+                      <button className="add-row" onClick={() => useStore.getState().addNode('notebook', null)}>
+                        <Plus size={14} /> New notebook
+                      </button>
+                      
+                      {archivedNotebooks.length > 0 && (
+                        <div style={{ marginTop: 24, borderTop: '1px solid var(--bg-3)' }}>
+                          <button
+                            className="pane-head"
+                            style={{ width: '100%', padding: '8px 12px 4px', color: 'var(--text-faint)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', background: 'none', border: 'none', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+                            onClick={() => setShowArchive(!showArchive)}
+                          >
+                            <div style={{ transition: 'transform 0.12s ease', display: 'flex', alignItems: 'center', transform: showArchive ? 'rotate(90deg)' : 'none' }}>
+                              <Chevron size={12} />
+                            </div>
+                            <Archive size={12} />
+                            Archived Notebooks
+                          </button>
+                          {showArchive && (
+                            <Tree
+                              kinds={['notebook', 'section']}
+                              roots={archivedNotebooks}
+                              activeId={activeSectionId}
+                              onActivate={(n) => {
+                                if (n.kind === 'section') {
+                                  setActiveSectionId(n.id)
+                                  const firstPage = n.children.find((c) => c.kind === 'page')
+                                  if (firstPage) useStore.getState().openPage(firstPage.id)
+                                } else {
+                                  useStore.getState().toggleCollapse(n.id)
+                                }
+                              }}
+                            />
+                          )}
+                        </div>
+                      )}
+                    </>
+                  )
+                })()}
               </div>
             </div>
             <Resizer

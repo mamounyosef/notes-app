@@ -13,11 +13,13 @@ import TableCell from '@tiptap/extension-table-cell'
 import TableHeader from '@tiptap/extension-table-header'
 import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
-import { Extension, Mark, mergeAttributes } from '@tiptap/core'
+import HorizontalRule from '@tiptap/extension-horizontal-rule'
+import { Extension, Mark, mergeAttributes, Node } from '@tiptap/core'
 import { Plugin } from '@tiptap/pm/state'
 import { BlockMath, InlineMath } from './math'
 import { looksLikeMarkdown, markdownToHtml } from './markdown'
 import { storage } from '../lib/storage'
+import { useStore } from '../store'
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -180,13 +182,46 @@ async function insertImageFile(editor: any, file: File) {
   editor.chain().focus().setImage({ src }).run()
 }
 
+export const DraggableHorizontalRule = HorizontalRule.extend({
+  draggable: true,
+})
+
+export const ThickHorizontalRule = Node.create({
+  name: 'thickHorizontalRule',
+  group: 'block',
+  draggable: true,
+  parseHTML() {
+    return [{ tag: 'hr.thick-hr', priority: 100 }]
+  },
+  renderHTML({ HTMLAttributes }) {
+    return ['hr', mergeAttributes(HTMLAttributes, { class: 'thick-hr' })]
+  },
+  addCommands() {
+    return {
+      setThickHorizontalRule:
+        () =>
+        ({ chain }: any) => {
+          return chain().insertContent({ type: this.name }).run()
+        },
+    } as any
+  },
+  addKeyboardShortcuts() {
+    const shortcut = useStore.getState().settings.thickLineShortcut || 'Alt-s'
+    return {
+      [shortcut]: () => this.editor.commands.setThickHorizontalRule(),
+    }
+  },
+})
+
 export function buildExtensions(placeholder: string) {
   return [
     StarterKit.configure({
+      horizontalRule: false,
       heading: { levels: [1, 2, 3, 4] },
       codeBlock: { HTMLAttributes: { class: 'code-block' } },
       history: { depth: 200 },
     }),
+    DraggableHorizontalRule,
     Underline,
     TextStyle,
     Color,
@@ -205,6 +240,7 @@ export function buildExtensions(placeholder: string) {
     InlineMath,
     BlockMath,
     SmartPaste,
+    ThickHorizontalRule,
     Placeholder.configure({ placeholder }),
   ]
 }

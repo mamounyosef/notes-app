@@ -93,6 +93,8 @@ interface State {
   penColor: string
   penSize: number
   vaultPath: string
+  searchResult: { cellId: string; query: string } | null
+  setSearchResult(res: { cellId: string; query: string } | null): void
 
   init(): Promise<void>
   save(): Promise<void>
@@ -102,6 +104,7 @@ interface State {
   openPage(id: string): Promise<void>
   addNode(kind: TreeNode['kind'], parentId: string | null): Promise<string>
   renameNode(id: string, title: string): void
+  archiveNode(id: string, archived: boolean): void
   deleteNode(id: string): Promise<void>
   moveNode(dragId: string, targetId: string, position: 'before' | 'after' | 'inside'): void
   toggleCollapse(id: string): void
@@ -149,6 +152,8 @@ export const useStore = create<State>((set, get) => ({
   penColor: '#e06c75',
   penSize: 3,
   vaultPath: '',
+  searchResult: null,
+  setSearchResult: (res) => set({ searchResult: res }),
 
   async init() {
     await pickBackend()
@@ -252,6 +257,17 @@ export const useStore = create<State>((set, get) => ({
       set({ page })
       storage.writePage(page.id, page)
     }
+    clearTimeout(wsTimer)
+    wsTimer = setTimeout(() => storage.writeWorkspace(get().workspace), 200)
+  },
+
+  archiveNode(id, archived) {
+    const ws = clone(get().workspace)
+    const n = findNode(ws.tree, id)
+    if (!n) return
+    n.archived = archived
+    n.updatedAt = now()
+    set({ workspace: ws })
     clearTimeout(wsTimer)
     wsTimer = setTimeout(() => storage.writeWorkspace(get().workspace), 200)
   },
@@ -393,14 +409,22 @@ export const useStore = create<State>((set, get) => ({
     if (record) get().pushHistory()
     const cells = page.cells.map((c) => (c.id === id ? { ...c, ...patch, updatedAt: now() } : c))
     set({ page: { ...page, cells, updatedAt: now() }, dirty: true })
+    if ('w' in patch || 'h' in patch || 'x' in patch || 'y' in patch) get().reflowOverlaps(false)
     scheduleSave(get)
   },
 
   updateCells(ids, patch) {
     const { page } = get()
     if (!page) return
-    const cells = page.cells.map((c) => (ids.includes(c.id) ? { ...c, ...patch(c), updatedAt: now() } : c))
+    let needsReflow = false
+    const cells = page.cells.map((c) => {
+      if (!ids.includes(c.id)) return c
+      const p = patch(c)
+      if ('w' in p || 'h' in p || 'x' in p || 'y' in p) needsReflow = true
+      return { ...c, ...p, updatedAt: now() }
+    })
     set({ page: { ...page, cells, updatedAt: now() }, dirty: true })
+    if (needsReflow) get().reflowOverlaps(false)
     scheduleSave(get)
   },
 
@@ -492,21 +516,43 @@ export const useStore = create<State>((set, get) => ({
     if (record) get().pushHistory()
     const gap = settings.cellGap
     const cells = [...page.cells].sort((a, b) => a.y - b.y || a.x - b.x)
-    const moved = new Map<string, number>()
+    const moved = new Map<string, { x: number; y: number }>()
     for (let i = 0; i < cells.length; i++) {
       const a = cells[i]
-      const ay = moved.get(a.id) ?? a.y
+      const posA = moved.get(a.id) ?? { x: a.x, y: a.y }
       for (let j = i + 1; j < cells.length; j++) {
         const b = cells[j]
-        const by = moved.get(b.id) ?? b.y
-        const overlapX = a.x < b.x + b.w && b.x < a.x + a.w
-        if (!overlapX) continue
-        const bottom = ay + a.h + gap
-        if (by < bottom) moved.set(b.id, Math.round(bottom))
+        const posB = moved.get(b.id) ?? { x: b.x, y: b.y }
+        const overlapX = posA.x < posB.x + b.w && posB.x < posA.x + a.w
+        const overlapY = posA.y < posB.y + b.h && posB.y < posA.y + a.h
+        if (overlapX && overlapY) {
+          const rightPush = posA.x + a.w + gap
+          const downPush = posA.y + a.h + gap
+          const pushRightDist = posB.x >= posA.x ? rightPush - posB.x : Infinity
+          const pushDownDist = posB.y >= posA.y ? downPush - posB.y : Infinity
+          
+          let newX = posB.x
+          let newY = posB.y
+          
+          if (pushRightDist < pushDownDist && pushRightDist !== Infinity) {
+            newX = rightPush
+          } else if (pushDownDist !== Infinity) {
+            newY = downPush
+          } else {
+            newY = downPush
+          }
+          moved.set(b.id, { x: Math.round(newX), y: Math.round(newY) })
+        }
       }
     }
     if (!moved.size) return
-    const next = page.cells.map((c) => (moved.has(c.id) ? { ...c, y: moved.get(c.id)! } : c))
+    const next = page.cells.map((c) => {
+      if (moved.has(c.id)) {
+        const pos = moved.get(c.id)!
+        return { ...c, x: pos.x, y: pos.y }
+      }
+      return c
+    })
     set({ page: { ...page, cells: next, updatedAt: now() }, dirty: true })
     scheduleSave(get)
   },
