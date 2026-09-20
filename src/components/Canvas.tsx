@@ -32,6 +32,8 @@ export default function Canvas() {
   const [drag, setDrag] = useState<Drag>({ mode: 'none' })
   const dragRef = useRef<Drag>({ mode: 'none' })
   dragRef.current = drag
+  const panPointerRef = useRef(false)
+  const suppressContextMenuRef = useRef(false)
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
 
   const snap = useCallback(
@@ -87,10 +89,14 @@ export default function Canvas() {
   /* -------- pointer handling on empty canvas -------- */
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     if (e.button === 2 || (e.button === 1 && settings.panButton === 'middle')) {
+      e.preventDefault()
       const wrap = wrapRef.current!
+      panPointerRef.current = true
+      suppressContextMenuRef.current = false
       setDrag({ mode: 'pan', sx: e.clientX, sy: e.clientY, sl: wrap.scrollLeft, st: wrap.scrollTop, moved: false })
       return
     }
+    panPointerRef.current = false
     if (e.button !== 0) return
     const p = toCanvas(e)
 
@@ -168,7 +174,10 @@ export default function Canvas() {
         const wrap = wrapRef.current!
         wrap.scrollLeft = d.sl - (e.clientX - d.sx)
         wrap.scrollTop = d.st - (e.clientY - d.sy)
-        if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) setDrag({ ...d, moved: true })
+        if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 3) {
+          suppressContextMenuRef.current = true
+          setDrag({ ...d, moved: true })
+        }
         return
       }
       const p = toCanvas(e)
@@ -215,6 +224,7 @@ export default function Canvas() {
 
     const up = () => {
       const d = dragRef.current
+      if (d.mode === 'pan' && d.moved) suppressContextMenuRef.current = true
       if (d.mode === 'marquee') {
         const x0 = Math.min(d.x0, d.x1)
         const x1 = Math.max(d.x0, d.x1)
@@ -397,6 +407,10 @@ export default function Canvas() {
         e.preventDefault()
         const d = dragRef.current
         if (d.mode === 'pan' && d.moved) return
+        if (suppressContextMenuRef.current) {
+          suppressContextMenuRef.current = false
+          return
+        }
         const target = (e.target as HTMLElement).closest('.cell') as HTMLElement | null
         if (target) {
           const cell = page.cells.find((c) => c.id === target.dataset.cellId)
@@ -467,7 +481,10 @@ export default function Canvas() {
             selected={selection.includes(cell.id)}
             editing={editingCellId === cell.id}
             onSelect={(e) => {
-              if (e.button === 2) return
+              if (panPointerRef.current || dragRef.current.mode === 'pan' || e.button !== 0) {
+                e.preventDefault()
+                return
+              }
               const st = store.getState()
               // Clicking the frame rather than the text selects the cell, so
               // Delete removes it instead of typing into it.
@@ -519,6 +536,10 @@ export default function Canvas() {
             onContextMenu={(e) => {
               e.preventDefault()
               e.stopPropagation()
+              if (suppressContextMenuRef.current) {
+                suppressContextMenuRef.current = false
+                return
+              }
               setMenu({ x: e.clientX, y: e.clientY, items: cellMenu(cell, e) })
             }}
             onDeleteSelf={() => store.getState().deleteCells([cell.id])}

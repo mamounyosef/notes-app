@@ -399,7 +399,7 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   overflow: auto;
   outline: none;
 }
-.canvas-wrap.panning { cursor: grabbing; }
+.canvas-wrap.panning { cursor: grabbing; user-select: none; }
 .canvas-wrap.tool-pen, .canvas-wrap.tool-highlighter { cursor: crosshair; }
 .canvas-wrap.tool-eraser { cursor: cell; }
 .canvas-wrap.tool-space { cursor: ns-resize; }
@@ -539,13 +539,19 @@ input:focus, textarea:focus, select:focus { border-color: var(--accent); }
   word-wrap: break-word;
   white-space: pre-wrap;
 }
-.ProseMirror > * + * { margin-top: .45em; }
+.ProseMirror > * { margin-block: 0; }
 .ProseMirror p { margin: 0; }
-.ProseMirror h1 { font-size: 1.7em; margin: .5em 0 .2em; font-weight: 650; }
-.ProseMirror h2 { font-size: 1.4em; margin: .5em 0 .2em; font-weight: 650; }
-.ProseMirror h3 { font-size: 1.18em; margin: .4em 0 .2em; font-weight: 650; }
-.ProseMirror h4 { font-size: 1.05em; margin: .4em 0 .2em; font-weight: 650; }
-.ProseMirror ul, .ProseMirror ol { padding-left: 1.4em; margin: .2em 0; }
+.ProseMirror > * + * { margin-top: .75em; }
+.ProseMirror > h1, .ProseMirror > h2, .ProseMirror > h3, .ProseMirror > h4 {
+  margin-top: 1em;
+  margin-bottom: .35em;
+}
+.ProseMirror > :first-child { margin-top: 0; }
+.ProseMirror h1 { font-size: 1.7em; font-weight: 650; }
+.ProseMirror h2 { font-size: 1.4em; font-weight: 650; }
+.ProseMirror h3 { font-size: 1.18em; font-weight: 650; }
+.ProseMirror h4 { font-size: 1.05em; font-weight: 650; }
+.ProseMirror ul, .ProseMirror ol { padding-left: 1.4em; }
 .ProseMirror li { margin: .12em 0; }
 .ProseMirror li p { margin: 0; }
 .ProseMirror blockquote {

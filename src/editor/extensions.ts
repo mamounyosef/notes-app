@@ -108,11 +108,10 @@ export const SmartPaste = Extension.create({
             const mode = pasteMode()
             if (mode === 'never' || !text) return false
 
-            // Text copied out of an LLM chat arrives as messy HTML plus clean
-            // Markdown. Prefer the Markdown so headings, lists, tables, code
-            // fences and LaTeX come through as real formatting.
+            // Markdown-like plain text must win in auto mode so math delimiters,
+            // emphasis, and blank-line paragraph breaks are parsed correctly.
             const preferMarkdown = mode === 'always' ? !!text : looksLikeMarkdown(text)
-            if (preferMarkdown && (!html || mode === 'always' || looksLikeMarkdown(text))) {
+            if (preferMarkdown) {
               event.preventDefault()
               editor.commands.insertContent(markdownToHtml(text))
               return true
