@@ -207,6 +207,7 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
           {tab === 'editing' && (
             <div className="set-group">
               <h3>Typing and pasting</h3>
+              <Num k="maxImageWidth" label="Max pasted image width" sub="Resizes large images automatically" min={100} max={2000} step={50} unit=" px" />
               <Choice k="markdownPaste" label="Convert pasted Markdown" sub="Text copied from an AI chat keeps its headings, lists, tables, code and LaTeX" options={[
                 { v: 'auto', l: 'When it looks like Markdown' },
                 { v: 'always', l: 'Always' },

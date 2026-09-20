@@ -12,7 +12,7 @@ type Drag =
   | { mode: 'marquee'; x0: number; y0: number; x1: number; y1: number }
   | { mode: 'pan'; sx: number; sy: number; sl: number; st: number; moved: boolean }
   | { mode: 'space'; atY: number; dy: number }
-  | { mode: 'ink'; stroke: Stroke }
+  | { mode: 'ink'; stroke: Stroke; cellId?: string }
 
 const MARGIN_X = 120 // breathing room to the right of the widest cell
 const MARGIN_Y = 240 // and below the lowest one
@@ -99,12 +99,17 @@ export default function Canvas() {
       return
     }
     if (tool === 'pen' || tool === 'highlighter') {
+      const targetCell = (e.target as HTMLElement).closest('.cell') as HTMLElement | null
       const stroke: Stroke = {
         color: tool === 'pen' ? settings.penColor : settings.highlighterColor,
         size: tool === 'pen' ? settings.penSize : settings.highlighterSize,
         points: [p.x, p.y],
       }
-      setDrag({ mode: 'ink', stroke })
+      if (targetCell && targetCell.dataset.cellId) {
+        setDrag({ mode: 'ink', stroke, cellId: targetCell.dataset.cellId })
+      } else {
+        setDrag({ mode: 'ink', stroke })
+      }
       return
     }
     if (tool === 'eraser') {
@@ -129,9 +134,27 @@ export default function Canvas() {
       }
       return true
     })
-    if (keep.length !== pg.strokes.length) {
+    
+    let changedCells = false
+    const cells = pg.cells.map(c => {
+      if (!c.strokes || !c.strokes.length) return c
+      const keepCell = c.strokes.filter((s) => {
+        for (let i = 0; i < s.points.length; i += 2) {
+          if (Math.hypot(c.x + s.points[i] - p.x, c.y + s.points[i + 1] - p.y) < r + s.size / 2) return false
+        }
+        return true
+      })
+      if (keepCell.length !== c.strokes.length) {
+        changedCells = true
+        return { ...c, strokes: keepCell }
+      }
+      return c
+    })
+
+    if (keep.length !== pg.strokes.length || changedCells) {
       store.getState().pushHistory()
-      store.setState({ page: { ...pg, strokes: keep }, dirty: true })
+      store.setState({ page: { ...pg, strokes: keep, cells }, dirty: true })
+      store.getState().save()
     }
   }
 
@@ -155,7 +178,7 @@ export default function Canvas() {
         store.getState().updateCells(Object.keys(d.origin), (c) => {
           const o = d.origin[c.id]
           return { x: Math.max(0, snap(o.x + dx)), y: Math.max(0, snap(o.y + dy)) }
-        })
+        }, false) // Do not reflow during drag
       } else if (d.mode === 'resize') {
         const dx = p.x - d.startX
         const dy = p.y - d.startY
@@ -167,17 +190,17 @@ export default function Canvas() {
           patch.autoHeight = false
         }
         if (d.dir.includes('w')) {
-          const nx = Math.max(0, snap(b.x + dx))
-          patch.x = nx
-          patch.w = Math.max(120, b.w + (b.x - nx))
+          const nx = snap(b.x + dx)
+          patch.w = Math.max(120, b.w + b.x - nx)
+          patch.x = b.x + b.w - patch.w
         }
         if (d.dir.includes('n')) {
-          const ny = Math.max(0, snap(b.y + dy))
-          patch.y = ny
-          patch.h = Math.max(60, b.h + (b.y - ny))
+          const ny = snap(b.y + dy)
+          patch.h = Math.max(60, b.h + b.y - ny)
+          patch.y = b.y + b.h - patch.h
           patch.autoHeight = false
         }
-        store.getState().updateCell(d.id, patch)
+        store.getState().updateCell(d.id, patch, false, false) // Do not reflow during drag
       } else if (d.mode === 'marquee') {
         setDrag({ ...d, x1: p.x, y1: p.y })
       } else if (d.mode === 'space') {
@@ -186,7 +209,7 @@ export default function Canvas() {
         const pts = d.stroke.points
         const lx = pts[pts.length - 2]
         const ly = pts[pts.length - 1]
-        if (Math.hypot(p.x - lx, p.y - ly) > 1.6) setDrag({ mode: 'ink', stroke: { ...d.stroke, points: [...pts, p.x, p.y] } })
+        if (Math.hypot(p.x - lx, p.y - ly) > 1.6) setDrag({ mode: 'ink', stroke: { ...d.stroke, points: [...pts, p.x, p.y] }, cellId: d.cellId })
       }
     }
 
@@ -206,7 +229,18 @@ export default function Canvas() {
       } else if (d.mode === 'space' && Math.abs(d.dy) >= settings.gridSize) {
         store.getState().insertSpace(d.atY, d.dy)
       } else if (d.mode === 'ink' && d.stroke.points.length >= 4) {
-        store.getState().addPageStroke(d.stroke)
+        if (d.cellId) {
+          const page = store.getState().page
+          const cell = page?.cells.find((c) => c.id === d.cellId)
+          if (cell) {
+            const relStroke = { ...d.stroke, points: d.stroke.points.map((v, i) => v - (i % 2 === 0 ? cell.x : cell.y)) }
+            store.getState().addCellStroke(d.cellId, relStroke)
+          }
+        } else {
+          store.getState().addPageStroke(d.stroke)
+        }
+      } else if (d.mode === 'move' || d.mode === 'resize') {
+        store.getState().reflowOverlaps(false)
       }
       setDrag({ mode: 'none' })
     }
@@ -422,17 +456,6 @@ export default function Canvas() {
               opacity={s.size > 10 ? 0.38 : 1}
             />
           ))}
-          {drag.mode === 'ink' && (
-            <polyline
-              points={pairs(drag.stroke.points)}
-              fill="none"
-              stroke={drag.stroke.color}
-              strokeWidth={drag.stroke.size}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity={drag.stroke.size > 10 ? 0.38 : 1}
-            />
-          )}
         </svg>
 
         {cells.map((cell) => (
@@ -440,6 +463,7 @@ export default function Canvas() {
             key={cell.id}
             cell={cell}
             settings={settings}
+            tool={tool}
             selected={selection.includes(cell.id)}
             editing={editingCellId === cell.id}
             onSelect={(e) => {
@@ -521,6 +545,20 @@ export default function Canvas() {
               style={{ top: drag.dy >= 0 ? drag.atY : drag.atY + drag.dy, height: Math.abs(drag.dy) }}
             />
           </>
+        )}
+
+        {drag.mode === 'ink' && (
+          <svg style={{ position: 'absolute', top: 0, left: 0, width: size.w, height: size.h, pointerEvents: 'none', zIndex: 9999 }}>
+            <polyline
+              points={pairs(drag.stroke.points)}
+              fill="none"
+              stroke={drag.stroke.color}
+              strokeWidth={drag.stroke.size}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              opacity={drag.stroke.size > 10 ? 0.38 : 1}
+            />
+          </svg>
         )}
       </div>
       </div>

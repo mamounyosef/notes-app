@@ -6,6 +6,7 @@ import type { Cell, Settings } from '../types'
 interface Props {
   cell: Cell
   settings: Settings
+  tool: string
   selected: boolean
   editing: boolean
   onSelect(e: React.MouseEvent): void
@@ -20,6 +21,7 @@ interface Props {
 function CellViewInner({
   cell,
   settings,
+  tool,
   selected,
   editing,
   onSelect,
@@ -52,13 +54,17 @@ function CellViewInner({
         patch.w = wantedW
       }
 
-      // Auto-grow cell height if autoHeight is enabled
+      const chromeH = 14 + settings.cellPadding * 2 + (cell.showTitle ? settings.titleSize * 1.5 + 4 : 0)
+      const wantedH = Math.max(60, Math.round(contentH + chromeH))
+      
       if (cell.autoHeight) {
-        const chromeH = 14 + settings.cellPadding * 2 + (cell.showTitle ? settings.titleSize * 1.5 + 4 : 0)
-        const wantedH = Math.max(60, Math.round(contentH + chromeH))
         if (Math.abs(wantedH - cell.h) > 2) {
           patch.h = wantedH
         }
+      } else if (wantedH > cell.h && Math.abs(wantedH - cell.h) > 2) {
+        // Even if autoHeight is disabled (e.g. manually resized),
+        // we must always increase vertical size to fit new content (like pastes)
+        patch.h = wantedH
       }
       
       if (Object.keys(patch).length > 0) {
@@ -69,6 +75,7 @@ function CellViewInner({
   )
 
   const height = cell.collapsed ? 14 + settings.titleSize * 1.7 : cell.h
+  const isDrawing = tool === 'pen' || tool === 'highlighter' || tool === 'eraser'
 
   return (
     <div
@@ -89,7 +96,7 @@ function CellViewInner({
         // @ts-expect-error custom property
         '--cell-radius': `${settings.cellRadius}px`,
       }}
-      onMouseDown={onSelect}
+      onMouseDown={isDrawing ? undefined : onSelect}
       onContextMenu={onContextMenu}
       data-cell-id={cell.id}
     >
@@ -98,7 +105,27 @@ function CellViewInner({
         <Grip size={18} />
       </div>
 
-      <div className="cell-body" style={{ padding: `0 ${settings.cellPadding}px ${settings.cellPadding}px` }}>
+      <div className="cell-body" style={{ padding: `0 ${settings.cellPadding}px ${settings.cellPadding}px`, pointerEvents: isDrawing ? 'none' : 'auto' }}>
+        {cell.strokes && cell.strokes.length > 0 && (
+          <svg style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 0, overflow: 'visible' }}>
+            {cell.strokes.map((s, i) => {
+              const pts = []
+              for (let j = 0; j < s.points.length; j += 2) pts.push(`${s.points[j]},${s.points[j + 1]}`)
+              return (
+                <polyline
+                  key={i}
+                  points={pts.join(' ')}
+                  fill="none"
+                  stroke={s.color}
+                  strokeWidth={s.size}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  opacity={s.size > 10 ? 0.38 : 1}
+                />
+              )
+            })}
+          </svg>
+        )}
         {cell.showTitle && (
           <input
             ref={titleRef}
@@ -136,6 +163,9 @@ function CellViewInner({
               onChange={(html) => onChange({ html })}
               onSize={handleSize}
               onFocus={onStartEdit}
+              onPaste={() => {
+                if (!cell.autoHeight) onChange({ autoHeight: true })
+              }}
               onEmptyBackspace={() => {
                 if (!cell.title) onDeleteSelf()
               }}

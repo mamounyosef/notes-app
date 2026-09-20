@@ -172,14 +172,30 @@ export const ResizableImage = Image.extend({
   },
 })
 
-async function insertImageFile(editor: any, file: File) {
+export async function insertImageFile(editor: any, file: File) {
   const dataUrl = await new Promise<string>((res) => {
     const r = new FileReader()
     r.onload = () => res(String(r.result))
     r.readAsDataURL(file)
   })
+
+  const settings = useStore.getState().settings
+  const maxW = settings.maxImageWidth || 800
+
+  const img = new window.Image()
+  img.src = dataUrl
+  await new Promise((res) => {
+    img.onload = res
+    img.onerror = res
+  })
+
+  let width = img.width
+  if (width > maxW) {
+    width = maxW
+  }
+
   const src = (await storage.saveAsset(dataUrl)) || dataUrl
-  editor.chain().focus().setImage({ src }).run()
+  editor.chain().focus().setImage({ src, width }).run()
 }
 
 export const DraggableHorizontalRule = HorizontalRule.extend({
@@ -228,7 +244,7 @@ export function buildExtensions(placeholder: string) {
     FontSize,
     Kbd,
     Highlight.configure({ multicolor: true }),
-    TextAlign.configure({ types: ['heading', 'paragraph'] }),
+    TextAlign.configure({ types: ['heading', 'paragraph', 'image'] }),
     Link.configure({ openOnClick: true, autolink: true, HTMLAttributes: { rel: 'noopener', target: '_blank' } }),
     ResizableImage.configure({ inline: false, allowBase64: true }),
     Table.configure({ resizable: true }),

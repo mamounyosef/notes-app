@@ -11,6 +11,7 @@ interface Props {
   onChange(html: string): void
   onSize?(w: number, h: number): void
   onFocus?(): void
+  onPaste?(): void
   /** Backspace in an empty editor bubbles up so the cell can delete itself. */
   onEmptyBackspace?(): void
 }
@@ -23,6 +24,7 @@ export default function RichEditor({
   onChange,
   onSize,
   onFocus,
+  onPaste,
   onEmptyBackspace,
 }: Props) {
   const extensions = useMemo(() => buildExtensions(placeholder), [placeholder])
@@ -38,6 +40,10 @@ export default function RichEditor({
       editable,
       editorProps: {
         attributes: { spellcheck: String(spellcheck) },
+        handlePaste() {
+          onPaste?.()
+          return false
+        },
         handleKeyDown(view, event) {
           // Escape steps out of the text and selects the cell itself, so the
           // next Delete removes the cell rather than a character.

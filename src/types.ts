@@ -102,6 +102,7 @@ export interface Settings {
   newCellAtClick: boolean
   cellAutoHeight: boolean
 
+  maxImageWidth: number
   markdownPaste: 'auto' | 'always' | 'never'
   autoMath: boolean
   autoLink: boolean
@@ -157,6 +158,7 @@ export const DEFAULT_SETTINGS: Settings = {
   newCellAtClick: true,
   cellAutoHeight: true,
 
+  maxImageWidth: 800,
   markdownPaste: 'auto',
   autoMath: true,
   autoLink: true,

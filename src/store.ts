@@ -116,8 +116,8 @@ interface State {
   redo(): void
 
   addCell(partial?: Partial<Cell>): string
-  updateCell(id: string, patch: Partial<Cell>, record?: boolean): void
-  updateCells(ids: string[], patch: (c: Cell) => Partial<Cell>): void
+  updateCell(id: string, patch: Partial<Cell>, record?: boolean, reflow?: boolean): void
+  updateCells(ids: string[], patch: (c: Cell) => Partial<Cell>, reflow?: boolean): void
   deleteCells(ids: string[]): void
   duplicateCells(ids: string[]): void
   bringToFront(ids: string[]): void
@@ -126,6 +126,7 @@ interface State {
   setPageTitle(title: string): void
   insertSpace(atY: number, amount: number): void
   addPageStroke(stroke: Page['strokes'][number]): void
+  addCellStroke(cellId: string, stroke: Stroke): void
   reflowOverlaps(record?: boolean): void
   clearPageInk(): void
   setZoom(z: number): void
@@ -403,17 +404,17 @@ export const useStore = create<State>((set, get) => ({
     return cell.id
   },
 
-  updateCell(id, patch, record = false) {
+  updateCell(id, patch, record = false, reflow = true) {
     const { page } = get()
     if (!page) return
     if (record) get().pushHistory()
     const cells = page.cells.map((c) => (c.id === id ? { ...c, ...patch, updatedAt: now() } : c))
     set({ page: { ...page, cells, updatedAt: now() }, dirty: true })
-    if ('w' in patch || 'h' in patch || 'x' in patch || 'y' in patch) get().reflowOverlaps(false)
+    if (reflow && ('w' in patch || 'h' in patch || 'x' in patch || 'y' in patch)) get().reflowOverlaps(false)
     scheduleSave(get)
   },
 
-  updateCells(ids, patch) {
+  updateCells(ids, patch, reflow = true) {
     const { page } = get()
     if (!page) return
     let needsReflow = false
@@ -424,7 +425,7 @@ export const useStore = create<State>((set, get) => ({
       return { ...c, ...p, updatedAt: now() }
     })
     set({ page: { ...page, cells, updatedAt: now() }, dirty: true })
-    if (needsReflow) get().reflowOverlaps(false)
+    if (reflow && needsReflow) get().reflowOverlaps(false)
     scheduleSave(get)
   },
 
@@ -562,6 +563,20 @@ export const useStore = create<State>((set, get) => ({
     if (!page) return
     get().pushHistory()
     set({ page: { ...page, strokes: [...page.strokes, stroke], updatedAt: now() }, dirty: true })
+    scheduleSave(get)
+  },
+
+  addCellStroke(cellId, stroke) {
+    const { page } = get()
+    if (!page) return
+    get().pushHistory()
+    const cells = page.cells.map(c => {
+      if (c.id === cellId) {
+        return { ...c, strokes: [...(c.strokes || []), stroke], updatedAt: now() }
+      }
+      return c
+    })
+    set({ page: { ...page, cells, updatedAt: now() }, dirty: true })
     scheduleSave(get)
   },
 

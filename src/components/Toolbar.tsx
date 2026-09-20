@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useActiveEditor } from '../editor/activeEditor'
+import { insertImageFile } from '../editor/extensions'
 import { useStore } from '../store'
 import { Menu, type MenuItem } from './Menu'
 import {
@@ -410,14 +411,7 @@ export default function Toolbar() {
         onChange={async (e) => {
           const f = e.target.files?.[0]
           if (!f || !editor) return
-          const dataUrl = await new Promise<string>((res) => {
-            const r = new FileReader()
-            r.onload = () => res(String(r.result))
-            r.readAsDataURL(f)
-          })
-          const { storage } = await import('../lib/storage')
-          const src = (await storage.saveAsset(dataUrl)) || dataUrl
-          editor.chain().focus().setImage({ src }).run()
+          await insertImageFile(editor, f)
           e.target.value = ''
         }}
       />
