@@ -2,13 +2,47 @@ import React, { useRef, useState, useCallback, useEffect } from 'react'
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react'
 import { Copy, Grip } from '../components/Icons'
 
+/** Writes the image's pixels to the system clipboard as a PNG. */
+export async function copyImageToClipboard(img: HTMLImageElement): Promise<boolean> {
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return false
+    ctx.drawImage(img, 0, 0)
+    const blob = await new Promise<Blob | null>(res => canvas.toBlob(res, 'image/png'))
+    if (!blob) return false
+    await navigator.clipboard.write([new window.ClipboardItem({ [blob.type]: blob })])
+    return true
+  } catch (err) {
+    console.error('Image copy failed', err)
+    return false
+  }
+}
+
 export function ResizableImageNode(props: NodeViewProps) {
-  const { node, updateAttributes, selected } = props
+  const { node, updateAttributes, selected, editor } = props
   const imgRef = useRef<HTMLImageElement>(null)
   const [resizing, setResizing] = useState(false)
   const [currentWidth, setCurrentWidth] = useState<number | null>(null)
   const [copied, setCopied] = useState(false)
-  
+  const [focused, setFocused] = useState(editor.isFocused)
+
+  // The node selection survives blur, so only show the chrome while the editor has focus.
+  useEffect(() => {
+    const onFocus = () => setFocused(true)
+    const onBlur = () => setFocused(false)
+    editor.on('focus', onFocus)
+    editor.on('blur', onBlur)
+    return () => {
+      editor.off('focus', onFocus)
+      editor.off('blur', onBlur)
+    }
+  }, [editor])
+
+  const active = selected && (focused || resizing)
+
   useEffect(() => {
     if (!resizing && node.attrs.width) {
       setCurrentWidth(node.attrs.width)
@@ -56,27 +90,9 @@ export function ResizableImageNode(props: NodeViewProps) {
     e.stopPropagation()
     const img = imgRef.current
     if (!img) return
-    try {
-      const canvas = document.createElement('canvas')
-      canvas.width = img.naturalWidth
-      canvas.height = img.naturalHeight
-      const ctx = canvas.getContext('2d')
-      if (!ctx) return
-      ctx.drawImage(img, 0, 0)
-      canvas.toBlob(async (blob) => {
-        if (!blob) return
-        try {
-          await navigator.clipboard.write([
-            new window.ClipboardItem({ [blob.type]: blob })
-          ])
-          setCopied(true)
-          setTimeout(() => setCopied(false), 2000)
-        } catch (err) {
-          console.error('Clipboard write failed', err)
-        }
-      }, 'image/png')
-    } catch (err) {
-      console.error('Canvas draw failed', err)
+    if (await copyImageToClipboard(img)) {
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     }
   }
 
@@ -89,7 +105,7 @@ export function ResizableImageNode(props: NodeViewProps) {
 
   return (
     <NodeViewWrapper 
-      className={`resizable-image ${selected ? 'ProseMirror-selectednode' : ''}`} 
+      className={`resizable-image ${active ? 'ProseMirror-selectednode' : ''}`}
       style={{ 
         display: 'flex', 
         justifyContent,
@@ -118,7 +134,7 @@ export function ResizableImageNode(props: NodeViewProps) {
           }}
         />
 
-        {selected && (
+        {active && (
           <>
             <div
               data-drag-handle

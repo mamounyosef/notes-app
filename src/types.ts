@@ -68,6 +68,7 @@ export interface Page {
   needsReflow?: boolean
   /** Freehand ink drawn on the page itself, behind/above cells. */
   strokes: Stroke[]
+  gridSize?: number
   createdAt: number
   updatedAt: number
 }
@@ -114,12 +115,17 @@ export interface Settings {
   highlighterSize: number
 
   autosaveMs: number
+  horizontalLineShortcut: string
   thickLineShortcut: string
+  verticalLineShortcut: string
+  bulletListShortcut: string
+  numberedListShortcut: string
   spellcheck: boolean
   sidebarWidth: number
   pagelistWidth: number
   sidebarVisible: boolean
   pagelistVisible: boolean
+  autoHidePanes: boolean
   showStatusBar: boolean
   showPageDate: boolean
   confirmDelete: boolean
@@ -170,12 +176,17 @@ export const DEFAULT_SETTINGS: Settings = {
   highlighterSize: 16,
 
   autosaveMs: 700,
+  horizontalLineShortcut: 'Alt-d',
   thickLineShortcut: 'Alt-s',
+  verticalLineShortcut: 'Alt-a',
+  bulletListShortcut: 'Alt-q',
+  numberedListShortcut: 'Alt-n',
   spellcheck: true,
   sidebarWidth: 230,
   pagelistWidth: 250,
   sidebarVisible: true,
   pagelistVisible: true,
+  autoHidePanes: false,
   showStatusBar: true,
   showPageDate: true,
   confirmDelete: true,

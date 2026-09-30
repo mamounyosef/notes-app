@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { nanoid } from 'nanoid'
 import { pickBackend, storage } from './lib/storage'
-import { DEFAULT_SETTINGS, type Cell, type Page, type Settings, type TreeNode, type Workspace } from './types'
+import { DEFAULT_SETTINGS, type Cell, type Page, type Settings, type Stroke, type TreeNode, type Workspace } from './types'
 
 const now = () => Date.now()
 const uid = () => nanoid(12)
@@ -20,8 +20,8 @@ function emptyWorkspace(): Workspace {
   return { version: 1, tree: [notebook], favorites: [], recent: [page.id], lastOpenPageId: page.id }
 }
 
-function emptyPage(id: string, title: string): Page {
-  return { id, title, cells: [], strokes: [], createdAt: now(), updatedAt: now() }
+function emptyPage(id: string, title: string, gridSize?: number): Page {
+  return { id, title, cells: [], strokes: [], gridSize, createdAt: now(), updatedAt: now() }
 }
 
 /* ---------- tree helpers (pure) ---------- */
@@ -69,6 +69,10 @@ export function pathTo(nodes: TreeNode[], id: string): TreeNode[] {
   return []
 }
 
+function isPage(nodes: TreeNode[], id: string): boolean {
+  return findNode(nodes, id)?.kind === 'page'
+}
+
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v))
 }
@@ -87,6 +91,9 @@ interface State {
   editingCellId: string | null
   history: Page[]
   future: Page[]
+  /** Browser style page navigation stacks (page ids). */
+  navBack: string[]
+  navForward: string[]
   dirty: boolean
   zoom: number
   tool: 'select' | 'pen' | 'highlighter' | 'eraser' | 'space'
@@ -101,7 +108,9 @@ interface State {
   saveWorkspace(): Promise<void>
   setSettings(patch: Partial<Settings>): void
 
-  openPage(id: string): Promise<void>
+  openPage(id: string, fromNav?: boolean): Promise<void>
+  goBack(): Promise<void>
+  goForward(): Promise<void>
   addNode(kind: TreeNode['kind'], parentId: string | null): Promise<string>
   renameNode(id: string, title: string): void
   archiveNode(id: string, archived: boolean): void
@@ -135,6 +144,97 @@ interface State {
 
 let saveTimer: any = null
 let wsTimer: any = null
+let gridScaleTimer: any = null
+
+interface GridScaleBase {
+  gridSize: number
+  pageId: string
+  cells: { id: string; x: number; y: number; w: number; h: number }[]
+  strokes: { points: number[] }[]
+}
+
+let gridScaleBase: GridScaleBase | null = null
+
+function scalePageFromBase(page: Page, base: GridScaleBase, targetGrid: number, snapToGrid = true): Page {
+  const baseGrid = base.gridSize > 0 ? base.gridSize : 20
+  const ratio = targetGrid / baseGrid
+  const baseMap = new Map(base.cells.map((c) => [c.id, c]))
+  const cells = page.cells.map((c) => {
+    const b = baseMap.get(c.id)
+    if (!b) return c
+    const rawX = b.x * ratio
+    const rawY = b.y * ratio
+    const rawW = b.w * ratio
+    const rawH = b.h * ratio
+
+    const x = snapToGrid ? Math.round(rawX / targetGrid) * targetGrid : Math.round(rawX)
+    const y = snapToGrid ? Math.round(rawY / targetGrid) * targetGrid : Math.round(rawY)
+    const w = snapToGrid ? Math.max(targetGrid * 2, Math.ceil(rawW / targetGrid) * targetGrid) : Math.max(60, Math.round(rawW))
+    const h = snapToGrid ? Math.max(targetGrid * 2, Math.ceil(rawH / targetGrid) * targetGrid) : Math.max(40, Math.round(rawH))
+
+    return {
+      ...c,
+      x: Math.max(0, x),
+      y: Math.max(0, y),
+      w,
+      h,
+      updatedAt: now(),
+    }
+  })
+  const strokes = (page.strokes || []).map((s, idx) => {
+    const bs = base.strokes[idx]
+    if (!bs) return s
+    return {
+      ...s,
+      points: bs.points.map((pt) => Math.round(pt * ratio)),
+    }
+  })
+  return {
+    ...page,
+    gridSize: targetGrid,
+    cells,
+    strokes,
+    updatedAt: now(),
+  }
+}
+
+function interpolatePage(page: Page, fromGrid: number, toGrid: number, snapToGrid = true): Page {
+  if (fromGrid === toGrid || fromGrid <= 0 || toGrid <= 0) {
+    return { ...page, gridSize: toGrid }
+  }
+  const ratio = toGrid / fromGrid
+  const cells = page.cells.map((c) => {
+    const rawX = c.x * ratio
+    const rawY = c.y * ratio
+    const rawW = c.w * ratio
+    const rawH = c.h * ratio
+
+    const x = snapToGrid ? Math.round(rawX / toGrid) * toGrid : Math.round(rawX)
+    const y = snapToGrid ? Math.round(rawY / toGrid) * toGrid : Math.round(rawY)
+    const w = snapToGrid ? Math.max(toGrid * 2, Math.ceil(rawW / toGrid) * toGrid) : Math.max(60, Math.round(rawW))
+    const h = snapToGrid ? Math.max(toGrid * 2, Math.ceil(rawH / toGrid) * toGrid) : Math.max(40, Math.round(rawH))
+
+    return {
+      ...c,
+      x: Math.max(0, x),
+      y: Math.max(0, y),
+      w,
+      h,
+      updatedAt: now(),
+    }
+  })
+  const strokes = (page.strokes || []).map((s) => ({
+    ...s,
+    points: s.points.map((pt) => Math.round(pt * ratio)),
+  }))
+  return {
+    ...page,
+    gridSize: toGrid,
+    cells,
+    strokes,
+    updatedAt: now(),
+  }
+}
 
 export const useStore = create<State>((set, get) => ({
   ready: false,
@@ -147,6 +247,8 @@ export const useStore = create<State>((set, get) => ({
   editingCellId: null,
   history: [],
   future: [],
+  navBack: [],
+  navForward: [],
   dirty: false,
   zoom: 1,
   tool: 'select',
@@ -193,22 +295,90 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setSettings(patch) {
-    const settings = { ...get().settings, ...patch }
-    set({ settings })
+    const oldSettings = get().settings
+    const settings = { ...oldSettings, ...patch }
+    let page = get().page
+
+    if (
+      patch.gridSize !== undefined &&
+      typeof patch.gridSize === 'number' &&
+      patch.gridSize > 0 &&
+      patch.gridSize !== oldSettings.gridSize &&
+      page
+    ) {
+      if (!gridScaleBase || gridScaleBase.pageId !== page.id) {
+        get().pushHistory()
+        gridScaleBase = {
+          gridSize: page.gridSize || oldSettings.gridSize || 20,
+          pageId: page.id,
+          cells: page.cells.map((c) => ({ id: c.id, x: c.x, y: c.y, w: c.w, h: c.h })),
+          strokes: (page.strokes || []).map((s) => ({ points: [...s.points] })),
+        }
+      }
+
+      page = scalePageFromBase(page, gridScaleBase, patch.gridSize, settings.snapToGrid)
+      set({ settings, page, dirty: true })
+      scheduleSave(get)
+
+      clearTimeout(gridScaleTimer)
+      gridScaleTimer = setTimeout(() => {
+        gridScaleBase = null
+      }, 600)
+    } else {
+      set({ settings })
+    }
+
     clearTimeout(wsTimer)
     wsTimer = setTimeout(() => storage.writeSettings(settings), 250)
   },
 
-  async openPage(id) {
+  async openPage(id, fromNav = false) {
+    const prevId = get().activePageId
+    if (!fromNav && prevId && prevId !== id && isPage(get().workspace.tree, prevId)) {
+      set({ navBack: [...get().navBack, prevId].slice(-100), navForward: [] })
+    }
+    clearTimeout(gridScaleTimer)
+    gridScaleBase = null
+
     const cur = get().page
     if (cur && get().dirty) await storage.writePage(cur.id, cur)
     const node = findNode(get().workspace.tree, id)
     let page = await storage.readPage(id)
     if (!page) {
-      page = emptyPage(id, node?.title || 'Untitled')
+      page = emptyPage(id, node?.title || 'Untitled', get().settings.gridSize)
       await storage.writePage(id, page)
     }
     if (node && page.title !== node.title) page.title = node.title
+
+    const currentGridSize = get().settings.gridSize || 20
+    const snapToGrid = get().settings.snapToGrid !== false
+
+    if (page.gridSize !== undefined && page.gridSize !== currentGridSize && page.gridSize > 0) {
+      page = interpolatePage(page, page.gridSize, currentGridSize, snapToGrid)
+      await storage.writePage(page.id, page)
+    } else if (page.gridSize === undefined) {
+      page = { ...page, gridSize: currentGridSize }
+      await storage.writePage(page.id, page)
+    } else if (snapToGrid) {
+      const needsSnap = page.cells.some(
+        (c) => c.x % currentGridSize !== 0 || c.y % currentGridSize !== 0 || c.w % currentGridSize !== 0 || c.h % currentGridSize !== 0
+      )
+      if (needsSnap) {
+        page = {
+          ...page,
+          cells: page.cells.map((c) => ({
+            ...c,
+            x: Math.round(c.x / currentGridSize) * currentGridSize,
+            y: Math.round(c.y / currentGridSize) * currentGridSize,
+            w: Math.max(currentGridSize * 2, Math.ceil(c.w / currentGridSize) * currentGridSize),
+            h: Math.max(currentGridSize * 2, Math.ceil(c.h / currentGridSize) * currentGridSize),
+            updatedAt: now(),
+          })),
+          updatedAt: now(),
+        }
+        await storage.writePage(page.id, page)
+      }
+    }
 
     const notebook = pathTo(get().workspace.tree, id)[0]?.id ?? null
     const ws = { ...get().workspace }
@@ -226,6 +396,28 @@ export const useStore = create<State>((set, get) => ({
       dirty: false,
     })
     get().saveWorkspace()
+  },
+
+  async goBack() {
+    const tree = get().workspace.tree
+    const back = get().navBack.filter((pid) => isPage(tree, pid))
+    const cur = get().activePageId
+    let target = back.pop()
+    while (target && target === cur) target = back.pop()
+    if (!target) { set({ navBack: back }); return }
+    set({ navBack: back, navForward: cur ? [cur, ...get().navForward] : get().navForward })
+    await get().openPage(target, true)
+  },
+
+  async goForward() {
+    const tree = get().workspace.tree
+    const fwd = get().navForward.filter((pid) => isPage(tree, pid))
+    const cur = get().activePageId
+    let target = fwd.shift()
+    while (target && target === cur) target = fwd.shift()
+    if (!target) { set({ navForward: fwd }); return }
+    set({ navForward: fwd, navBack: cur ? [...get().navBack, cur] : get().navBack })
+    await get().openPage(target, true)
   },
 
   async addNode(kind, parentId) {
@@ -283,7 +475,11 @@ export const useStore = create<State>((set, get) => ({
     })
     ws.favorites = ws.favorites.filter((f) => !pageIds.includes(f))
     ws.recent = ws.recent.filter((r) => !pageIds.includes(r))
-    set({ workspace: ws })
+    set({
+      workspace: ws,
+      navBack: get().navBack.filter((r) => !pageIds.includes(r)),
+      navForward: get().navForward.filter((r) => !pageIds.includes(r)),
+    })
     await storage.writeWorkspace(ws)
     for (const pid of pageIds) await storage.deletePage(pid)
     if (get().activePageId && pageIds.includes(get().activePageId!)) {
@@ -358,6 +554,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   undo() {
+    clearTimeout(gridScaleTimer)
+    gridScaleBase = null
     const { history, page } = get()
     if (!history.length || !page) return
     const prev = history[history.length - 1]
@@ -366,6 +564,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   redo() {
+    clearTimeout(gridScaleTimer)
+    gridScaleBase = null
     const { future, page } = get()
     if (!future.length || !page) return
     const next = future[0]
@@ -378,13 +578,15 @@ export const useStore = create<State>((set, get) => ({
     if (!page) return ''
     get().pushHistory()
     const maxZ = page.cells.reduce((m, c) => Math.max(m, c.z), 0)
+    const rawW = partial.w ?? settings.defaultCellWidth
+    const rawH = partial.h ?? settings.defaultCellHeight
+    const snap = (v: number) => (settings.snapToGrid ? Math.round(v / settings.gridSize) * settings.gridSize : v)
+    const snapCeil = (v: number) => (settings.snapToGrid ? Math.ceil(v / settings.gridSize) * settings.gridSize : v)
+    const rawX = partial.x ?? 40
+    const rawY = partial.y ?? 40
     const cell: Cell = {
       id: uid(),
       kind: 'text',
-      x: 40,
-      y: 40,
-      w: settings.defaultCellWidth,
-      h: settings.defaultCellHeight,
       z: maxZ + 1,
       title: '',
       showTitle: true,
@@ -393,6 +595,10 @@ export const useStore = create<State>((set, get) => ({
       createdAt: now(),
       updatedAt: now(),
       ...partial,
+      x: snap(rawX),
+      y: snap(rawY),
+      w: Math.max(settings.gridSize * 2, snapCeil(rawW)),
+      h: Math.max(settings.gridSize * 2, snapCeil(rawH)),
     }
     set({
       page: { ...page, cells: [...page.cells, cell], updatedAt: now() },

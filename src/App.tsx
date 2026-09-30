@@ -6,13 +6,14 @@ import Toolbar from './components/Toolbar'
 import Tree from './components/Tree'
 import SearchModal from './components/SearchModal'
 import SettingsModal from './components/SettingsModal'
+import LinkModal from './components/LinkModal'
 import { findNode, pathTo, useStore, walk } from './store'
 import { setPasteMode } from './editor/extensions'
-import { isDesktop } from './lib/storage'
+import { isDesktop, storage } from './lib/storage'
 import type { TreeNode } from './types'
 import {
   Book, File as FileIcon, Folder, Gear, Max, Min, PanelLeft, PanelMid, Plus, Search as SearchIcon,
-  Star, X, ZoomIn, ZoomOut, Archive, Chevron
+  Star, X, ZoomIn, ZoomOut, Archive, Chevron, SidebarPeek, ArrowLeft, ArrowRight
 } from './components/Icons'
 
 export default function App() {
@@ -25,6 +26,8 @@ export default function App() {
   const activePageId = useStore((s) => s.activePageId)
   const zoom = useStore((s) => s.zoom)
   const dirty = useStore((s) => s.dirty)
+  const canGoBack = useStore((s) => s.navBack.length > 0)
+  const canGoForward = useStore((s) => s.navForward.length > 0)
 
   const [showSearch, setShowSearch] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -33,9 +36,136 @@ export default function App() {
   const [showArchive, setShowArchive] = useState(false)
   const [activeSectionId, setActiveSectionId] = useState<string | null>(null)
 
+  const flash = useCallback((msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(null), 1700)
+  }, [])
+
+  const linkModalOpen = useActiveEditor((s) => s.linkModalOpen)
+  const setLinkModalOpen = useActiveEditor((s) => s.setLinkModalOpen)
+
+  useEffect(() => {
+    const handleAnchorClick = (e: MouseEvent) => {
+      const a = (e.target as HTMLElement)?.closest('a')
+      if (!a) return
+      const href = a.getAttribute('href')
+      if (!href || href === '#' || href.startsWith('javascript:')) return
+
+      e.preventDefault()
+      e.stopPropagation()
+      e.stopImmediatePropagation()
+      storage.openExternal(href)
+    }
+    document.addEventListener('click', handleAnchorClick, true)
+    return () => document.removeEventListener('click', handleAnchorClick, true)
+  }, [])
+
+  const [flyoutOpen, setFlyoutOpen] = useState(false)
+  const flyoutOpenRef = useRef(false)
+  flyoutOpenRef.current = flyoutOpen
+  const flyoutRef = useRef<HTMLDivElement>(null)
+  const flyoutCloseTimer = useRef<any>(null)
+  const isResizingRef = useRef(false)
+
+  const openFlyout = useCallback(() => {
+    if (flyoutCloseTimer.current) {
+      clearTimeout(flyoutCloseTimer.current)
+      flyoutCloseTimer.current = null
+    }
+    setFlyoutOpen(true)
+  }, [])
+
+  const scheduleCloseFlyout = useCallback((delay = 200) => {
+    if (isResizingRef.current) return
+    if (flyoutCloseTimer.current) clearTimeout(flyoutCloseTimer.current)
+    flyoutCloseTimer.current = setTimeout(() => {
+      if (!isResizingRef.current) {
+        setFlyoutOpen(false)
+      }
+    }, delay)
+  }, [])
+
+  const cancelCloseFlyout = useCallback(() => {
+    if (flyoutCloseTimer.current) {
+      clearTimeout(flyoutCloseTimer.current)
+      flyoutCloseTimer.current = null
+    }
+  }, [])
+
+  const handleResizerDrag = useCallback((dragging: boolean, e?: MouseEvent) => {
+    isResizingRef.current = dragging
+    if (dragging) {
+      cancelCloseFlyout()
+    } else {
+      // If cursor is still within the flyout bounds, keep it open!
+      if (e && flyoutRef.current) {
+        const rect = flyoutRef.current.getBoundingClientRect()
+        const isInside =
+          e.clientX >= rect.left &&
+          e.clientX <= rect.right + 10 &&
+          e.clientY >= rect.top &&
+          e.clientY <= rect.bottom
+        if (isInside) {
+          cancelCloseFlyout()
+          return
+        }
+      }
+      scheduleCloseFlyout(200)
+    }
+  }, [cancelCloseFlyout, scheduleCloseFlyout])
+
+  const toggleAutoHide = useCallback(() => {
+    const next = !settings.autoHidePanes
+    if (next && !settings.sidebarVisible && !settings.pagelistVisible) {
+      setSettings({ autoHidePanes: true, sidebarVisible: true, pagelistVisible: true })
+    } else {
+      setSettings({ autoHidePanes: next })
+    }
+    flash(next ? 'Auto-hide enabled: hover left edge to reveal' : 'Side panes pinned')
+  }, [settings.autoHidePanes, settings.sidebarVisible, settings.pagelistVisible, setSettings, flash])
+
+  useEffect(() => {
+    if (showSearch || showSettings) {
+      setFlyoutOpen(false)
+    }
+  }, [showSearch, showSettings])
+
   useEffect(() => {
     init()
   }, [init])
+
+  /* ---------- mouse back / forward side buttons (buttons 3 and 4) ---------- */
+  useEffect(() => {
+    // Block the default browser history action and the canvas handlers.
+    // Navigation runs on pointerup: cancelling pointerdown suppresses the
+    // compatibility mouseup, so a mouseup listener would never fire.
+    const swallow = (e: MouseEvent) => {
+      if (e.button === 3 || e.button === 4) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    }
+    const onUp = (e: MouseEvent) => {
+      if (e.button !== 3 && e.button !== 4) return
+      e.preventDefault()
+      e.stopPropagation()
+      const st = useStore.getState()
+      if (e.button === 3) st.goBack()
+      else st.goForward()
+    }
+    window.addEventListener('mousedown', swallow, true)
+    window.addEventListener('pointerdown', swallow, true)
+    window.addEventListener('auxclick', swallow, true)
+    window.addEventListener('mouseup', swallow, true)
+    window.addEventListener('pointerup', onUp, true)
+    return () => {
+      window.removeEventListener('mousedown', swallow, true)
+      window.removeEventListener('pointerdown', swallow, true)
+      window.removeEventListener('auxclick', swallow, true)
+      window.removeEventListener('mouseup', swallow, true)
+      window.removeEventListener('pointerup', onUp, true)
+    }
+  }, [])
 
   /* ---------- theme + typography as CSS variables ---------- */
   useEffect(() => {
@@ -65,10 +195,6 @@ export default function App() {
   const activeSection = activeSectionId ? findNode(workspace.tree, activeSectionId) : null
   const pageRoots = useMemo(() => activeSection?.children.filter((c) => c.kind === 'page') ?? [], [activeSection])
 
-  const flash = useCallback((msg: string) => {
-    setToast(msg)
-    setTimeout(() => setToast(null), 1700)
-  }, [])
 
   /* ---------- keyboard shortcuts ---------- */
   useEffect(() => {
@@ -77,12 +203,26 @@ export default function App() {
       const typing = ['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName) ||
         (e.target as HTMLElement)?.isContentEditable
 
+      if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowLeft') { e.preventDefault(); st.goBack(); return }
+      if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowRight') { e.preventDefault(); st.goForward(); return }
       if (e.ctrlKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setShowSearch(true); return }
       if (e.ctrlKey && e.key.toLowerCase() === 'p' && e.shiftKey) { e.preventDefault(); setShowSearch(true); return }
+      if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); useActiveEditor.getState().setLinkModalOpen(true); return }
       if (e.ctrlKey && e.key === ',') { e.preventDefault(); setShowSettings(true); return }
       if (e.key === 'F1') { e.preventDefault(); setShowKeys(true); return }
       if (e.ctrlKey && e.key === '1') { e.preventDefault(); setSettings({ sidebarVisible: !st.settings.sidebarVisible }); return }
       if (e.ctrlKey && e.key === '2') { e.preventDefault(); setSettings({ pagelistVisible: !st.settings.pagelistVisible }); return }
+      if (e.ctrlKey && e.key === '3') {
+        e.preventDefault()
+        const next = !st.settings.autoHidePanes
+        if (next && !st.settings.sidebarVisible && !st.settings.pagelistVisible) {
+          setSettings({ autoHidePanes: true, sidebarVisible: true, pagelistVisible: true })
+        } else {
+          setSettings({ autoHidePanes: next })
+        }
+        flash(next ? 'Auto-hide enabled: hover left edge to reveal' : 'Side panes pinned')
+        return
+      }
       if (e.ctrlKey && e.key === '0') { e.preventDefault(); st.setZoom(1); return }
       if (e.ctrlKey && (e.key === '+' || e.key === '=')) { e.preventDefault(); st.setZoom(st.zoom + st.settings.zoomStep); return }
       if (e.ctrlKey && e.key === '-') { e.preventDefault(); st.setZoom(st.zoom - st.settings.zoomStep); return }
@@ -124,7 +264,15 @@ export default function App() {
 
       if (e.ctrlKey && e.key.toLowerCase() === 'a') { e.preventDefault(); st.setSelection((st.page?.cells || []).map((c) => c.id)); return }
       if ((e.key === 'Delete' || e.key === 'Backspace') && st.selection.length) { e.preventDefault(); st.deleteCells(st.selection); return }
-      if (e.key === 'Escape') { st.setSelection([]); st.setTool('select'); return }
+      if (e.key === 'Escape') {
+        if (flyoutOpenRef.current) {
+          setFlyoutOpen(false)
+          return
+        }
+        st.setSelection([])
+        st.setTool('select')
+        return
+      }
 
       if (!e.ctrlKey && !e.altKey) {
         const map: Record<string, () => void> = {
@@ -159,12 +307,159 @@ export default function App() {
     .map((id) => findNode(workspace.tree, id))
     .filter(Boolean) as TreeNode[]
 
+  const sidePanes = (
+    <>
+      {settings.sidebarVisible && (
+        <>
+          <div className="pane" style={{ width: settings.sidebarWidth }}>
+            <div className="pane-head">
+              <Book size={13} /> Notebooks
+              <div className="spacer" />
+              <button className="tb-btn" title="New notebook" onClick={() => useStore.getState().addNode('notebook', null)}><Plus size={14} /></button>
+            </div>
+            <div className="pane-body">
+              {favoritePages.length > 0 && (
+                <>
+                  <div className="pane-head" style={{ padding: '4px 6px' }}><Star size={12} /> Favorites</div>
+                  {favoritePages.map((p) => (
+                    <div key={p.id} className={`row page ${activePageId === p.id ? 'active' : ''}`} onClick={() => useStore.getState().openPage(p.id)}>
+                      <span className="twisty" />
+                      <FileIcon size={14} />
+                      <span className="label">{p.title}</span>
+                    </div>
+                  ))}
+                  <div style={{ height: 8 }} />
+                </>
+              )}
+              {(() => {
+                const activeNotebooks = workspace.tree.filter((n) => !n.archived)
+                const archivedNotebooks = workspace.tree.filter((n) => n.archived)
+                return (
+                  <>
+                    <Tree
+                      kinds={['notebook', 'section']}
+                      roots={activeNotebooks}
+                      activeId={activeSectionId}
+                      onActivate={(n) => {
+                        if (n.kind === 'section') {
+                          setActiveSectionId(n.id)
+                          const firstPage = n.children.find((c) => c.kind === 'page')
+                          if (firstPage) useStore.getState().openPage(firstPage.id)
+                        } else {
+                          useStore.getState().toggleCollapse(n.id)
+                        }
+                      }}
+                      emptyHint="No notebooks yet. Use the plus button above to make one."
+                    />
+                    <button className="add-row" onClick={() => useStore.getState().addNode('notebook', null)}>
+                      <Plus size={14} /> New notebook
+                    </button>
+                    
+                    {archivedNotebooks.length > 0 && (
+                      <div style={{ marginTop: 24, borderTop: '1px solid var(--bg-3)' }}>
+                        <button
+                          className="pane-head"
+                          style={{ width: '100%', padding: '8px 12px 4px', color: 'var(--text-faint)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', background: 'none', border: 'none', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+                          onClick={() => setShowArchive(!showArchive)}
+                        >
+                          <div style={{ transition: 'transform 0.12s ease', display: 'flex', alignItems: 'center', transform: showArchive ? 'rotate(90deg)' : 'none' }}>
+                            <Chevron size={12} />
+                          </div>
+                          <Archive size={12} />
+                          Archived Notebooks
+                        </button>
+                        {showArchive && (
+                          <Tree
+                            kinds={['notebook', 'section']}
+                            roots={archivedNotebooks}
+                            activeId={activeSectionId}
+                            onActivate={(n) => {
+                              if (n.kind === 'section') {
+                                setActiveSectionId(n.id)
+                                const firstPage = n.children.find((c) => c.kind === 'page')
+                                if (firstPage) useStore.getState().openPage(firstPage.id)
+                              } else {
+                                useStore.getState().toggleCollapse(n.id)
+                              }
+                            }}
+                          />
+                        )}
+                      </div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+          <Resizer
+            value={settings.sidebarWidth}
+            min={150}
+            max={460}
+            onChange={(w) => setSettings({ sidebarWidth: w })}
+            onDoubleClick={() => setSettings({ sidebarVisible: false })}
+            onDragChange={handleResizerDrag}
+          />
+        </>
+      )}
+
+      {settings.pagelistVisible && (
+        <>
+          <div className="pane pages" style={{ width: settings.pagelistWidth }}>
+            <div className="pane-head">
+              <Folder size={13} /> {activeSection?.title || 'Pages'}
+              <div className="spacer" />
+              <button
+                className="tb-btn"
+                title="New page (Ctrl+Shift+N)"
+                disabled={!activeSectionId}
+                onClick={() => useStore.getState().addNode('page', activeSectionId)}
+              >
+                <Plus size={14} />
+              </button>
+            </div>
+            <div className="pane-body">
+              <Tree
+                kinds={['page']}
+                roots={pageRoots}
+                activeId={activePageId}
+                onActivate={(n) => useStore.getState().openPage(n.id)}
+                emptyHint={activeSection ? 'No pages in this section yet.' : 'Pick a section on the left.'}
+              />
+              {activeSectionId && (
+                <button className="add-row" onClick={() => useStore.getState().addNode('page', activeSectionId)}>
+                  <Plus size={14} /> New page
+                </button>
+              )}
+            </div>
+          </div>
+          <Resizer
+            value={settings.pagelistWidth}
+            min={160}
+            max={520}
+            onChange={(w) => setSettings({ pagelistWidth: w })}
+            onDoubleClick={() => setSettings({ pagelistVisible: false })}
+            onDragChange={handleResizerDrag}
+          />
+        </>
+      )}
+    </>
+  )
+
   return (
     <div className="app">
       <div className="titlebar">
+        <button className="tb-btn" title="Back (Alt+Left, mouse back button)" disabled={!canGoBack} onClick={() => useStore.getState().goBack()}><ArrowLeft /></button>
+        <button className="tb-btn" title="Forward (Alt+Right, mouse forward button)" disabled={!canGoForward} onClick={() => useStore.getState().goForward()}><ArrowRight /></button>
         <span className="brand">Notes</span>
         <button className="tb-btn" title="Show or hide the notebooks pane (Ctrl+1)" onClick={() => setSettings({ sidebarVisible: !settings.sidebarVisible })}><PanelLeft /></button>
         <button className="tb-btn" title="Show or hide the pages pane (Ctrl+2)" onClick={() => setSettings({ pagelistVisible: !settings.pagelistVisible })}><PanelMid /></button>
+        <button
+          className={`tb-btn ${settings.autoHidePanes ? 'on' : ''}`}
+          title={settings.autoHidePanes ? 'Auto-hide side panes is ON (hover left edge to reveal, click to pin) — Ctrl+3' : 'Auto-hide side panes (hover left edge to reveal) — Ctrl+3'}
+          onClick={toggleAutoHide}
+        >
+          <SidebarPeek />
+        </button>
         <button className="tb-btn" title="Search (Ctrl+F)" onClick={() => setShowSearch(true)}><SearchIcon /> Search</button>
         <div className="spacer" />
         <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
@@ -181,140 +476,43 @@ export default function App() {
         )}
       </div>
 
-      <div className="body">
-        {settings.sidebarVisible && (
+      <div
+        className="body"
+        onMouseMove={(e) => {
+          if (settings.autoHidePanes && !flyoutOpen && e.clientX <= 14) {
+            openFlyout()
+          }
+        }}
+      >
+        {!settings.autoHidePanes ? (
+          sidePanes
+        ) : (
           <>
-            <div className="pane" style={{ width: settings.sidebarWidth }}>
-              <div className="pane-head">
-                <Book size={13} /> Notebooks
-                <div className="spacer" />
-                <button className="tb-btn" title="New notebook" onClick={() => useStore.getState().addNode('notebook', null)}><Plus size={14} /></button>
-              </div>
-              <div className="pane-body">
-                {favoritePages.length > 0 && (
-                  <>
-                    <div className="pane-head" style={{ padding: '4px 6px' }}><Star size={12} /> Favorites</div>
-                    {favoritePages.map((p) => (
-                      <div key={p.id} className={`row page ${activePageId === p.id ? 'active' : ''}`} onClick={() => useStore.getState().openPage(p.id)}>
-                        <span className="twisty" />
-                        <FileIcon size={14} />
-                        <span className="label">{p.title}</span>
-                      </div>
-                    ))}
-                    <div style={{ height: 8 }} />
-                  </>
-                )}
-                {(() => {
-                  const activeNotebooks = workspace.tree.filter((n) => !n.archived)
-                  const archivedNotebooks = workspace.tree.filter((n) => n.archived)
-                  return (
-                    <>
-                      <Tree
-                        kinds={['notebook', 'section']}
-                        roots={activeNotebooks}
-                        activeId={activeSectionId}
-                        onActivate={(n) => {
-                          if (n.kind === 'section') {
-                            setActiveSectionId(n.id)
-                            const firstPage = n.children.find((c) => c.kind === 'page')
-                            if (firstPage) useStore.getState().openPage(firstPage.id)
-                          } else {
-                            useStore.getState().toggleCollapse(n.id)
-                          }
-                        }}
-                        emptyHint="No notebooks yet. Use the plus button above to make one."
-                      />
-                      <button className="add-row" onClick={() => useStore.getState().addNode('notebook', null)}>
-                        <Plus size={14} /> New notebook
-                      </button>
-                      
-                      {archivedNotebooks.length > 0 && (
-                        <div style={{ marginTop: 24, borderTop: '1px solid var(--bg-3)' }}>
-                          <button
-                            className="pane-head"
-                            style={{ width: '100%', padding: '8px 12px 4px', color: 'var(--text-faint)', fontSize: 11, textTransform: 'uppercase', letterSpacing: '0.05em', background: 'none', border: 'none', textAlign: 'left', display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
-                            onClick={() => setShowArchive(!showArchive)}
-                          >
-                            <div style={{ transition: 'transform 0.12s ease', display: 'flex', alignItems: 'center', transform: showArchive ? 'rotate(90deg)' : 'none' }}>
-                              <Chevron size={12} />
-                            </div>
-                            <Archive size={12} />
-                            Archived Notebooks
-                          </button>
-                          {showArchive && (
-                            <Tree
-                              kinds={['notebook', 'section']}
-                              roots={archivedNotebooks}
-                              activeId={activeSectionId}
-                              onActivate={(n) => {
-                                if (n.kind === 'section') {
-                                  setActiveSectionId(n.id)
-                                  const firstPage = n.children.find((c) => c.kind === 'page')
-                                  if (firstPage) useStore.getState().openPage(firstPage.id)
-                                } else {
-                                  useStore.getState().toggleCollapse(n.id)
-                                }
-                              }}
-                            />
-                          )}
-                        </div>
-                      )}
-                    </>
-                  )
-                })()}
-              </div>
-            </div>
-            <Resizer
-              value={settings.sidebarWidth}
-              min={150}
-              max={460}
-              onChange={(w) => setSettings({ sidebarWidth: w })}
-              onDoubleClick={() => setSettings({ sidebarVisible: false })}
+            <div
+              className="sidebar-hover-zone"
+              title="Move mouse here to reveal Notebook and Pages"
+              onMouseEnter={openFlyout}
+              onMouseMove={openFlyout}
             />
+            <div
+              ref={flyoutRef}
+              className={`sidebar-flyout ${flyoutOpen ? 'open' : ''}`}
+              onMouseEnter={cancelCloseFlyout}
+              onMouseLeave={() => scheduleCloseFlyout(200)}
+            >
+              {sidePanes}
+            </div>
           </>
         )}
 
-        {settings.pagelistVisible && (
-          <>
-            <div className="pane pages" style={{ width: settings.pagelistWidth }}>
-              <div className="pane-head">
-                <Folder size={13} /> {activeSection?.title || 'Pages'}
-                <div className="spacer" />
-                <button
-                  className="tb-btn"
-                  title="New page (Ctrl+Shift+N)"
-                  disabled={!activeSectionId}
-                  onClick={() => useStore.getState().addNode('page', activeSectionId)}
-                >
-                  <Plus size={14} />
-                </button>
-              </div>
-              <div className="pane-body">
-                <Tree
-                  kinds={['page']}
-                  roots={pageRoots}
-                  activeId={activePageId}
-                  onActivate={(n) => useStore.getState().openPage(n.id)}
-                  emptyHint={activeSection ? 'No pages in this section yet.' : 'Pick a section on the left.'}
-                />
-                {activeSectionId && (
-                  <button className="add-row" onClick={() => useStore.getState().addNode('page', activeSectionId)}>
-                    <Plus size={14} /> New page
-                  </button>
-                )}
-              </div>
-            </div>
-            <Resizer
-              value={settings.pagelistWidth}
-              min={160}
-              max={520}
-              onChange={(w) => setSettings({ pagelistWidth: w })}
-              onDoubleClick={() => setSettings({ pagelistVisible: false })}
-            />
-          </>
-        )}
-
-        <div className="main">
+        <div
+          className="main"
+          onClick={() => {
+            if (settings.autoHidePanes && flyoutOpen) {
+              setFlyoutOpen(false)
+            }
+          }}
+        >
           <ErrorBoundary label="the toolbar"><Toolbar /></ErrorBoundary>
           <ErrorBoundary label="the page"><Canvas /></ErrorBoundary>
           {settings.showStatusBar && (
@@ -334,6 +532,7 @@ export default function App() {
       {showSearch && <SearchModal onClose={() => setShowSearch(false)} />}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
       {showKeys && <ShortcutSheet onClose={() => setShowKeys(false)} />}
+      {linkModalOpen && <LinkModal onClose={() => setLinkModalOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
@@ -350,8 +549,8 @@ function nextCellSpot() {
 }
 
 function Resizer({
-  value, min, max, onChange, onDoubleClick,
-}: { value: number; min: number; max: number; onChange(v: number): void; onDoubleClick?(): void }) {
+  value, min, max, onChange, onDoubleClick, onDragChange,
+}: { value: number; min: number; max: number; onChange(v: number): void; onDoubleClick?(): void; onDragChange?(dragging: boolean, e?: MouseEvent): void }) {
   const start = useRef<{ x: number; v: number } | null>(null)
   const [on, setOn] = useState(false)
 
@@ -360,10 +559,11 @@ function Resizer({
       if (!start.current) return
       onChange(Math.min(max, Math.max(min, start.current.v + (e.clientX - start.current.x))))
     }
-    const up = () => {
+    const up = (e: MouseEvent) => {
       if (!start.current) return
       start.current = null
       setOn(false)
+      onDragChange?.(false, e)
       document.body.style.cursor = ''
     }
     window.addEventListener('mousemove', move)
@@ -372,7 +572,7 @@ function Resizer({
       window.removeEventListener('mousemove', move)
       window.removeEventListener('mouseup', up)
     }
-  }, [min, max, onChange])
+  }, [min, max, onChange, onDragChange])
 
   return (
     <div
@@ -382,6 +582,7 @@ function Resizer({
       onMouseDown={(e) => {
         start.current = { x: e.clientX, v: value }
         setOn(true)
+        onDragChange?.(true, e.nativeEvent)
         document.body.style.cursor = 'col-resize'
         e.preventDefault()
       }}
@@ -391,7 +592,9 @@ function Resizer({
 
 function ShortcutSheet({ onClose }: { onClose(): void }) {
   const rows: [string, string][] = [
+    ['Alt Left / Alt Right', 'Back and forward between pages (also mouse side buttons)'],
     ['Ctrl F', 'Search everything'],
+    ['Ctrl K', 'Insert or edit link'],
     ['Ctrl ,', 'Settings'],
     ['Ctrl Enter', 'New cell'],
     ['Ctrl Shift N', 'New page'],
@@ -401,6 +604,7 @@ function ShortcutSheet({ onClose }: { onClose(): void }) {
     ['Ctrl Z / Ctrl Y', 'Undo and redo'],
     ['Ctrl S', 'Save now'],
     ['Ctrl 1 / Ctrl 2', 'Show or hide the side panes'],
+    ['Ctrl 3', 'Toggle auto-hide side panes (hover to reveal)'],
     ['Ctrl 0 / Ctrl + / Ctrl -', 'Zoom reset, in, out'],
     ['Ctrl wheel', 'Zoom the page'],
     ['Right mouse drag', 'Pan the page'],

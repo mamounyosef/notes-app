@@ -1,8 +1,253 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { useStore } from '../store'
 import { DEFAULT_SETTINGS, type Settings } from '../types'
 import { storage, isDesktop } from '../lib/storage'
-import { X } from './Icons'
+import { X, Plus, Min, Undo } from './Icons'
+import { SHORTCUTS, prettyShortcut, shortcutFromEvent, type ShortcutKey } from '../editor/shortcuts'
+
+function getDecimals(step: number): number {
+  const str = step.toString()
+  const dot = str.indexOf('.')
+  return dot >= 0 ? str.length - dot - 1 : 0
+}
+
+function formatVal(val: number, decimals: number): string {
+  if (isNaN(val)) return '0'
+  return Number(val.toFixed(decimals)).toString()
+}
+
+function snapToStep(val: number, step: number, min: number, decimals: number): number {
+  const snapped = Math.round((val - min) / step) * step + min
+  return Number(snapped.toFixed(decimals))
+}
+
+interface NumSliderProps {
+  label: string
+  sub?: string
+  min: number
+  max: number
+  step?: number
+  unit?: string
+  val: number
+  defaultVal?: number
+  onChange: (val: number) => void
+}
+
+function NumSlider({
+  label,
+  sub,
+  min,
+  max,
+  step = 1,
+  unit = '',
+  val,
+  defaultVal,
+  onChange,
+}: NumSliderProps) {
+  const decimals = getDecimals(step)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editText, setEditText] = useState(() => formatVal(val, decimals))
+
+  useEffect(() => {
+    if (!isEditing) {
+      setEditText(formatVal(val, decimals))
+    }
+  }, [val, decimals, isEditing])
+
+  const commit = (nextVal: number) => {
+    const clamped = Math.min(max, Math.max(min, nextVal))
+    const snapped = snapToStep(clamped, step, min, decimals)
+    onChange(snapped)
+    setEditText(formatVal(snapped, decimals))
+  }
+
+  const commitText = () => {
+    const parsed = parseFloat(editText)
+    if (isNaN(parsed)) {
+      setEditText(formatVal(val, decimals))
+    } else {
+      commit(parsed)
+    }
+    setIsEditing(false)
+  }
+
+  const stepBy = (direction: number) => {
+    let baseVal = val
+    if (isEditing) {
+      const parsed = parseFloat(editText)
+      if (!isNaN(parsed)) {
+        baseVal = parsed
+      }
+    }
+    const next = baseVal + direction * step
+    commit(next)
+  }
+
+  const pct = max > min ? Math.max(0, Math.min(100, ((val - min) / (max - min)) * 100)) : 0
+  const isModified = defaultVal !== undefined && Math.abs(val - defaultVal) > 0.0001
+  const cleanUnit = unit.trim()
+
+  return (
+    <div className="set-row has-slider">
+      <label>
+        {label}
+        {sub && <span className="sub">{sub}</span>}
+      </label>
+      <div className="slider-control">
+        <div className="slider-track-wrap">
+          <input
+            type="range"
+            className="slider-input-range"
+            min={min}
+            max={max}
+            step={step}
+            value={val}
+            style={{
+              '--slider-bg': `linear-gradient(to right, var(--accent) 0%, var(--accent) ${pct}%, var(--bg-4) ${pct}%, var(--bg-4) 100%)`,
+            } as React.CSSProperties}
+            onChange={(e) => commit(Number(e.target.value))}
+            onDoubleClick={() => defaultVal !== undefined && commit(defaultVal)}
+            title={defaultVal !== undefined ? `Double-click to reset (${formatVal(defaultVal, decimals)}${cleanUnit ? ' ' + cleanUnit : ''})` : undefined}
+          />
+        </div>
+
+        <div className="slider-val-box">
+          <button
+            type="button"
+            className="slider-step-btn"
+            title="Decrease"
+            disabled={val <= min}
+            onClick={() => stepBy(-1)}
+            tabIndex={-1}
+          >
+            <Min size={12} />
+          </button>
+          <input
+            type="text"
+            inputMode="decimal"
+            className="slider-num-input"
+            value={isEditing ? editText : formatVal(val, decimals)}
+            onFocus={(e) => {
+              setIsEditing(true)
+              setEditText(formatVal(val, decimals))
+              e.target.select()
+            }}
+            onChange={(e) => setEditText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                commitText()
+                ;(e.target as HTMLElement).blur()
+              } else if (e.key === 'Escape') {
+                setEditText(formatVal(val, decimals))
+                setIsEditing(false)
+                ;(e.target as HTMLElement).blur()
+              } else if (e.key === 'ArrowUp') {
+                e.preventDefault()
+                stepBy(1)
+              } else if (e.key === 'ArrowDown') {
+                e.preventDefault()
+                stepBy(-1)
+              }
+            }}
+            onWheel={(e) => {
+              if (isEditing) {
+                e.preventDefault()
+                stepBy(e.deltaY < 0 ? 1 : -1)
+              }
+            }}
+            onBlur={commitText}
+          />
+          {cleanUnit && <span className="slider-unit">{cleanUnit}</span>}
+          <button
+            type="button"
+            className="slider-step-btn"
+            title="Increase"
+            disabled={val >= max}
+            onClick={() => stepBy(1)}
+            tabIndex={-1}
+          >
+            <Plus size={12} />
+          </button>
+        </div>
+
+        {defaultVal !== undefined ? (
+          isModified ? (
+            <button
+              type="button"
+              className="slider-reset-btn"
+              title={`Reset to default (${formatVal(defaultVal, decimals)}${cleanUnit ? ' ' + cleanUnit : ''})`}
+              onClick={() => commit(defaultVal)}
+              tabIndex={-1}
+            >
+              <Undo size={13} />
+            </button>
+          ) : (
+            <div className="slider-reset-placeholder" />
+          )
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+/** A shortcut field that records the next key combination pressed. */
+function ShortcutRow({
+  label, value, defaultValue, warning, onChange,
+}: { label: string; value: string; defaultValue: string; warning?: string; onChange(v: string): void }) {
+  const [recording, setRecording] = useState(false)
+  const [hint, setHint] = useState<string | null>(null)
+
+  return (
+    <div className="set-row">
+      <label>
+        {label}
+        {(hint || warning) && <span className="sub" style={{ color: 'var(--danger, #e06c75)' }}>{hint || warning}</span>}
+      </label>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+        <button
+          type="button"
+          className={`btn shortcut-rec ${recording ? 'recording' : ''}`}
+          onClick={() => { setRecording(true); setHint(null) }}
+          onBlur={() => setRecording(false)}
+          onKeyDown={(e) => {
+            if (!recording) return
+            e.preventDefault()
+            e.stopPropagation()
+            if (e.key === 'Escape') { setRecording(false); return }
+            if ((e.key === 'Backspace' || e.key === 'Delete') && !e.ctrlKey && !e.altKey && !e.metaKey) {
+              onChange('')
+              setRecording(false)
+              return
+            }
+            const combo = shortcutFromEvent(e)
+            if (!combo) return
+            const fnKey = /^F\d{1,2}$/.test(e.key)
+            if (!e.ctrlKey && !e.altKey && !e.metaKey && !fnKey) {
+              setHint('Use Ctrl, Alt or Win with a key, or a function key')
+              return
+            }
+            setHint(null)
+            onChange(combo)
+            setRecording(false)
+          }}
+          style={{ minWidth: 150 }}
+        >
+          {recording ? 'Press keys...' : value ? prettyShortcut(value) : 'None'}
+        </button>
+        {value !== defaultValue ? (
+          <button
+            type="button"
+            className="slider-reset-btn"
+            title={`Reset to default (${prettyShortcut(defaultValue)})`}
+            onClick={() => { onChange(defaultValue); setHint(null) }}
+          >
+            <Undo size={13} />
+          </button>
+        ) : null}
+      </div>
+    </div>
+  )
+}
 
 const THEMES: { id: Settings['theme']; label: string }[] = [
   { id: 'dark', label: 'Dark' },
@@ -27,29 +272,30 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
   const settings = useStore((s) => s.settings)
   const set = useStore((s) => s.setSettings)
   const vaultPath = useStore((s) => s.vaultPath)
-  const [tab, setTab] = useState<'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'storage'>('look')
+  const [tab, setTab] = useState<'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'storage'>('look')
 
   const Num = ({
     k, label, sub, min, max, step = 1, unit = '',
-  }: { k: keyof Settings; label: string; sub?: string; min: number; max: number; step?: number; unit?: string }) => (
-    <div className="set-row">
-      <label>
-        {label}
-        {sub && <span className="sub">{sub}</span>}
-      </label>
-      <div className="with-val">
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={Number(settings[k])}
-          onChange={(e) => set({ [k]: Number(e.target.value) } as any)}
-        />
-        <span>{String(settings[k])}{unit}</span>
-      </div>
-    </div>
-  )
+  }: { k: keyof Settings; label: string; sub?: string; min: number; max: number; step?: number; unit?: string }) => {
+    const rawVal = settings[k]
+    const def = DEFAULT_SETTINGS[k]
+    const val = typeof rawVal === 'number' ? rawVal : (typeof def === 'number' ? def : min)
+    const defaultVal = typeof def === 'number' ? def : undefined
+
+    return (
+      <NumSlider
+        label={label}
+        sub={sub}
+        min={min}
+        max={max}
+        step={step}
+        unit={unit}
+        val={val}
+        defaultVal={defaultVal}
+        onChange={(v) => set({ [k]: v } as any)}
+      />
+    )
+  }
 
   const Toggle = ({ k, label, sub }: { k: keyof Settings; label: string; sub?: string }) => (
     <div className="set-row">
@@ -105,9 +351,9 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
           <h2>Settings</h2>
           <div className="spacer" />
           <div className="theme-chips">
-            {(['look', 'text', 'cells', 'canvas', 'editing', 'storage'] as const).map((t) => (
+            {(['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'storage'] as const).map((t) => (
               <button key={t} className={`theme-chip ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}>
-                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', storage: 'Storage' }[t]}
+                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', shortcuts: 'Shortcuts', storage: 'Storage' }[t]}
               </button>
             ))}
           </div>
@@ -133,6 +379,7 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
                 <h3>Window</h3>
                 <Toggle k="sidebarVisible" label="Show notebooks pane" sub="Ctrl+1" />
                 <Toggle k="pagelistVisible" label="Show pages pane" sub="Ctrl+2" />
+                <Toggle k="autoHidePanes" label="Auto-hide side panes on hover" sub="Reveal when mouse moves to left edge (Ctrl+3)" />
                 <Toggle k="showStatusBar" label="Show status bar" />
                 <Toggle k="showPageDate" label="Show the date under the page title" />
               </div>
@@ -205,20 +452,47 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
           )}
 
           {tab === 'editing' && (
+            <>
+              <div className="set-group">
+                <h3>Typing and pasting</h3>
+                <Num k="maxImageWidth" label="Max pasted image width" sub="Resizes large images automatically" min={100} max={2000} step={50} unit=" px" />
+                <Choice k="markdownPaste" label="Convert pasted Markdown" sub="Text copied from an AI chat keeps its headings, lists, tables, code and LaTeX" options={[
+                  { v: 'auto', l: 'When it looks like Markdown' },
+                  { v: 'always', l: 'Always' },
+                  { v: 'never', l: 'Never, paste plain' },
+                ]} />
+                <Toggle k="autoMath" label="Render LaTeX automatically" sub="$x^2$, $$...$$, \\( ... \\) and \\[ ... \\]" />
+                <Toggle k="autoLink" label="Turn typed addresses into links" />
+                <Toggle k="spellcheck" label="Check spelling" />
+                <Toggle k="confirmDelete" label="Ask before deleting a notebook, section or page" />
+                <Num k="autosaveMs" label="Autosave delay" min={200} max={4000} step={100} unit=" ms" />
+              </div>
+            </>
+          )}
+
+          {tab === 'shortcuts' && (
             <div className="set-group">
-              <h3>Typing and pasting</h3>
-              <Num k="maxImageWidth" label="Max pasted image width" sub="Resizes large images automatically" min={100} max={2000} step={50} unit=" px" />
-              <Choice k="markdownPaste" label="Convert pasted Markdown" sub="Text copied from an AI chat keeps its headings, lists, tables, code and LaTeX" options={[
-                { v: 'auto', l: 'When it looks like Markdown' },
-                { v: 'always', l: 'Always' },
-                { v: 'never', l: 'Never, paste plain' },
-              ]} />
-              <Toggle k="autoMath" label="Render LaTeX automatically" sub="$x^2$, $$...$$, \\( ... \\) and \\[ ... \\]" />
-              <Toggle k="autoLink" label="Turn typed addresses into links" />
-              <Toggle k="spellcheck" label="Check spelling" />
-              <Toggle k="confirmDelete" label="Ask before deleting a notebook, section or page" />
-              <Num k="autosaveMs" label="Autosave delay" min={200} max={4000} step={100} unit=" ms" />
-              <Text k="thickLineShortcut" label="Thick line shortcut" sub="Requires a reload to apply" />
+              <h3>Editor shortcuts</h3>
+              <div className="empty-hint" style={{ padding: '0 0 8px' }}>
+                Click a shortcut, then press the new key combination. Esc cancels, Backspace removes it.
+                Changes apply immediately.
+              </div>
+              {SHORTCUTS.map((s) => {
+                const value = String(settings[s.key] || '')
+                const clash = value
+                  ? SHORTCUTS.find((o) => o.key !== s.key && String(settings[o.key] || '').toLowerCase() === value.toLowerCase())
+                  : undefined
+                return (
+                  <ShortcutRow
+                    key={s.key}
+                    label={s.label}
+                    value={value}
+                    defaultValue={String(DEFAULT_SETTINGS[s.key] || '')}
+                    warning={clash ? `Also used by ${clash.label}` : undefined}
+                    onChange={(v) => set({ [s.key]: v } as Partial<Settings>)}
+                  />
+                )
+              })}
             </div>
           )}
 

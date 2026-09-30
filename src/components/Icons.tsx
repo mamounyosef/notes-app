@@ -15,6 +15,8 @@ const s = (p: P) => ({
 })
 
 export const Chevron = (p: P) => (<svg {...s(p)}><path d="M9 6l6 6-6 6" /></svg>)
+export const ArrowLeft = (p: P) => (<svg {...s(p)}><path d="M19 12H5M11 6l-6 6 6 6" /></svg>)
+export const ArrowRight = (p: P) => (<svg {...s(p)}><path d="M5 12h14M13 6l6 6-6 6" /></svg>)
 export const Plus = (p: P) => (<svg {...s(p)}><path d="M12 5v14M5 12h14" /></svg>)
 export const Book = (p: P) => (<svg {...s(p)}><path d="M4 5.5A2.5 2.5 0 016.5 3H20v16H6.5A2.5 2.5 0 004 21.5z" /></svg>)
 export const Folder = (p: P) => (<svg {...s(p)}><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z" /></svg>)
@@ -43,6 +45,7 @@ export const LinkI = (p: P) => (<svg {...s(p)}><path d="M10 13a5 5 0 007 0l2-2a5
 export const CodeI = (p: P) => (<svg {...s(p)}><path d="M8 7l-5 5 5 5M16 7l5 5-5 5" /></svg>)
 export const Sigma = (p: P) => (<svg {...s(p)}><path d="M18 5H7l6 7-6 7h11" /></svg>)
 export const Quote = (p: P) => (<svg {...s(p)}><path d="M7 7h4v5c0 2.5-1.5 4.2-4 5M15 7h4v5c0 2.5-1.5 4.2-4 5" /></svg>)
+export const ColumnsI = (p: P) => (<svg {...s(p)}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M12 4v16" strokeWidth="3" /></svg>)
 export const Hr = (p: P) => (<svg {...s(p)}><path d="M3 12h18" /><path d="M6 7h12M6 17h12" opacity=".4" /></svg>)
 export const Undo = (p: P) => (<svg {...s(p)}><path d="M9 14l-5-5 5-5" /><path d="M4 9h9a6 6 0 010 12H8" /></svg>)
 export const Redo = (p: P) => (<svg {...s(p)}><path d="M15 14l5-5-5-5" /><path d="M20 9h-9a6 6 0 100 12h5" /></svg>)
@@ -64,3 +67,10 @@ export const Sun = (p: P) => (<svg {...s(p)}><circle cx="12" cy="12" r="4" /><pa
 export const Moon = (p: P) => (<svg {...s(p)}><path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z" /></svg>)
 
 export const Archive = (p: P) => (<svg {...s(p)}><polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" /></svg>)
+export const SidebarPeek = (p: P) => (
+  <svg {...s(p)}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M8 4v16" strokeDasharray="2 2" />
+    <path d="M12 12h4m-2-2l2 2-2 2" />
+  </svg>
+)

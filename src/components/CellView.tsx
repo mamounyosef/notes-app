@@ -1,4 +1,4 @@
-import React, { memo, useCallback, useEffect, useRef } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 import RichEditor from './RichEditor'
 import { Grip } from './Icons'
 import type { Cell, Settings } from '../types'
@@ -34,6 +34,27 @@ function CellViewInner({
 }: Props) {
   const titleRef = useRef<HTMLInputElement>(null)
 
+  const hasTitle = Boolean(cell.title && cell.title.trim().length > 0)
+  const isTitleVisible = cell.showTitle && (hasTitle || selected || editing || cell.collapsed)
+
+  const prevTitleVisible = useRef(isTitleVisible)
+  useLayoutEffect(() => {
+    if (prevTitleVisible.current !== isTitleVisible) {
+      const wrap = document.querySelector('.canvas-wrap') as HTMLElement | null
+      if (wrap) {
+        const expectedTop = wrap.scrollTop
+        const expectedLeft = wrap.scrollLeft
+        if (wrap.scrollTop !== expectedTop) wrap.scrollTop = expectedTop
+        if (wrap.scrollLeft !== expectedLeft) wrap.scrollLeft = expectedLeft
+        requestAnimationFrame(() => {
+          if (wrap.scrollTop !== expectedTop) wrap.scrollTop = expectedTop
+          if (wrap.scrollLeft !== expectedLeft) wrap.scrollLeft = expectedLeft
+        })
+      }
+    }
+    prevTitleVisible.current = isTitleVisible
+  }, [isTitleVisible])
+
   // A brand new cell starts with the cursor in its title, like OneNote.
   useEffect(() => {
     if (editing && !cell.title && !cell.html && cell.showTitle) titleRef.current?.focus()
@@ -48,14 +69,20 @@ function CellViewInner({
       
       // Auto-grow cell width if content is wider than the cell
       const chromeW = settings.cellPadding * 2
-      const wantedW = Math.max(cell.w, Math.round(contentW + chromeW))
+      const rawWantedW = Math.max(cell.w, Math.round(contentW + chromeW))
+      const wantedW = settings.snapToGrid && settings.gridSize > 0
+        ? Math.ceil(rawWantedW / settings.gridSize) * settings.gridSize
+        : rawWantedW
       
       if (wantedW > cell.w && Math.abs(wantedW - cell.w) > 2) {
         patch.w = wantedW
       }
 
       const chromeH = 14 + settings.cellPadding * 2 + (cell.showTitle ? settings.titleSize * 1.5 + 4 : 0)
-      const wantedH = Math.max(60, Math.round(contentH + chromeH))
+      const rawWantedH = Math.max(60, Math.round(contentH + chromeH))
+      const wantedH = settings.snapToGrid && settings.gridSize > 0
+        ? Math.ceil(rawWantedH / settings.gridSize) * settings.gridSize
+        : rawWantedH
       
       if (cell.autoHeight) {
         if (Math.abs(wantedH - cell.h) > 2) {
@@ -71,7 +98,7 @@ function CellViewInner({
         onChange(patch)
       }
     },
-    [cell.autoHeight, cell.collapsed, cell.w, cell.h, cell.showTitle, settings.cellPadding, settings.titleSize, onChange],
+    [cell.autoHeight, cell.collapsed, cell.w, cell.h, cell.showTitle, settings.cellPadding, settings.titleSize, settings.snapToGrid, settings.gridSize, onChange],
   )
 
   const height = cell.collapsed ? 14 + settings.titleSize * 1.7 : cell.h
@@ -126,7 +153,7 @@ function CellViewInner({
             })}
           </svg>
         )}
-        {cell.showTitle && (
+        {isTitleVisible && (
           <input
             ref={titleRef}
             className="cell-title"
@@ -134,12 +161,20 @@ function CellViewInner({
             placeholder="Title"
             spellCheck={settings.spellcheck}
             style={{ fontSize: settings.titleSize, color: settings.titleColor, lineHeight: 1.3 }}
+            onFocus={onStartEdit}
             onChange={(e) => onChange({ title: e.target.value })}
+            onBlur={() => {
+              if (cell.title && !cell.title.trim()) {
+                onChange({ title: '' })
+              }
+            }}
             onKeyDown={(e) => {
               if (e.key === 'Enter') {
                 e.preventDefault()
                 const pm = (e.currentTarget.closest('.cell') as HTMLElement)?.querySelector('.ProseMirror') as HTMLElement
                 pm?.focus()
+              } else if (e.key === 'Escape') {
+                e.currentTarget.blur()
               }
             }}
           />

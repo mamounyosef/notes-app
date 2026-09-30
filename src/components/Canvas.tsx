@@ -1,9 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import CellView from './CellView'
 import { Menu, type MenuItem } from './Menu'
 import { useStore } from '../store'
 import type { Cell, Stroke } from '../types'
 import { Copy, Layers, Trash, SpaceI, Plus } from './Icons'
+import { columnLineMenu } from '../editor/columns'
+import { flashSearchMatches } from '../editor/searchHighlight'
 
 type Drag =
   | { mode: 'none' }
@@ -53,6 +55,25 @@ export default function Canvas() {
     return () => ro.disconnect()
   }, [])
 
+  /* -------- preserve canvas scroll when editing ends -------- */
+  const prevEditingId = useRef(editingCellId)
+  useLayoutEffect(() => {
+    if (prevEditingId.current && !editingCellId) {
+      const wrap = wrapRef.current
+      if (wrap) {
+        const expectedTop = wrap.scrollTop
+        const expectedLeft = wrap.scrollLeft
+        if (wrap.scrollTop !== expectedTop) wrap.scrollTop = expectedTop
+        if (wrap.scrollLeft !== expectedLeft) wrap.scrollLeft = expectedLeft
+        requestAnimationFrame(() => {
+          if (wrap.scrollTop !== expectedTop) wrap.scrollTop = expectedTop
+          if (wrap.scrollLeft !== expectedLeft) wrap.scrollLeft = expectedLeft
+        })
+      }
+    }
+    prevEditingId.current = editingCellId
+  }, [editingCellId])
+
   /* -------- canvas size: fits the content, never an endless sheet -------- */
   const size = useMemo(() => {
     const cells = page?.cells || []
@@ -90,6 +111,7 @@ export default function Canvas() {
   const onCanvasPointerDown = (e: React.PointerEvent) => {
     if (e.button === 2 || (e.button === 1 && settings.panButton === 'middle')) {
       e.preventDefault()
+      ;(document.activeElement as HTMLElement | null)?.blur()
       const wrap = wrapRef.current!
       panPointerRef.current = true
       suppressContextMenuRef.current = false
@@ -124,6 +146,7 @@ export default function Canvas() {
     }
     // Plain select: start a marquee and clear the selection.
     if (!(e.target as HTMLElement).closest('.cell')) {
+      ;(document.activeElement as HTMLElement | null)?.blur()
       store.getState().setSelection([])
       store.setState({ editingCellId: null })
       setDrag({ mode: 'marquee', x0: p.x, y0: p.y, x1: p.x, y1: p.y })
@@ -140,7 +163,7 @@ export default function Canvas() {
       }
       return true
     })
-    
+
     let changedCells = false
     const cells = pg.cells.map(c => {
       if (!c.strokes || !c.strokes.length) return c
@@ -200,13 +223,13 @@ export default function Canvas() {
         }
         if (d.dir.includes('w')) {
           const nx = snap(b.x + dx)
-          patch.w = Math.max(120, b.w + b.x - nx)
-          patch.x = b.x + b.w - patch.w
+          patch.w = Math.max(120, snap(b.w + b.x - nx))
+          patch.x = nx
         }
         if (d.dir.includes('n')) {
           const ny = snap(b.y + dy)
-          patch.h = Math.max(60, b.h + b.y - ny)
-          patch.y = b.y + b.h - patch.h
+          patch.h = Math.max(60, snap(b.h + b.y - ny))
+          patch.y = ny
           patch.autoHeight = false
         }
         store.getState().updateCell(d.id, patch, false, false) // Do not reflow during drag
@@ -271,21 +294,28 @@ export default function Canvas() {
         const wrap = wrapRef.current
         const cw = wrap.clientWidth
         const ch = wrap.clientHeight
-        
+
         // Timeout ensures DOM is ready
         setTimeout(() => {
-          wrap.scrollTo({
-            left: cell.x * zoom - cw / 2 + cell.w * zoom / 2,
-            top: cell.y * zoom - ch / 2 + (cell.collapsed ? 30 : cell.h) * zoom / 2,
-            behavior: 'smooth'
-          })
+          const el = document.querySelector<HTMLElement>(`[data-cell-id="${cell.id}"]`)
+          const match = el ? flashSearchMatches(el, searchResult.query) : null
 
-          const el = document.querySelector(`[data-cell-id="${cell.id}"]`)
+          let left = cell.x * zoom - cw / 2 + cell.w * zoom / 2
+          let top = cell.y * zoom - ch / 2 + (cell.collapsed ? 30 : cell.h) * zoom / 2
+          // In a tall cell, centre on the matched text itself so it is on screen.
+          if (match && cell.h * zoom > ch * 0.8) {
+            const r = match.getBoundingClientRect()
+            const w = wrap.getBoundingClientRect()
+            top = r.top - w.top + wrap.scrollTop - ch / 2 + r.height / 2
+            left = r.left - w.left + wrap.scrollLeft - cw / 2 + r.width / 2
+          }
+          wrap.scrollTo({ left, top, behavior: 'smooth' })
+
           if (el) {
             el.classList.add('search-highlight')
             setTimeout(() => el.classList.remove('search-highlight'), 3000)
           }
-          
+
           store.getState().setSearchResult(null)
         }, 50)
       }
@@ -428,160 +458,167 @@ export default function Canvas() {
     >
       {/* The outer box carries the scaled size so scrollbars stay correct. */}
       <div style={{ width: size.w * zoom, height: size.h * zoom, minWidth: '100%', minHeight: '100%', position: 'relative' }}>
-      <div
-        ref={canvasRef}
-        className={`canvas ${settings.showGrid ? `bg-${settings.pageBackground}` : ''}`}
-        style={{
-          width: size.w,
-          height: size.h,
-          minWidth: `${100 / zoom}%`,
-          minHeight: `${100 / zoom}%`,
-          transform: `scale(${zoom})`,
-          backgroundSize: `${settings.gridSize}px ${settings.gridSize}px`,
-        }}
-      >
-        <div className="page-title-wrap">
-          <input
-            className="page-title"
-            value={page.title}
-            placeholder="Untitled page"
-            spellCheck={settings.spellcheck}
-            style={{ fontSize: settings.pageTitleSize }}
-            onChange={(e) => store.getState().setPageTitle(e.target.value)}
-          />
-          {settings.showPageDate && (
-            <div style={{ color: 'var(--text-faint)', fontSize: 12, paddingTop: 6 }}>
-              {new Date(page.updatedAt).toLocaleString()}
-            </div>
-          )}
-        </div>
+        <div
+          ref={canvasRef}
+          className={`canvas ${settings.showGrid ? `bg-${settings.pageBackground}` : ''}`}
+          style={{
+            width: size.w,
+            height: size.h,
+            minWidth: `${100 / zoom}%`,
+            minHeight: `${100 / zoom}%`,
+            transform: `scale(${zoom})`,
+            backgroundSize: `${settings.gridSize}px ${settings.gridSize}px`,
+          }}
+        >
+          <div className="page-title-wrap">
+            <input
+              className="page-title"
+              value={page.title}
+              placeholder="Untitled page"
+              spellCheck={settings.spellcheck}
+              style={{ fontSize: settings.pageTitleSize }}
+              onChange={(e) => store.getState().setPageTitle(e.target.value)}
+            />
+            {settings.showPageDate && (
+              <div style={{ color: 'var(--text-faint)', fontSize: 12, paddingTop: 6 }}>
+                {new Date(page.updatedAt).toLocaleString()}
+              </div>
+            )}
+          </div>
 
-        {/* ink behind the cells */}
-        <svg className="ink-layer" width={size.w} height={size.h}>
-          {page.strokes.map((s, i) => (
-            <polyline
-              key={i}
-              points={pairs(s.points)}
-              fill="none"
-              stroke={s.color}
-              strokeWidth={s.size}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity={s.size > 10 ? 0.38 : 1}
+          {/* ink behind the cells */}
+          <svg className="ink-layer" width={size.w} height={size.h}>
+            {page.strokes.map((s, i) => (
+              <polyline
+                key={i}
+                points={pairs(s.points)}
+                fill="none"
+                stroke={s.color}
+                strokeWidth={s.size}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={s.size > 10 ? 0.38 : 1}
+              />
+            ))}
+          </svg>
+
+          {cells.map((cell) => (
+            <CellView
+              key={cell.id}
+              cell={cell}
+              settings={settings}
+              tool={tool}
+              selected={selection.includes(cell.id)}
+              editing={editingCellId === cell.id}
+              onSelect={(e) => {
+                if (panPointerRef.current || dragRef.current.mode === 'pan' || e.button !== 0) {
+                  e.preventDefault()
+                  return
+                }
+                const st = store.getState()
+                // Clicking the frame rather than the text selects the cell, so
+                // Delete removes it instead of typing into it.
+                const inText = (e.target as HTMLElement).closest('.ProseMirror, .cell-title')
+                if (!inText) {
+                  ; (document.activeElement as HTMLElement | null)?.blur()
+                  store.setState({ editingCellId: null })
+                }
+                if (e.shiftKey || e.ctrlKey) {
+                  st.setSelection(
+                    selection.includes(cell.id) ? selection.filter((i) => i !== cell.id) : [...selection, cell.id],
+                  )
+                } else if (!selection.includes(cell.id)) {
+                  st.setSelection([cell.id])
+                }
+              }}
+              onStartEdit={() => store.setState({ editingCellId: cell.id, selection: [cell.id] })}
+              onDragStart={(e) => {
+                if (cell.locked || e.button !== 0) return
+                e.preventDefault()
+                const st = store.getState()
+
+                  // Ensure we exit text editing mode so Delete removes the cell, not text.
+                  ; (document.activeElement as HTMLElement | null)?.blur()
+                store.setState({ editingCellId: null })
+
+                const ids = st.selection.includes(cell.id) ? st.selection : [cell.id]
+                if (!st.selection.includes(cell.id)) st.setSelection([cell.id])
+                st.pushHistory()
+                const p = toCanvas(e)
+                const origin: Record<string, { x: number; y: number }> = {}
+                for (const c of page.cells) if (ids.includes(c.id)) origin[c.id] = { x: c.x, y: c.y }
+                setDrag({ mode: 'move', startX: p.x, startY: p.y, origin })
+              }}
+              onResizeStart={(e, dir) => {
+                if (cell.locked || e.button !== 0) return
+                e.preventDefault()
+                e.stopPropagation()
+                const st = store.getState()
+
+                  // Ensure we exit text editing mode.
+                  ; (document.activeElement as HTMLElement | null)?.blur()
+                store.setState({ editingCellId: null })
+
+                st.pushHistory()
+                const p = toCanvas(e)
+                setDrag({ mode: 'resize', id: cell.id, dir, startX: p.x, startY: p.y, box: { ...cell } })
+              }}
+              onChange={(patch) => store.getState().updateCell(cell.id, patch)}
+              onContextMenu={(e) => {
+                e.preventDefault()
+                e.stopPropagation()
+                if (suppressContextMenuRef.current) {
+                  suppressContextMenuRef.current = false
+                  return
+                }
+                // Right-clicking a vertical line or column gap gets its own menu.
+                const lineItems = columnLineMenu(e.target)
+                if (lineItems) {
+                  setMenu({ x: e.clientX, y: e.clientY, items: lineItems })
+                  return
+                }
+                setMenu({ x: e.clientX, y: e.clientY, items: cellMenu(cell, e) })
+              }}
+              onDeleteSelf={() => store.getState().deleteCells([cell.id])}
             />
           ))}
-        </svg>
 
-        {cells.map((cell) => (
-          <CellView
-            key={cell.id}
-            cell={cell}
-            settings={settings}
-            tool={tool}
-            selected={selection.includes(cell.id)}
-            editing={editingCellId === cell.id}
-            onSelect={(e) => {
-              if (panPointerRef.current || dragRef.current.mode === 'pan' || e.button !== 0) {
-                e.preventDefault()
-                return
-              }
-              const st = store.getState()
-              // Clicking the frame rather than the text selects the cell, so
-              // Delete removes it instead of typing into it.
-              const inText = (e.target as HTMLElement).closest('.ProseMirror, .cell-title')
-              if (!inText) {
-                ;(document.activeElement as HTMLElement | null)?.blur()
-                store.setState({ editingCellId: null })
-              }
-              if (e.shiftKey || e.ctrlKey) {
-                st.setSelection(
-                  selection.includes(cell.id) ? selection.filter((i) => i !== cell.id) : [...selection, cell.id],
-                )
-              } else if (!selection.includes(cell.id)) {
-                st.setSelection([cell.id])
-              }
-            }}
-            onStartEdit={() => store.setState({ editingCellId: cell.id, selection: [cell.id] })}
-            onDragStart={(e) => {
-              if (cell.locked || e.button !== 0) return
-              e.preventDefault()
-              const st = store.getState()
-              
-              // Ensure we exit text editing mode so Delete removes the cell, not text.
-              ;(document.activeElement as HTMLElement | null)?.blur()
-              store.setState({ editingCellId: null })
-
-              const ids = st.selection.includes(cell.id) ? st.selection : [cell.id]
-              if (!st.selection.includes(cell.id)) st.setSelection([cell.id])
-              st.pushHistory()
-              const p = toCanvas(e)
-              const origin: Record<string, { x: number; y: number }> = {}
-              for (const c of page.cells) if (ids.includes(c.id)) origin[c.id] = { x: c.x, y: c.y }
-              setDrag({ mode: 'move', startX: p.x, startY: p.y, origin })
-            }}
-            onResizeStart={(e, dir) => {
-              e.preventDefault()
-              e.stopPropagation()
-              const st = store.getState()
-
-              // Ensure we exit text editing mode.
-              ;(document.activeElement as HTMLElement | null)?.blur()
-              store.setState({ editingCellId: null })
-
-              st.pushHistory()
-              const p = toCanvas(e)
-              setDrag({ mode: 'resize', id: cell.id, dir, startX: p.x, startY: p.y, box: { ...cell } })
-            }}
-            onChange={(patch) => store.getState().updateCell(cell.id, patch)}
-            onContextMenu={(e) => {
-              e.preventDefault()
-              e.stopPropagation()
-              if (suppressContextMenuRef.current) {
-                suppressContextMenuRef.current = false
-                return
-              }
-              setMenu({ x: e.clientX, y: e.clientY, items: cellMenu(cell, e) })
-            }}
-            onDeleteSelf={() => store.getState().deleteCells([cell.id])}
-          />
-        ))}
-
-        {drag.mode === 'marquee' && (
-          <div
-            className="marquee"
-            style={{
-              left: Math.min(drag.x0, drag.x1),
-              top: Math.min(drag.y0, drag.y1),
-              width: Math.abs(drag.x1 - drag.x0),
-              height: Math.abs(drag.y1 - drag.y0),
-            }}
-          />
-        )}
-
-        {drag.mode === 'space' && (
-          <>
-            <div className="space-guide" style={{ top: drag.atY }} />
+          {drag.mode === 'marquee' && (
             <div
-              className="space-fill"
-              style={{ top: drag.dy >= 0 ? drag.atY : drag.atY + drag.dy, height: Math.abs(drag.dy) }}
+              className="marquee"
+              style={{
+                left: Math.min(drag.x0, drag.x1),
+                top: Math.min(drag.y0, drag.y1),
+                width: Math.abs(drag.x1 - drag.x0),
+                height: Math.abs(drag.y1 - drag.y0),
+              }}
             />
-          </>
-        )}
+          )}
 
-        {drag.mode === 'ink' && (
-          <svg style={{ position: 'absolute', top: 0, left: 0, width: size.w, height: size.h, pointerEvents: 'none', zIndex: 9999 }}>
-            <polyline
-              points={pairs(drag.stroke.points)}
-              fill="none"
-              stroke={drag.stroke.color}
-              strokeWidth={drag.stroke.size}
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              opacity={drag.stroke.size > 10 ? 0.38 : 1}
-            />
-          </svg>
-        )}
-      </div>
+          {drag.mode === 'space' && (
+            <>
+              <div className="space-guide" style={{ top: drag.atY }} />
+              <div
+                className="space-fill"
+                style={{ top: drag.dy >= 0 ? drag.atY : drag.atY + drag.dy, height: Math.abs(drag.dy) }}
+              />
+            </>
+          )}
+
+          {drag.mode === 'ink' && (
+            <svg style={{ position: 'absolute', top: 0, left: 0, width: size.w, height: size.h, pointerEvents: 'none', zIndex: 9999 }}>
+              <polyline
+                points={pairs(drag.stroke.points)}
+                fill="none"
+                stroke={drag.stroke.color}
+                strokeWidth={drag.stroke.size}
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                opacity={drag.stroke.size > 10 ? 0.38 : 1}
+              />
+            </svg>
+          )}
+        </div>
       </div>
 
       {menu && <Menu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}

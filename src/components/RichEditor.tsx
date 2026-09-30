@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { buildExtensions } from '../editor/extensions'
 import { useActiveEditor } from '../editor/activeEditor'
+import { migrateLegacyHtml } from '../editor/columns'
 
 interface Props {
   html: string
@@ -36,7 +37,7 @@ export default function RichEditor({
   const editor = useEditor(
     {
       extensions,
-      content: html,
+      content: migrateLegacyHtml(html),
       editable,
       editorProps: {
         attributes: { spellcheck: String(spellcheck) },
@@ -83,7 +84,7 @@ export default function RichEditor({
     if (!editor) return
     if (html !== lastEmitted.current && html !== editor.getHTML()) {
       lastEmitted.current = html
-      editor.commands.setContent(html, false)
+      editor.commands.setContent(migrateLegacyHtml(html), false)
     }
   }, [html, editor])
 

@@ -26,6 +26,8 @@ interface Backend {
   saveAsset(dataUrl: string): Promise<string | null>
   search(q: string): Promise<SearchHit[]>
   exportFile(name: string, content: string): Promise<string | null>
+  openExternal(url: string): Promise<void>
+  openFileDialog(): Promise<string | null>
 }
 
 const desktop = (window as any).notes
@@ -45,6 +47,8 @@ const electronBackend: Backend = {
   saveAsset: (d) => desktop.asset.save(d),
   search: (q) => desktop.search(q),
   exportFile: (n, c) => desktop.exportFile(n, c),
+  openExternal: (url) => desktop.openExternal(url),
+  openFileDialog: () => desktop.openFileDialog(),
 }
 
 const LS = {
@@ -110,6 +114,12 @@ const webBackend: Backend = {
     setTimeout(() => URL.revokeObjectURL(a.href), 2000)
     return name
   },
+  async openExternal(url) {
+    window.open(url, '_blank', 'noopener,noreferrer')
+  },
+  async openFileDialog() {
+    return null
+  },
 }
 
 /**
@@ -146,6 +156,8 @@ const httpBackend: Backend = {
     return (await getJson<SearchHit[]>(`/api/search?q=${encodeURIComponent(q)}`)) || []
   },
   exportFile: webBackend.exportFile,
+  openExternal: webBackend.openExternal,
+  openFileDialog: webBackend.openFileDialog,
 }
 
 /**

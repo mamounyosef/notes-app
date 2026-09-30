@@ -3,7 +3,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import crypto from 'node:crypto'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
 const DIST_ELECTRON = __dirname
 const ROOT = path.join(DIST_ELECTRON, '..')
@@ -100,15 +100,64 @@ function createWindow() {
     win.loadFile(path.join(DIST, 'index.html'))
   }
 
-  // External links open in the real browser, never inside the app.
+  // External links open in the real browser or associated app, never inside the app.
   win.webContents.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) shell.openExternal(url)
+    openExternalUrl(url)
     return { action: 'deny' }
+  })
+
+  win.webContents.on('will-navigate', (event, url) => {
+    if (DEV_SERVER_URL && url.startsWith(DEV_SERVER_URL)) return
+    if (!DEV_SERVER_URL && url.startsWith(pathToFileURL(DIST).toString())) return
+
+    event.preventDefault()
+    openExternalUrl(url)
   })
 
   win.on('closed', () => {
     win = null
   })
+}
+
+let lastOpenedUrl = ''
+let lastOpenedTime = 0
+
+async function openExternalUrl(rawUrl: string) {
+  if (!rawUrl) return
+  let target = rawUrl.trim()
+
+  const now = Date.now()
+  if (target === lastOpenedUrl && now - lastOpenedTime < 800) {
+    return
+  }
+  lastOpenedUrl = target
+  lastOpenedTime = now
+
+  // Handle file:// URLs
+  if (target.startsWith('file://')) {
+    try {
+      const filePath = fileURLToPath(target)
+      const err = await shell.openPath(filePath)
+      if (!err) return
+    } catch {
+      // Fall through to shell.openExternal
+    }
+  } else if (/^[a-zA-Z]:[\\/]/.test(target) || target.startsWith('\\\\')) {
+    // Windows file path (e.g. C:\... or \\...)
+    const err = await shell.openPath(target)
+    if (!err) return
+  }
+
+  // If missing protocol (e.g. google.com or www.google.com), default to https://
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(target)) {
+    target = 'https://' + target
+  }
+
+  try {
+    await shell.openExternal(target)
+  } catch (err) {
+    console.error('Failed to open external url:', target, err)
+  }
 }
 
 Menu.setApplicationMenu(null)
@@ -307,3 +356,14 @@ ipcMain.handle('win:maximize', () => {
   win.isMaximized() ? win.unmaximize() : win.maximize()
 })
 ipcMain.handle('win:close', () => win?.close())
+
+ipcMain.handle('open:external', (_e, url: string) => openExternalUrl(url))
+
+ipcMain.handle('dialog:openFile', async () => {
+  const res = await dialog.showOpenDialog(win!, {
+    title: 'Select file to link',
+    properties: ['openFile'],
+  })
+  if (res.canceled || !res.filePaths[0]) return null
+  return res.filePaths[0]
+})

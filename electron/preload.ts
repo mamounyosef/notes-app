@@ -26,6 +26,8 @@ const api = {
   },
   search: (query: string) => ipcRenderer.invoke('search:all', query),
   exportFile: (name: string, content: string) => ipcRenderer.invoke('export:file', name, content),
+  openExternal: (url: string) => ipcRenderer.invoke('open:external', url) as Promise<void>,
+  openFileDialog: () => ipcRenderer.invoke('dialog:openFile') as Promise<string | null>,
   win: {
     minimize: () => ipcRenderer.invoke('win:minimize'),
     maximize: () => ipcRenderer.invoke('win:maximize'),

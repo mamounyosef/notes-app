@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useActiveEditor } from '../editor/activeEditor'
 import { insertImageFile } from '../editor/extensions'
+import { prettyShortcut } from '../editor/shortcuts'
 import { useStore } from '../store'
 import { Menu, type MenuItem } from './Menu'
 import {
-  AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Check, CodeI, Cursor, Eraser,
+  AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Check, CodeI, ColumnsI, Cursor, Eraser,
   Highlighter, Hr, ImageI, Italic, Layers, LinkI, ListOl, ListUl, Palette, Pen, Plus,
   Quote, Redo, Sigma, SpaceI, StrikeI, TableI, UnderlineI, Undo,
 } from './Icons'
@@ -238,8 +239,17 @@ export default function Toolbar() {
         { label: 'Delete table', danger: true, onClick: run((c) => c.deleteTable().run()) },
         { separator: true },
         { label: 'Image from file', icon: <ImageI />, onClick: () => fileRef.current?.click() },
-        { label: 'Horizontal line', icon: <Hr />, hint: '---', onClick: run((c) => c.setHorizontalRule().run()) },
-        { label: 'Thick horizontal line', icon: <Hr />, hint: settings.thickLineShortcut || 'Alt-S', onClick: run((c) => (c as any).setThickHorizontalRule().run()) },
+        { label: 'Horizontal line', icon: <Hr />, hint: prettyShortcut(settings.horizontalLineShortcut), onClick: run((c) => c.setHorizontalRule().run()) },
+        { label: 'Thick horizontal line', icon: <Hr />, hint: prettyShortcut(settings.thickLineShortcut), onClick: run((c) => (c as any).setThickHorizontalRule().run()) },
+        { label: 'Thick vertical line (columns)', icon: <ColumnsI />, hint: prettyShortcut(settings.verticalLineShortcut), onClick: run((c) => c.setThickVerticalRule().run()) },
+        { label: 'Text column on the right', icon: <ColumnsI />, hint: 'Double-click', onClick: run((c) => c.addColumnRight().run()) },
+        ...(editor?.isActive('columns')
+          ? [
+              { label: 'Toggle column divider', onClick: run((c) => c.toggleColumnDivider().run()) },
+              { label: 'Leave columns', hint: 'Ctrl+Enter', onClick: run((c) => c.exitColumns().run()) },
+              { label: 'Remove columns', danger: true, onClick: run((c) => c.removeColumns().run()) },
+            ]
+          : []),
         { label: 'Code block', icon: <CodeI />, hint: '```', onClick: run((c) => c.toggleCodeBlock().run()) },
         { label: 'Quote', icon: <Quote />, hint: '> ', onClick: run((c) => c.toggleBlockquote().run()) },
         { label: 'Checklist', icon: <Check />, hint: '[] ', onClick: run((c) => c.toggleTaskList().run()) },
@@ -252,8 +262,7 @@ export default function Toolbar() {
           icon: <LinkI />,
           hint: 'Ctrl+K',
           onClick: () => {
-            const url = window.prompt('Link address')
-            if (url) editor?.chain().focus().setLink({ href: url }).run()
+            useActiveEditor.getState().setLinkModalOpen(true)
           },
         },
       ],
@@ -335,8 +344,8 @@ export default function Toolbar() {
       ))}
 
       <div className="tb-sep" />
-      <button className={`tb-btn ${is('bulletList') ? 'on' : ''}`} title="Bullet list" disabled={!can} onClick={run((c) => c.toggleBulletList().run())}><ListUl /></button>
-      <button className={`tb-btn ${is('orderedList') ? 'on' : ''}`} title="Numbered list" disabled={!can} onClick={run((c) => c.toggleOrderedList().run())}><ListOl /></button>
+      <button className={`tb-btn ${is('bulletList') ? 'on' : ''}`} title={`Bullet list (${prettyShortcut(settings.bulletListShortcut)})`} disabled={!can} onClick={run((c) => c.toggleBulletList().run())}><ListUl /></button>
+      <button className={`tb-btn ${is('orderedList') ? 'on' : ''}`} title={`Numbered list (${prettyShortcut(settings.numberedListShortcut)})`} disabled={!can} onClick={run((c) => c.toggleOrderedList().run())}><ListOl /></button>
       <button className={`tb-btn ${is('taskList') ? 'on' : ''}`} title="Checklist" disabled={!can} onClick={run((c) => c.toggleTaskList().run())}><Check /></button>
 
       <div className="tb-sep" />

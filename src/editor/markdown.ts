@@ -70,7 +70,7 @@ export function extractMath(md: string): Extracted {
   return { text: out, math }
 }
 
-function escapeAttr(s: string) {
+export function escapeAttr(s: string) {
   return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 

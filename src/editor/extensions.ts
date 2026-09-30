@@ -15,11 +15,17 @@ import TaskList from '@tiptap/extension-task-list'
 import TaskItem from '@tiptap/extension-task-item'
 import HorizontalRule from '@tiptap/extension-horizontal-rule'
 import { Extension, Mark, mergeAttributes, Node } from '@tiptap/core'
-import { Plugin } from '@tiptap/pm/state'
+import { NodeSelection, Plugin } from '@tiptap/pm/state'
 import { BlockMath, InlineMath } from './math'
 import { looksLikeMarkdown, markdownToHtml } from './markdown'
+import { latexDocumentToHtml, looksLikeLatexDocument } from './latexDocument'
 import { storage } from '../lib/storage'
 import { useStore } from '../store'
+import { useActiveEditor } from './activeEditor'
+import { ColumnsKit } from './columns'
+import { WordFormatting } from './wordFormatting'
+import { ConfigurableShortcuts } from './shortcuts'
+import { ClickBelowBlock } from './clickBelow'
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -60,16 +66,16 @@ export const FontSize = Extension.create({
     return {
       setFontSize:
         (size: string) =>
-        ({ chain }: any) =>
-          chain().setMark('textStyle', { fontSize: size }).run(),
+          ({ chain }: any) =>
+            chain().setMark('textStyle', { fontSize: size }).run(),
       unsetFontSize:
         () =>
-        ({ chain }: any) =>
-          chain().setMark('textStyle', { fontSize: null }).removeEmptyTextStyle().run(),
+          ({ chain }: any) =>
+            chain().setMark('textStyle', { fontSize: null }).removeEmptyTextStyle().run(),
       setFontFamily2:
         (family: string) =>
-        ({ chain }: any) =>
-          chain().setMark('textStyle', { fontFamily: family }).run(),
+          ({ chain }: any) =>
+            chain().setMark('textStyle', { fontFamily: family }).run(),
     } as any
   },
 })
@@ -108,6 +114,12 @@ export const SmartPaste = Extension.create({
             const mode = pasteMode()
             if (mode === 'never' || !text) return false
 
+            if (looksLikeLatexDocument(text)) {
+              event.preventDefault()
+              editor.commands.insertContent(latexDocumentToHtml(text))
+              return true
+            }
+
             // Markdown-like plain text must win in auto mode so math delimiters,
             // emphasis, and blank-line paragraph breaks are parsed correctly.
             const preferMarkdown = mode === 'always' ? !!text : looksLikeMarkdown(text)
@@ -142,8 +154,7 @@ function pasteMode() {
 }
 
 import { ReactNodeViewRenderer } from '@tiptap/react'
-import { ResizableImageNode } from './ResizableImage'
-
+import { ResizableImageNode, copyImageToClipboard } from './ResizableImage'
 export const ResizableImage = Image.extend({
   addAttributes() {
     return {
@@ -168,6 +179,20 @@ export const ResizableImage = Image.extend({
   },
   addNodeView() {
     return ReactNodeViewRenderer(ResizableImageNode)
+  },
+  addKeyboardShortcuts() {
+    return {
+      // Ctrl+C on a selected image copies the picture itself, not just the node.
+      'Mod-c': () => {
+        const { state, view } = this.editor
+        const sel = state.selection
+        if (!(sel instanceof NodeSelection) || sel.node.type.name !== this.name) return false
+        const img = (view.nodeDOM(sel.from) as HTMLElement | null)?.querySelector('img')
+        if (!img) return false
+        void copyImageToClipboard(img)
+        return true
+      },
+    }
   },
 })
 
@@ -215,21 +240,29 @@ export const ThickHorizontalRule = Node.create({
     return {
       setThickHorizontalRule:
         () =>
-        ({ chain }: any) => {
-          return chain().insertContent({ type: this.name }).run()
-        },
+          ({ chain }: any) => {
+            return chain().insertContent({ type: this.name }).run()
+          },
     } as any
   },
+})
+
+export const CustomShortcuts = Extension.create({
+  name: 'customShortcuts',
   addKeyboardShortcuts() {
-    const shortcut = useStore.getState().settings.thickLineShortcut || 'Alt-s'
     return {
-      [shortcut]: () => this.editor.commands.setThickHorizontalRule(),
+      'Mod-k': () => {
+        useActiveEditor.getState().setLinkModalOpen(true)
+        return true
+      },
     }
   },
 })
 
 export function buildExtensions(placeholder: string) {
   return [
+    ColumnsKit,
+    CustomShortcuts,
     StarterKit.configure({
       horizontalRule: false,
       heading: { levels: [1, 2, 3, 4] },
@@ -244,7 +277,21 @@ export function buildExtensions(placeholder: string) {
     Kbd,
     Highlight.configure({ multicolor: true }),
     TextAlign.configure({ types: ['heading', 'paragraph', 'image'] }),
-    Link.configure({ openOnClick: true, autolink: true, HTMLAttributes: { rel: 'noopener', target: '_blank' } }),
+    Link.configure({
+      openOnClick: false,
+      autolink: true,
+      defaultProtocol: 'https',
+      protocols: [
+        'http',
+        'https',
+        'ftp',
+        'mailto',
+        { scheme: 'file', optionalSlashes: true },
+      ],
+      isAllowedUri: () => true,
+      validate: () => true,
+      HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
+    }),
     ResizableImage.configure({ inline: false, allowBase64: true }),
     Table.configure({ resizable: true }),
     TableRow,
@@ -255,7 +302,11 @@ export function buildExtensions(placeholder: string) {
     InlineMath,
     BlockMath,
     SmartPaste,
+    WordFormatting,
+    ConfigurableShortcuts,
     ThickHorizontalRule,
-    Placeholder.configure({ placeholder }),
+    ClickBelowBlock,
+    // includeChildren marks the empty line inside a new side column so CSS can hint there.
+    Placeholder.configure({ placeholder, includeChildren: true }),
   ]
 }

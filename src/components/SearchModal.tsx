@@ -94,7 +94,14 @@ export default function SearchModal({ onClose }: { onClose(): void }) {
               <div className="r-path">{pathTo(workspace.tree, r.pageId).map((n) => n.title).join('  /  ')}</div>
               {r.kind === 'body' &&
                 r.hits.map((h, j) => (
-                  <div className="r-snip" key={j}>
+                  <div
+                    className="r-snip"
+                    key={j}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      open(r.pageId, h.cellId)
+                    }}
+                  >
                     {h.cellTitle && <strong>{h.cellTitle}: </strong>}
                     <Highlighted text={h.snippet} needle={q} />
                   </div>
