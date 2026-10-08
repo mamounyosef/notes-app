@@ -385,6 +385,22 @@ ipcMain.handle('win:close', () => win?.close())
 
 ipcMain.handle('open:external', (_e, url: string) => openExternalUrl(url))
 
+// window.confirm() in the renderer leaves text fields unable to take typing on
+// Windows until the window is refocused, so confirmations go through here.
+ipcMain.handle('dialog:confirm', async (_e, message: string, okLabel: string) => {
+  const res = await dialog.showMessageBox(win!, {
+    type: 'question',
+    title: 'Notes',
+    message,
+    buttons: [okLabel || 'OK', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+    noLink: true,
+  })
+  win?.webContents.focus()
+  return res.response === 0
+})
+
 ipcMain.handle('dialog:openFile', async () => {
   const res = await dialog.showOpenDialog(win!, {
     title: 'Select file to link',

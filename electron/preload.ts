@@ -28,6 +28,7 @@ const api = {
   exportFile: (name: string, content: string) => ipcRenderer.invoke('export:file', name, content),
   openExternal: (url: string) => ipcRenderer.invoke('open:external', url) as Promise<void>,
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile') as Promise<string | null>,
+  confirm: (message: string, okLabel?: string) => ipcRenderer.invoke('dialog:confirm', message, okLabel) as Promise<boolean>,
   win: {
     minimize: () => ipcRenderer.invoke('win:minimize'),
     maximize: () => ipcRenderer.invoke('win:maximize'),

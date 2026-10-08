@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react'
 import { useStore } from '../store'
 import { DEFAULT_SETTINGS, type Settings } from '../types'
 import { storage, isDesktop } from '../lib/storage'
+import { askConfirm } from '../lib/confirm'
 import { X, Plus, Min, Undo } from './Icons'
 import { SHORTCUTS, prettyShortcut, shortcutFromEvent, type ShortcutKey } from '../editor/shortcuts'
 
@@ -527,7 +528,7 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
               </div>
               <div className="set-row">
                 <label>Reset every setting to its default</label>
-                <button className="btn danger" onClick={() => { if (confirm('Reset all settings?')) set({ ...DEFAULT_SETTINGS, sidebarWidth: settings.sidebarWidth }) }}>
+                <button className="btn danger" onClick={async () => { if (await askConfirm('Reset all settings?', 'Reset')) set({ ...DEFAULT_SETTINGS, sidebarWidth: settings.sidebarWidth }) }}>
                   Reset
                 </button>
               </div>

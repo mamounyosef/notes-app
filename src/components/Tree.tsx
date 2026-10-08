@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { useStore } from '../store'
 import type { TreeNode } from '../types'
 import { Menu, type MenuItem } from './Menu'
+import { askConfirm } from '../lib/confirm'
 import { Chevron, File, Folder, Book, Plus, Star, Trash, Copy, Palette, Archive } from './Icons'
 
 const NODE_COLORS = ['#7c9cff', '#e06c75', '#e5c07b', '#98c379', '#56b6c2', '#c678dd', '#f06292', '#a5a5a5']
@@ -72,11 +73,11 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint }: 
         label: `Delete ${n.kind}`,
         danger: true,
         icon: <Trash />,
-        onClick: () => {
+        onClick: async () => {
           const hasKids = n.children.length > 0
           if (
             !st.getState().settings.confirmDelete ||
-            window.confirm(`Delete "${n.title}"${hasKids ? ' and everything inside it' : ''}?`)
+            (await askConfirm(`Delete "${n.title}"${hasKids ? ' and everything inside it' : ''}?`, 'Delete'))
           ) {
             s.deleteNode(n.id)
           }
