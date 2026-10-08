@@ -120,6 +120,8 @@ export default function Canvas() {
     }
     panPointerRef.current = false
     if (e.button !== 0) return
+    // The page title is a normal text field: let it focus and select text.
+    if ((e.target as HTMLElement).closest('.page-title-wrap')) return
     const p = toCanvas(e)
 
     if (tool === 'space') {
@@ -450,7 +452,7 @@ export default function Canvas() {
         }
       }}
       onDoubleClick={(e) => {
-        if ((e.target as HTMLElement).closest('.cell')) return
+        if ((e.target as HTMLElement).closest('.cell, .page-title-wrap')) return
         if (!settings.newCellAtClick) return
         const p = toCanvas(e)
         store.getState().addCell({ x: snap(p.x), y: snap(p.y) })
