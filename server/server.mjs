@@ -11,6 +11,7 @@ import path from 'node:path'
 import os from 'node:os'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { VaultSync } from '../shared/vault-sync.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -36,6 +37,18 @@ function readConfiguredVault() {
 }
 
 for (const d of ['pages', 'assets']) fs.mkdirSync(path.join(VAULT, d), { recursive: true })
+
+// Browser tabs listening for changes (server sent events).
+const clients = new Set()
+const sync = new VaultSync({
+  stateDir: path.join(process.env.APPDATA || os.homedir(), 'notesapp-server', 'sync'),
+  emit: (ev) => {
+    const line = `data: ${JSON.stringify(ev)}\n\n`
+    for (const c of clients) c.write(line)
+  },
+  log: (...a) => console.log(...a),
+})
+sync.setVault(VAULT)
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -115,26 +128,42 @@ const server = http.createServer(async (req, res) => {
   try {
     if (p === '/api/vault') return send(res, 200, JSON.stringify({ path: VAULT }))
 
-    if (p === '/api/workspace') {
-      if (req.method === 'GET') return send(res, 200, JSON.stringify(await readJson(path.join(VAULT, 'workspace.json'))))
-      await atomicWrite(path.join(VAULT, 'workspace.json'), JSON.stringify(await body(req), null, 2))
-      return send(res, 200, '{"ok":true}')
-    }
-
-    if (p === '/api/settings') {
-      if (req.method === 'GET') return send(res, 200, JSON.stringify(await readJson(path.join(VAULT, 'settings.json'))))
-      await atomicWrite(path.join(VAULT, 'settings.json'), JSON.stringify(await body(req), null, 2))
-      return send(res, 200, '{"ok":true}')
+    // Reads and writes go through the same sync service as the desktop app.
+    if (p === '/api/workspace' || p === '/api/settings') {
+      const kind = p.slice('/api/'.length)
+      if (req.method === 'GET') return send(res, 200, JSON.stringify(await sync.read(kind)))
+      const b = (await body(req)) || {}
+      return send(res, 200, JSON.stringify(await sync.write(kind, undefined, b.data, b.base ?? null)))
     }
 
     if (p.startsWith('/api/page/')) {
       const id = p.slice('/api/page/'.length)
-      if (req.method === 'GET') return send(res, 200, JSON.stringify(await readJson(pageFile(id))))
+      if (req.method === 'GET') return send(res, 200, JSON.stringify(await sync.read('page', id)))
       if (req.method === 'DELETE') {
-        await fsp.rm(pageFile(id), { force: true })
+        await sync.deletePage(id)
         return send(res, 200, '{"ok":true}')
       }
-      await atomicWrite(pageFile(id), JSON.stringify(await body(req), null, 2))
+      const b = (await body(req)) || {}
+      if (!b.data) return send(res, 400, '{"error":"no page"}')
+      return send(res, 200, JSON.stringify(await sync.write('page', id, b.data, b.base ?? null, b.touched ?? null)))
+    }
+
+    if (p === '/api/events') {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
+      res.write(': connected\n\n')
+      clients.add(res)
+      const ping = setInterval(() => res.write(': ping\n\n'), 25000)
+      req.on('close', () => {
+        clearInterval(ping)
+        clients.delete(res)
+      })
+      return
+    }
+
+    if (p === '/api/sync/conflicts') return send(res, 200, JSON.stringify(await sync.listConflicts()))
+    if (p === '/api/sync/status') return send(res, 200, JSON.stringify(sync.status()))
+    if (p === '/api/sync/scan') {
+      await sync.scan()
       return send(res, 200, '{"ok":true}')
     }
 

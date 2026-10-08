@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import CellView from './CellView'
 import { Menu, type MenuItem } from './Menu'
-import { useStore } from '../store'
+import { markTouched, useStore } from '../store'
 import type { Cell, Stroke } from '../types'
 import { Copy, Layers, Trash, SpaceI, Plus } from './Icons'
 import { columnLineMenu } from '../editor/columns'
@@ -335,6 +335,8 @@ export default function Canvas() {
       st.reflowOverlaps(false)
       const fresh = useStore.getState().page
       if (fresh && fresh.id === id) {
+        // Saved once, so the tidy does not repeat on every computer.
+        markTouched({ meta: true })
         useStore.setState({ page: { ...fresh, needsReflow: false }, dirty: true })
         st.save()
       }
@@ -566,6 +568,8 @@ export default function Canvas() {
                 setDrag({ mode: 'resize', id: cell.id, dir, startX: p.x, startY: p.y, box: { ...cell } })
               }}
               onChange={(patch) => store.getState().updateCell(cell.id, patch)}
+              onAutoSize={(patch) => store.getState().updateCell(cell.id, patch, false, true, true)}
+              onResolveConflict={(action) => store.getState().resolveConflict(cell.id, action)}
               onContextMenu={(e) => {
                 e.preventDefault()
                 e.stopPropagation()

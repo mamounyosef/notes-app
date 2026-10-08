@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import crypto from 'node:crypto'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { VaultSync } from '../shared/vault-sync.mjs'
 
 const DIST_ELECTRON = __dirname
 const ROOT = path.join(DIST_ELECTRON, '..')
@@ -38,6 +39,14 @@ function defaultVault() {
 }
 
 let vaultPath = readConfig().vault || defaultVault()
+
+const sync = new VaultSync({
+  stateDir: path.join(app.getPath('userData'), 'sync'),
+  emit: (ev) => {
+    if (win && !win.isDestroyed()) win.webContents.send('vault:event', ev)
+  },
+  log: (...a) => console.log(...a),
+})
 
 function ensureVault(p = vaultPath) {
   fs.mkdirSync(path.join(p, 'pages'), { recursive: true })
@@ -127,6 +136,23 @@ function createWindow() {
     openExternalUrl(url)
   })
 
+  // Let the page write its last edits before the window goes away.
+  let flushed = false
+  win.on('close', (e) => {
+    if (flushed || !win || win.webContents.isDestroyed()) return
+    e.preventDefault()
+    const w = win
+    const done = () => {
+      clearTimeout(timer)
+      ipcMain.removeListener('app:flushed', done)
+      flushed = true
+      if (!w.isDestroyed()) w.close()
+    }
+    const timer = setTimeout(done, 5000)
+    ipcMain.on('app:flushed', done)
+    w.webContents.send('app:flush')
+  })
+
   win.on('closed', () => {
     win = null
   })
@@ -198,6 +224,9 @@ if (!gotLock) {
 
   app.whenReady().then(() => {
     ensureVault()
+    sync.setVault(vaultPath)
+    // Coming back to the window is a good moment to look for new files.
+    app.on('browser-window-focus', () => sync.scan())
 
     protocol.handle('asset', (request) => {
       const name = decodeURIComponent(new URL(request.url).pathname.replace(/^\/+/, ''))
@@ -233,6 +262,7 @@ ipcMain.handle('vault:choose', async () => {
   vaultPath = res.filePaths[0]
   ensureVault()
   writeConfig({ ...readConfig(), vault: vaultPath })
+  sync.setVault(vaultPath)
   return vaultPath
 })
 
@@ -240,36 +270,44 @@ ipcMain.handle('vault:reveal', () => {
   shell.openPath(vaultPath)
 })
 
-ipcMain.handle('workspace:read', () => readJson(path.join(vaultPath, 'workspace.json'), null))
+// Reads and writes of notes go through the sync service, which merges with
+// whatever another computer put in the folder (see shared/vault-sync.mjs).
+ipcMain.handle('workspace:read', () => sync.read('workspace'))
+ipcMain.handle('workspace:write', (_e, data: unknown, base: unknown) => sync.write('workspace', undefined, data, base))
+ipcMain.handle('settings:read', () => sync.read('settings'))
+ipcMain.handle('settings:write', (_e, data: unknown, base: unknown) => sync.write('settings', undefined, data, base))
+ipcMain.handle('page:read', (_e, id: string) => sync.read('page', id))
+ipcMain.handle('page:write', (_e, id: string, data: unknown, base: unknown, touched: unknown) =>
+  sync.write('page', id, data, base, touched),
+)
+ipcMain.handle('page:delete', (_e, id: string) => sync.deletePage(id))
 
-ipcMain.handle('workspace:write', async (_e, data: unknown) => {
-  await atomicWrite(path.join(vaultPath, 'workspace.json'), JSON.stringify(data, null, 2))
-  return true
-})
+ipcMain.handle('sync:conflicts', () => sync.listConflicts())
+ipcMain.handle('sync:scan', () => sync.scan())
+ipcMain.handle('sync:status', () => sync.status())
 
-ipcMain.handle('settings:read', () => readJson(path.join(vaultPath, 'settings.json'), null))
+/* Per computer state (last open page, recent pages, folded folders). Kept out
+ * of the synced folder so two laptops never overwrite each other's. */
+const localStateFile = () => path.join(app.getPath('userData'), 'local-state.json')
+const vaultKey = () => path.resolve(vaultPath).toLowerCase()
 
-ipcMain.handle('settings:write', async (_e, data: unknown) => {
-  await atomicWrite(path.join(vaultPath, 'settings.json'), JSON.stringify(data, null, 2))
-  return true
-})
-
-ipcMain.handle('page:read', (_e, id: string) => readJson(pageFile(id), null))
-
-ipcMain.handle('page:write', async (_e, id: string, data: unknown) => {
-  await atomicWrite(pageFile(id), JSON.stringify(data, null, 2))
-  return true
-})
-
-ipcMain.handle('page:delete', async (_e, id: string) => {
-  const src = pageFile(id)
+ipcMain.handle('local:read', () => {
   try {
-    const dest = path.join(vaultPath, '.trash', `${sanitizeId(id)}-${Date.now()}.json`)
-    await fsp.mkdir(path.dirname(dest), { recursive: true })
-    await fsp.rename(src, dest)
+    return JSON.parse(fs.readFileSync(localStateFile(), 'utf8'))[vaultKey()] ?? null
   } catch {
-    /* already gone */
+    return null
   }
+})
+
+ipcMain.handle('local:write', async (_e, data: unknown) => {
+  let all: Record<string, unknown> = {}
+  try {
+    all = JSON.parse(await fsp.readFile(localStateFile(), 'utf8'))
+  } catch {
+    /* first write */
+  }
+  all[vaultKey()] = data
+  await atomicWrite(localStateFile(), JSON.stringify(all))
   return true
 })
 

@@ -10,17 +10,27 @@ export interface TreeNode {
   archived?: boolean
   /** Sections live inside notebooks, sections nest, pages nest under pages. */
   children: TreeNode[]
+  /** Folded in the left pane. Kept per computer, never synced. */
   collapsed?: boolean
   createdAt: number
   updatedAt: number
+  /** Sync version (see shared/sync-core.mjs). */
+  vv?: VV
 }
+
+/** Sync version vector: { deviceId: counter }. */
+export type VV = Record<string, number>
 
 export interface Workspace {
   version: 1
   tree: TreeNode[]
   favorites: string[]
+  /** Per computer (local state), filled in at runtime, never synced. */
   recent: string[]
   lastOpenPageId?: string
+  favVV?: VV
+  tombstones?: Record<string, VV>
+  syncV?: number
 }
 
 export type CellKind = 'text' | 'ink'
@@ -54,6 +64,9 @@ export interface Cell {
   autoHeight?: boolean
   createdAt: number
   updatedAt: number
+  vv?: VV
+  /** Set when sync kept two versions of this cell, until the person picks. */
+  conflict?: { of?: string | null; reason: 'edited-both' | 'deleted-elsewhere' | string; at?: number }
 }
 
 export interface Page {
@@ -71,6 +84,10 @@ export interface Page {
   gridSize?: number
   createdAt: number
   updatedAt: number
+  /** Sync bookkeeping: versions of the page fields and of deleted cells. */
+  metaVV?: VV
+  tombstones?: Record<string, VV>
+  syncV?: number
 }
 
 export interface Settings {
@@ -132,6 +149,8 @@ export interface Settings {
   zoomStep: number
   panButton: 'right' | 'middle' | 'space'
   recentColors: string[]
+  /** Sync bookkeeping: when each setting last changed. */
+  _t?: Record<string, number>
 }
 
 export const DEFAULT_SETTINGS: Settings = {

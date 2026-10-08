@@ -14,6 +14,9 @@ interface Props {
   onDragStart(e: React.PointerEvent): void
   onResizeStart(e: React.PointerEvent, dir: string): void
   onChange(patch: Partial<Cell>): void
+  /** Size the app measured by itself (auto height), not an edit. */
+  onAutoSize(patch: Partial<Cell>): void
+  onResolveConflict(action: 'keep-both' | 'use-this' | 'discard' | 'keep' | 'delete'): void
   onContextMenu(e: React.MouseEvent): void
   onDeleteSelf(): void
 }
@@ -29,6 +32,8 @@ function CellViewInner({
   onDragStart,
   onResizeStart,
   onChange,
+  onAutoSize,
+  onResolveConflict,
   onContextMenu,
   onDeleteSelf,
 }: Props) {
@@ -95,10 +100,10 @@ function CellViewInner({
       }
       
       if (Object.keys(patch).length > 0) {
-        onChange(patch)
+        onAutoSize(patch)
       }
     },
-    [cell.autoHeight, cell.collapsed, cell.w, cell.h, cell.showTitle, settings.cellPadding, settings.titleSize, settings.snapToGrid, settings.gridSize, onChange],
+    [cell.autoHeight, cell.collapsed, cell.w, cell.h, cell.showTitle, settings.cellPadding, settings.titleSize, settings.snapToGrid, settings.gridSize, onAutoSize],
   )
 
   const height = cell.collapsed ? 14 + settings.titleSize * 1.7 : cell.h
@@ -131,6 +136,25 @@ function CellViewInner({
            onDoubleClick={() => onChange({ collapsed: !cell.collapsed })}>
         <Grip size={18} />
       </div>
+
+      {cell.conflict && (
+        <div className="cell-conflict" onMouseDown={(e) => e.stopPropagation()}>
+          {cell.conflict.reason === 'deleted-elsewhere' ? (
+            <>
+              <span>Deleted on the other computer, edited here.</span>
+              <button onClick={() => onResolveConflict('keep')}>Keep</button>
+              <button onClick={() => onResolveConflict('delete')}>Delete</button>
+            </>
+          ) : (
+            <>
+              <span>Edited on both computers. This is the other version.</span>
+              <button title="Replace the original cell with this version" onClick={() => onResolveConflict('use-this')}>Use this</button>
+              <button title="Keep both cells" onClick={() => onResolveConflict('keep-both')}>Keep both</button>
+              <button title="Delete this version, keep the original" onClick={() => onResolveConflict('discard')}>Discard</button>
+            </>
+          )}
+        </div>
+      )}
 
       <div className="cell-body" style={{ padding: `0 ${settings.cellPadding}px ${settings.cellPadding}px`, pointerEvents: isDrawing ? 'none' : 'auto' }}>
         {cell.strokes && cell.strokes.length > 0 && (

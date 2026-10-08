@@ -7,13 +7,14 @@ import Tree from './components/Tree'
 import SearchModal from './components/SearchModal'
 import SettingsModal from './components/SettingsModal'
 import LinkModal from './components/LinkModal'
+import SyncPanel from './components/SyncPanel'
 import { findNode, pathTo, useStore, walk } from './store'
 import { setPasteMode } from './editor/extensions'
 import { isDesktop, storage } from './lib/storage'
 import type { TreeNode } from './types'
 import {
   Book, File as FileIcon, Folder, Gear, Max, Min, PanelLeft, PanelMid, Plus, Search as SearchIcon,
-  Star, X, ZoomIn, ZoomOut, Archive, Chevron, SidebarPeek, ArrowLeft, ArrowRight
+  Star, X, ZoomIn, ZoomOut, Archive, Chevron, SidebarPeek, ArrowLeft, ArrowRight, SyncI
 } from './components/Icons'
 
 export default function App() {
@@ -28,6 +29,10 @@ export default function App() {
   const dirty = useStore((s) => s.dirty)
   const canGoBack = useStore((s) => s.navBack.length > 0)
   const canGoForward = useStore((s) => s.navForward.length > 0)
+  const syncCount = useStore((s) => s.conflicts.cells.length + s.conflicts.orphans.length)
+  const syncError = useStore((s) => s.syncError)
+  const showSyncPanel = useStore((s) => s.showSyncPanel)
+  const fatal = useStore((s) => s.fatal)
 
   const [showSearch, setShowSearch] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -302,6 +307,13 @@ export default function App() {
   if (!ready) {
     return <div className="app" style={{ display: 'grid', placeItems: 'center', color: 'var(--text-faint)' }}>Loading your notes...</div>
   }
+  if (fatal) {
+    return (
+      <div className="app" style={{ display: 'grid', placeItems: 'center', padding: 40, textAlign: 'center', color: 'var(--text)' }}>
+        <div style={{ maxWidth: 520 }}>{fatal}</div>
+      </div>
+    )
+  }
 
   const favoritePages = workspace.favorites
     .map((id) => findNode(workspace.tree, id))
@@ -466,6 +478,16 @@ export default function App() {
           {page ? pathTo(workspace.tree, page.id).map((n) => n.title).join('  /  ') : ''}
         </span>
         <div className="spacer" />
+        {(syncCount > 0 || syncError) && (
+          <button
+            className={`tb-btn sync-alert ${syncError ? 'error' : ''}`}
+            title={syncError || `${syncCount} sync ${syncCount === 1 ? 'item needs' : 'items need'} your attention`}
+            onClick={() => useStore.getState().setShowSyncPanel(true)}
+          >
+            <SyncI />
+            {syncCount > 0 && <span className="sync-count">{syncCount}</span>}
+          </button>
+        )}
         <button className="tb-btn" title="Settings (Ctrl+,)" onClick={() => setShowSettings(true)}><Gear /></button>
         {isDesktop && (
           <>
@@ -518,7 +540,7 @@ export default function App() {
           {settings.showStatusBar && (
             <div className="statusbar">
               <span>{page ? `${page.cells.length} cells` : 'No page'}</span>
-              <span>{dirty ? 'Saving...' : 'Saved'}</span>
+              <span className={syncError ? 'status-error' : ''}>{syncError ? 'Not saved yet, retrying' : dirty ? 'Saving...' : 'Saved'}</span>
               <div className="spacer" />
               <button title="Zoom out (Ctrl and minus)" onClick={() => useStore.getState().setZoom(zoom - settings.zoomStep)}><ZoomOut size={13} /></button>
               <button title="Reset zoom (Ctrl+0)" onClick={() => useStore.getState().setZoom(1)}>{Math.round(zoom * 100)}%</button>
@@ -531,6 +553,7 @@ export default function App() {
 
       {showSearch && <SearchModal onClose={() => setShowSearch(false)} />}
       {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSyncPanel && <SyncPanel onClose={() => useStore.getState().setShowSyncPanel(false)} />}
       {showKeys && <ShortcutSheet onClose={() => setShowKeys(false)} />}
       {linkModalOpen && <LinkModal onClose={() => setLinkModalOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}

@@ -214,7 +214,7 @@ function RenameInput({ value, onDone }: { value: string; onDone(v: string): void
 async function pageMarkdown(pageId: string) {
   const { storage } = await import('../lib/storage')
   const { htmlToMarkdown } = await import('../editor/markdown')
-  const page = await storage.readPage(pageId)
+  const page = (await storage.readPage(pageId)).data
   if (!page) return ''
   const body = [...page.cells]
     .sort((a, b) => a.y - b.y || a.x - b.x)

@@ -16,7 +16,8 @@
     "pack": "npm run build && electron-builder --dir",
     "onenote:export": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/export-onenote.ps1",
     "onenote:import": "node scripts/import-onenote.mjs",
-    "onenote:verify": "node scripts/verify-import.mjs"
+    "onenote:verify": "node scripts/verify-import.mjs",
+    "test:sync": "node scripts/test-sync.mjs && node scripts/test-vault-sync.mjs"
   },
   "dependencies": {
     "@tiptap/core": "^2.11.5",

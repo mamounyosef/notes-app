@@ -66,6 +66,7 @@ export const Download = (p: P) => (<svg {...s(p)}><path d="M12 3v12M7 11l5 5 5-5
 export const Sun = (p: P) => (<svg {...s(p)}><circle cx="12" cy="12" r="4" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>)
 export const Moon = (p: P) => (<svg {...s(p)}><path d="M20 14.5A8.5 8.5 0 019.5 4a8.5 8.5 0 1010.5 10.5z" /></svg>)
 
+export const SyncI = (p: P) => (<svg {...s(p)}><path d="M20 11a8 8 0 00-14.3-4.9L4 8M4 4v4h4" /><path d="M4 13a8 8 0 0014.3 4.9L20 16M20 20v-4h-4" /></svg>)
 export const Archive = (p: P) => (<svg {...s(p)}><polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" /></svg>)
 export const SidebarPeek = (p: P) => (
   <svg {...s(p)}>

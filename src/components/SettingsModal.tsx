@@ -273,6 +273,7 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
   const settings = useStore((s) => s.settings)
   const set = useStore((s) => s.setSettings)
   const vaultPath = useStore((s) => s.vaultPath)
+  const syncCount = useStore((s) => s.conflicts.cells.length + s.conflicts.orphans.length)
   const [tab, setTab] = useState<'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'storage'>('look')
 
   const Num = ({
@@ -523,8 +524,21 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
                 </div>
               </div>
               <div className="empty-hint" style={{ padding: '6px 0' }}>
-                Put this folder inside OneDrive, Google Drive or Dropbox and your laptop will
+                Put this folder inside OneDrive, Google Drive or Dropbox and your laptops will
                 stay in sync. Each page is a plain JSON file, images live in the assets folder.
+                Changes from another computer appear here by themselves. If both computers changed
+                the same cell, both versions are kept and the sync button next to Settings lights up.
+              </div>
+              <div className="set-row">
+                <label>
+                  Sync
+                  <span className="sub">
+                    {syncCount > 0 ? `${syncCount} ${syncCount === 1 ? 'item needs' : 'items need'} your attention` : 'Everything is in sync'}
+                  </span>
+                </label>
+                <button className="btn" onClick={() => { onClose(); useStore.getState().setShowSyncPanel(true) }}>
+                  Open sync
+                </button>
               </div>
               <div className="set-row">
                 <label>Reset every setting to its default</label>
