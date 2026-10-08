@@ -1283,6 +1283,11 @@ select:focus {
   padding: 2px 5px;
   min-width: 140px;
   width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  overflow: hidden;
+  resize: none;
+  box-sizing: border-box;
 }
 
 .katex {

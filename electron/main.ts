@@ -312,13 +312,13 @@ ipcMain.handle('search:all', async (_e, query: string) => {
     const hits: { cellId: string; cellTitle: string; snippet: string }[] = []
     const titleHit = String(page.title || '').toLowerCase().includes(q)
     for (const cell of page.cells || []) {
-      const text = stripHtml(`${cell.title || ''} ${cell.html || ''}`)
+      const text = stripHtml(`${cell.title || ''}<br>${cell.html || ''}`)
       const i = text.toLowerCase().indexOf(q)
       if (i >= 0) {
         hits.push({
           cellId: cell.id,
           cellTitle: cell.title || '',
-          snippet: text.slice(Math.max(0, i - 40), i + q.length + 60).trim(),
+          snippet: lineSnippet(text, i, q.length),
         })
       }
       if (hits.length >= 4) break
@@ -334,13 +334,24 @@ ipcMain.handle('search:all', async (_e, query: string) => {
 function stripHtml(html: string) {
   return String(html)
     .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
+    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
     .replace(/&nbsp;/g, ' ')
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')
-    .replace(/\s+/g, ' ')
+    .replace(/[ \t\r\f\v]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .replace(/\n+/g, '\n')
     .trim()
+}
+
+/** Snippet limited to the line (paragraph) containing the match. */
+function lineSnippet(text: string, i: number, len: number) {
+  const start = text.lastIndexOf('\n', i) + 1
+  let end = text.indexOf('\n', i + len)
+  if (end < 0) end = text.length
+  return text.slice(Math.max(start, i - 40), Math.min(end, i + len + 60)).trim()
 }
 
 ipcMain.handle('export:file', async (_e, suggestedName: string, content: string) => {

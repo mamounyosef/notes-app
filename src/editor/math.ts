@@ -41,8 +41,16 @@ function makeNodeView(display: boolean) {
       const input = document.createElement(display ? 'textarea' : 'input')
       input.className = 'math-input'
       input.value = node.attrs.latex
-      if (display) (input as HTMLTextAreaElement).rows = Math.max(1, node.attrs.latex.split('\n').length)
       dom.replaceChildren(input)
+      if (display) {
+        const ta = input as HTMLTextAreaElement
+        const fit = () => {
+          ta.style.height = 'auto'
+          ta.style.height = `${ta.scrollHeight + 2}px`
+        }
+        ta.addEventListener('input', fit)
+        fit()
+      }
       input.focus()
       input.select?.()
 

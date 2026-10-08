@@ -17,7 +17,13 @@ echo.
 
 where node >nul 2>nul
 if errorlevel 1 (
-  echo   Node.js was not found.
+  echo   Node.js was not found. Installing it with winget.
+  winget install -e --id OpenJS.NodeJS.LTS --accept-source-agreements --accept-package-agreements
+  set "PATH=%PATH%;%ProgramFiles%\nodejs"
+)
+where node >nul 2>nul
+if errorlevel 1 (
+  echo   Node.js could not be installed automatically.
   echo   Install the LTS version from https://nodejs.org and run this file again.
   echo.
   pause

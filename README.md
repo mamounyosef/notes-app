@@ -4,11 +4,20 @@ A fast, OneNote style notes app that is yours: notebooks, sections and pages on
 the left, a free canvas of movable cells on the right, and every note stored as
 a plain file in a folder you choose.
 
-## Setup on a new machine (one click)
+## Install (two clicks)
 
-1. Install [Node.js LTS](https://nodejs.org) if it is not there yet.
-2. Copy this folder to the machine.
-3. Double click **setup.bat**.
+1. Download **Notes Setup.exe** from the
+   [latest release](https://github.com/mamounyosef/notes-app/releases/latest).
+2. Double click it. If Windows SmartScreen shows a warning, click
+   **More info**, then **Run anyway** (the app is not code signed).
+
+Notes appears on the desktop and in the start menu.
+
+## Setup from source (one click)
+
+1. Clone or copy this folder to the machine.
+2. Double click **setup.bat**. It installs Node.js LTS with winget if it is
+   missing.
 
 It installs everything, builds the app, and puts a **Notes** icon on your
 desktop and in the start menu. Launch it from there, or from `run-notes.bat`.

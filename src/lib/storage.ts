@@ -90,14 +90,14 @@ const webBackend: Backend = {
       const page = JSON.parse(raw) as Page
       const hits = (page.cells || [])
         .map((c) => {
-          const text = stripHtml(`${c.title} ${c.html}`)
+          const text = stripHtml(`${c.title}<br>${c.html}`)
           const i2 = text.toLowerCase().indexOf(needle)
           return i2 < 0
             ? null
             : {
                 cellId: c.id,
                 cellTitle: c.title,
-                snippet: text.slice(Math.max(0, i2 - 40), i2 + needle.length + 60).trim(),
+                snippet: lineSnippet(text, i2, needle.length),
               }
         })
         .filter(Boolean) as SearchHit['hits']
@@ -184,8 +184,20 @@ async function postJson(url: string, data: unknown) {
 
 function stripHtml(html: string) {
   const d = document.createElement('div')
-  d.innerHTML = html
-  return (d.textContent || '').replace(/\s+/g, ' ').trim()
+  d.innerHTML = html.replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, '$&\n')
+  return (d.textContent || '')
+    .replace(/[ \t\r\f\v ]+/g, ' ')
+    .replace(/ ?\n ?/g, '\n')
+    .replace(/\n+/g, '\n')
+    .trim()
+}
+
+/** Snippet limited to the line (paragraph) containing the match. */
+function lineSnippet(text: string, i: number, len: number) {
+  const start = text.lastIndexOf('\n', i) + 1
+  let end = text.indexOf('\n', i + len)
+  if (end < 0) end = text.length
+  return text.slice(Math.max(start, i - 40), Math.min(end, i + len + 60)).trim()
 }
 
 /** Chosen once at startup: desktop, the local server, or the browser itself. */
