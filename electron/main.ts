@@ -92,6 +92,19 @@ function createWindow() {
     },
   })
 
+  // Running from source (setup.bat), the process is the stock electron.exe, so
+  // pinning the window would pin a bare Electron icon. Tell the taskbar which
+  // icon and command to use for the pin instead.
+  if (!app.isPackaged && process.platform === 'win32') {
+    win.setAppDetails({
+      appId: APP_ID,
+      appIconPath: path.join(ROOT, 'build', 'icon.ico'),
+      appIconIndex: 0,
+      relaunchCommand: `"${process.execPath}" "${ROOT}"`,
+      relaunchDisplayName: 'Notes',
+    })
+  }
+
   win.once('ready-to-show', () => win?.show())
 
   if (DEV_SERVER_URL) {
@@ -163,7 +176,9 @@ async function openExternalUrl(rawUrl: string) {
 Menu.setApplicationMenu(null)
 
 // Makes Windows group the window under the pinned shortcut correctly.
-app.setAppUserModelId(process.execPath)
+// From source, a fixed id keeps Notes apart from any other Electron app.
+const APP_ID = app.isPackaged ? process.execPath : 'com.mamoun.notesapp.source'
+app.setAppUserModelId(APP_ID)
 
 // Serve pasted images from the vault without disabling web security.
 protocol.registerSchemesAsPrivileged([
