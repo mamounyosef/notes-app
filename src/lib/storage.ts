@@ -68,6 +68,18 @@ export type VaultEvent =
   | { type: 'asset'; name: string }
   | { type: 'conflicts'; list: ConflictList }
 
+export interface ArtifactItem {
+  name: string
+  isDirectory: boolean
+  relativePath: string
+}
+
+export interface PickedArtifact {
+  relativePath: string
+  name: string
+  isDirectory: boolean
+}
+
 interface Backend {
   isDesktop: boolean
   vaultPath(): Promise<string>
@@ -92,6 +104,10 @@ interface Backend {
   exportFile(name: string, content: string): Promise<string | null>
   openExternal(url: string): Promise<void>
   openFileDialog(): Promise<string | null>
+  listArtifacts(subDir?: string, recursive?: boolean): Promise<ArtifactItem[]>
+  pickArtifactFile(subDir?: string): Promise<PickedArtifact | null>
+  pickArtifactDirectory(subDir?: string): Promise<PickedArtifact | null>
+  revealArtifact(relativePath?: string): Promise<void>
 }
 
 const NO_CONFLICTS: ConflictList = { cells: [], orphans: [] }
@@ -121,6 +137,10 @@ const electronBackend: Backend = {
   exportFile: (n, c) => desktop.exportFile(n, c),
   openExternal: (url) => desktop.openExternal(url),
   openFileDialog: () => desktop.openFileDialog(),
+  listArtifacts: (subDir, recursive) => (desktop?.artifacts ? desktop.artifacts.list(subDir, recursive) : Promise.resolve([])),
+  pickArtifactFile: (subDir) => (desktop?.artifacts ? desktop.artifacts.pickFile(subDir) : Promise.resolve(null)),
+  pickArtifactDirectory: (subDir) => (desktop?.artifacts ? desktop.artifacts.pickDirectory(subDir) : Promise.resolve(null)),
+  revealArtifact: (rel) => (desktop?.artifacts ? desktop.artifacts.reveal(rel) : Promise.resolve()),
 }
 
 const LS = {
@@ -198,6 +218,16 @@ const webBackend: Backend = {
   async openFileDialog() {
     return null
   },
+  async listArtifacts() {
+    return []
+  },
+  async pickArtifactFile() {
+    return null
+  },
+  async pickArtifactDirectory() {
+    return null
+  },
+  async revealArtifact() {},
 }
 
 /**
@@ -258,6 +288,10 @@ const httpBackend: Backend = {
   exportFile: webBackend.exportFile,
   openExternal: webBackend.openExternal,
   openFileDialog: webBackend.openFileDialog,
+  listArtifacts: webBackend.listArtifacts,
+  pickArtifactFile: webBackend.pickArtifactFile,
+  pickArtifactDirectory: webBackend.pickArtifactDirectory,
+  revealArtifact: webBackend.revealArtifact,
 }
 
 /**

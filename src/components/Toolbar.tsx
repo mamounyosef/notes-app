@@ -5,7 +5,7 @@ import { prettyShortcut } from '../editor/shortcuts'
 import { useStore } from '../store'
 import { Menu, type MenuItem } from './Menu'
 import {
-  AlignCenter, AlignJustify, AlignLeft, AlignRight, Bold, Check, CodeI, ColumnsI, Cursor, Eraser,
+  AlignCenter, AlignJustify, AlignLeft, AlignRight, ArtifactI, Bold, Check, CodeI, ColumnsI, Cursor, Eraser,
   Highlighter, Hr, ImageI, Italic, Layers, LinkI, ListOl, ListUl, Palette, Pen, Plus,
   Quote, Redo, Sigma, SpaceI, StrikeI, TableI, UnderlineI, Undo,
 } from './Icons'
@@ -263,6 +263,14 @@ export default function Toolbar() {
           hint: 'Ctrl+K',
           onClick: () => {
             useActiveEditor.getState().setLinkModalOpen(true)
+          },
+        },
+        {
+          label: 'Artifact',
+          icon: <ArtifactI />,
+          hint: 'Ctrl+Shift+A',
+          onClick: () => {
+            useActiveEditor.getState().setArtifactModalOpen(true)
           },
         },
       ],

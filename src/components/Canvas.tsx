@@ -3,9 +3,11 @@ import CellView from './CellView'
 import { Menu, type MenuItem } from './Menu'
 import { markTouched, useStore } from '../store'
 import type { Cell, Stroke } from '../types'
-import { Copy, Layers, Trash, SpaceI, Plus } from './Icons'
+import { Copy, Layers, Trash, SpaceI, Plus, ArtifactI } from './Icons'
 import { columnLineMenu } from '../editor/columns'
 import { flashSearchMatches } from '../editor/searchHighlight'
+import { storage } from '../lib/storage'
+import { useActiveEditor } from '../editor/activeEditor'
 
 type Drag =
   | { mode: 'none' }
@@ -577,6 +579,46 @@ export default function Canvas() {
                   suppressContextMenuRef.current = false
                   return
                 }
+                // Right-clicking an artifact link gets an artifact-specific menu
+                const artifactAnchor = (e.target as HTMLElement).closest('a[href^="artifact:"]') as HTMLAnchorElement | null
+                if (artifactAnchor) {
+                  const href = artifactAnchor.getAttribute('href') || ''
+                  let rel = href.replace(/^artifact:\/\//i, '')
+                  if (rel.toLowerCase().startsWith('local/')) rel = rel.slice(6)
+                  rel = decodeURIComponent(rel)
+                  setMenu({
+                    x: e.clientX,
+                    y: e.clientY,
+                    items: [
+                      {
+                        label: 'Open artifact',
+                        icon: <ArtifactI />,
+                        onClick: () => storage.openExternal(href),
+                      },
+                      {
+                        label: 'Edit artifact...',
+                        onClick: () => {
+                          useActiveEditor.getState().setArtifactModalOpen(true)
+                        },
+                      },
+                      {
+                        label: 'Show in File Explorer',
+                        onClick: () => {
+                          storage.revealArtifact(rel)
+                        },
+                      },
+                      { separator: true },
+                      {
+                        label: 'Copy artifact path',
+                        onClick: () => {
+                          navigator.clipboard.writeText(rel)
+                        },
+                      },
+                    ],
+                  })
+                  return
+                }
+
                 // Right-clicking a vertical line or column gap gets its own menu.
                 const lineItems = columnLineMenu(e.target)
                 if (lineItems) {

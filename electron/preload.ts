@@ -39,6 +39,15 @@ const api = {
     save: (dataUrl: string) => ipcRenderer.invoke('asset:save', dataUrl) as Promise<string | null>,
     import: (filePath: string) => ipcRenderer.invoke('asset:import', filePath) as Promise<string | null>,
   },
+  artifacts: {
+    list: (subDir?: string, recursive?: boolean) =>
+      ipcRenderer.invoke('artifacts:list', subDir, recursive) as Promise<{ name: string; isDirectory: boolean; relativePath: string }[]>,
+    pickFile: (subDir?: string) =>
+      ipcRenderer.invoke('artifacts:pickFile', subDir) as Promise<{ relativePath: string; name: string; isDirectory: boolean } | null>,
+    pickDirectory: (subDir?: string) =>
+      ipcRenderer.invoke('artifacts:pickDirectory', subDir) as Promise<{ relativePath: string; name: string; isDirectory: boolean } | null>,
+    reveal: (relativePath?: string) => ipcRenderer.invoke('artifacts:reveal', relativePath) as Promise<void>,
+  },
   search: (query: string) => ipcRenderer.invoke('search:all', query),
   exportFile: (name: string, content: string) => ipcRenderer.invoke('export:file', name, content),
   openExternal: (url: string) => ipcRenderer.invoke('open:external', url) as Promise<void>,

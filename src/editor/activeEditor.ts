@@ -7,16 +7,20 @@ interface ActiveEditorState {
   /** Bumped on every selection/transaction so toolbars re-render. */
   tick: number
   linkModalOpen: boolean
+  artifactModalOpen: boolean
   setEditor(e: Editor | null): void
   bump(): void
   setLinkModalOpen(open: boolean): void
+  setArtifactModalOpen(open: boolean): void
 }
 
 export const useActiveEditor = create<ActiveEditorState>((set) => ({
   editor: null,
   tick: 0,
   linkModalOpen: false,
+  artifactModalOpen: false,
   setEditor: (editor) => set({ editor, tick: Date.now() }),
   bump: () => set({ tick: Date.now() }),
   setLinkModalOpen: (linkModalOpen) => set({ linkModalOpen }),
+  setArtifactModalOpen: (artifactModalOpen) => set({ artifactModalOpen }),
 }))

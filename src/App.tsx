@@ -7,6 +7,7 @@ import Tree from './components/Tree'
 import SearchModal from './components/SearchModal'
 import SettingsModal from './components/SettingsModal'
 import LinkModal from './components/LinkModal'
+import ArtifactModal from './components/ArtifactModal'
 import SyncPanel from './components/SyncPanel'
 import { findNode, pathTo, useStore, walk } from './store'
 import { setPasteMode } from './editor/extensions'
@@ -48,6 +49,8 @@ export default function App() {
 
   const linkModalOpen = useActiveEditor((s) => s.linkModalOpen)
   const setLinkModalOpen = useActiveEditor((s) => s.setLinkModalOpen)
+  const artifactModalOpen = useActiveEditor((s) => s.artifactModalOpen)
+  const setArtifactModalOpen = useActiveEditor((s) => s.setArtifactModalOpen)
 
   useEffect(() => {
     const handleAnchorClick = (e: MouseEvent) => {
@@ -213,6 +216,7 @@ export default function App() {
       if (e.ctrlKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setShowSearch(true); return }
       if (e.ctrlKey && e.key.toLowerCase() === 'p' && e.shiftKey) { e.preventDefault(); setShowSearch(true); return }
       if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); useActiveEditor.getState().setLinkModalOpen(true); return }
+      if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); useActiveEditor.getState().setArtifactModalOpen(true); return }
       if (e.ctrlKey && e.key === ',') { e.preventDefault(); setShowSettings(true); return }
       if (e.key === 'F1') { e.preventDefault(); setShowKeys(true); return }
       if (e.ctrlKey && e.key === '1') { e.preventDefault(); setSettings({ sidebarVisible: !st.settings.sidebarVisible }); return }
@@ -556,6 +560,7 @@ export default function App() {
       {showSyncPanel && <SyncPanel onClose={() => useStore.getState().setShowSyncPanel(false)} />}
       {showKeys && <ShortcutSheet onClose={() => setShowKeys(false)} />}
       {linkModalOpen && <LinkModal onClose={() => setLinkModalOpen(false)} />}
+      {artifactModalOpen && <ArtifactModal onClose={() => setArtifactModalOpen(false)} />}
       {toast && <div className="toast">{toast}</div>}
     </div>
   )
@@ -618,6 +623,7 @@ function ShortcutSheet({ onClose }: { onClose(): void }) {
     ['Alt Left / Alt Right', 'Back and forward between pages (also mouse side buttons)'],
     ['Ctrl F', 'Search everything'],
     ['Ctrl K', 'Insert or edit link'],
+    ['Ctrl Shift A', 'Insert or edit artifact (folder or file link)'],
     ['Ctrl ,', 'Settings'],
     ['Ctrl Enter', 'New cell'],
     ['Ctrl Shift N', 'New page'],

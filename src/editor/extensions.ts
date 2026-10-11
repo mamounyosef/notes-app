@@ -16,8 +16,9 @@ import TaskItem from '@tiptap/extension-task-item'
 import HorizontalRule from '@tiptap/extension-horizontal-rule'
 import { Extension, Mark, mergeAttributes, Node } from '@tiptap/core'
 import { NodeSelection, Plugin } from '@tiptap/pm/state'
+import { DOMSerializer } from '@tiptap/pm/model'
 import { BlockMath, InlineMath } from './math'
-import { looksLikeMarkdown, markdownToHtml } from './markdown'
+import { htmlToMarkdown, looksLikeMarkdown, markdownToHtml } from './markdown'
 import { latexDocumentToHtml, looksLikeLatexDocument } from './latexDocument'
 import { storage } from '../lib/storage'
 import { useStore } from '../store'
@@ -95,6 +96,12 @@ export const SmartPaste = Extension.create({
     return [
       new Plugin({
         props: {
+          // Copied plain text is Markdown with LaTeX delimiters, not flattened text.
+          clipboardTextSerializer(slice, view) {
+            const div = document.createElement('div')
+            div.appendChild(DOMSerializer.fromSchema(view.state.schema).serializeFragment(slice.content))
+            return htmlToMarkdown(div.innerHTML)
+          },
           handlePaste(_view, event) {
             const cb = event.clipboardData
             if (!cb) return false
@@ -113,6 +120,8 @@ export const SmartPaste = Extension.create({
             const text = cb.getData('text/plain')
             const mode = pasteMode()
             if (mode === 'never' || !text) return false
+            // Copied from this app: the rich HTML keeps colors and highlights the Markdown lacks.
+            if (html.includes('data-pm-slice')) return false
 
             if (looksLikeLatexDocument(text)) {
               event.preventDefault()
@@ -255,6 +264,10 @@ export const CustomShortcuts = Extension.create({
         useActiveEditor.getState().setLinkModalOpen(true)
         return true
       },
+      'Mod-Shift-a': () => {
+        useActiveEditor.getState().setArtifactModalOpen(true)
+        return true
+      },
     }
   },
 })
@@ -286,7 +299,9 @@ export function buildExtensions(placeholder: string) {
         'https',
         'ftp',
         'mailto',
+        'artifact',
         { scheme: 'file', optionalSlashes: true },
+        { scheme: 'artifact', optionalSlashes: true },
       ],
       isAllowedUri: () => true,
       validate: () => true,

@@ -36,7 +36,7 @@ function readConfiguredVault() {
   }
 }
 
-for (const d of ['pages', 'assets']) fs.mkdirSync(path.join(VAULT, d), { recursive: true })
+for (const d of ['pages', 'assets', 'artifacts']) fs.mkdirSync(path.join(VAULT, d), { recursive: true })
 
 // Browser tabs listening for changes (server sent events).
 const clients = new Set()

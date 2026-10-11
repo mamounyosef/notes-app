@@ -51,6 +51,7 @@ const sync = new VaultSync({
 function ensureVault(p = vaultPath) {
   fs.mkdirSync(path.join(p, 'pages'), { recursive: true })
   fs.mkdirSync(path.join(p, 'assets'), { recursive: true })
+  fs.mkdirSync(path.join(p, 'artifacts'), { recursive: true })
   fs.mkdirSync(path.join(p, '.trash'), { recursive: true })
   return p
 }
@@ -171,6 +172,54 @@ async function openExternalUrl(rawUrl: string) {
   }
   lastOpenedUrl = target
   lastOpenedTime = now
+
+  // Handle artifact:// URLs (stored relative to the vault's artifacts directory)
+  if (target.startsWith('artifact:')) {
+    try {
+      let rel = target.replace(/^artifact:\/\//i, '')
+      if (rel.toLowerCase().startsWith('local/')) {
+        rel = rel.slice(6)
+      } else if (rel.toLowerCase().startsWith('local\\')) {
+        rel = rel.slice(6)
+      }
+      rel = decodeURIComponent(rel).replace(/^\/+/, '')
+
+      const artifactsDir = path.join(vaultPath, 'artifacts')
+      ensureVault()
+      const filePath = path.resolve(artifactsDir, rel.replace(/[\\/]+/g, path.sep))
+
+      if (!fs.existsSync(filePath)) {
+        if (win && !win.isDestroyed()) {
+          dialog.showMessageBox(win, {
+            type: 'warning',
+            title: 'Artifact Not Found',
+            message: `The artifact file or folder could not be found:\n\n${filePath}\n\nPlease check that it exists in your artifacts folder.`,
+            buttons: ['OK', 'Open Artifacts Folder'],
+            defaultId: 0,
+          }).then((res) => {
+            if (res.response === 1) {
+              shell.openPath(artifactsDir)
+            }
+          })
+        }
+        return
+      }
+
+      const err = await shell.openPath(filePath)
+      if (err) {
+        console.error('shell.openPath returned error, attempting fallback:', err)
+        try {
+          await shell.openExternal(pathToFileURL(filePath).toString())
+        } catch (fallbackErr) {
+          console.error('shell.openExternal fallback also failed:', fallbackErr)
+        }
+      }
+      return
+    } catch (err) {
+      console.error('Failed to open artifact URL:', target, err)
+      return
+    }
+  }
 
   // Handle file:// URLs
   if (target.startsWith('file://')) {
@@ -446,4 +495,127 @@ ipcMain.handle('dialog:openFile', async () => {
   })
   if (res.canceled || !res.filePaths[0]) return null
   return res.filePaths[0]
+})
+
+ipcMain.handle('artifacts:list', async (_e, subDir = '', recursive = false) => {
+  const artifactsDir = path.join(vaultPath, 'artifacts')
+  ensureVault()
+  const targetDir = path.resolve(artifactsDir, subDir || '')
+  if (!targetDir.startsWith(artifactsDir)) return []
+  try {
+    const list: { name: string; isDirectory: boolean; relativePath: string }[] = []
+    async function scan(dir: string, depth = 0) {
+      const entries = await fsp.readdir(dir, { withFileTypes: true })
+      for (const ent of entries) {
+        const full = path.join(dir, ent.name)
+        const rel = path.relative(artifactsDir, full).replace(/\\/g, '/')
+        list.push({
+          name: ent.name,
+          isDirectory: ent.isDirectory(),
+          relativePath: rel,
+        })
+        if (recursive && ent.isDirectory() && depth < 6) {
+          await scan(full, depth + 1)
+        }
+      }
+    }
+    await scan(targetDir)
+    list.sort((a, b) => {
+      if (a.isDirectory && !b.isDirectory) return -1
+      if (!a.isDirectory && b.isDirectory) return 1
+      return a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
+    })
+    return list
+  } catch (err) {
+    console.error('artifacts:list failed:', err)
+    return []
+  }
+})
+
+ipcMain.handle('artifacts:pickFile', async (_e, subDir = '') => {
+  const artifactsDir = path.join(vaultPath, 'artifacts')
+  ensureVault()
+  const startDir = subDir ? path.resolve(artifactsDir, subDir) : artifactsDir
+  const defaultPath = startDir.startsWith(artifactsDir) && fs.existsSync(startDir) ? startDir : artifactsDir
+  const res = await dialog.showOpenDialog(win!, {
+    title: 'Select Artifact File',
+    defaultPath,
+    properties: ['openFile'],
+  })
+  if (res.canceled || !res.filePaths[0]) return null
+  const filePath = res.filePaths[0]
+  if (filePath.startsWith(artifactsDir)) {
+    const rel = path.relative(artifactsDir, filePath).replace(/\\/g, '/')
+    return {
+      relativePath: rel,
+      name: path.basename(filePath),
+      isDirectory: false,
+    }
+  } else {
+    // If chosen outside artifacts, copy into artifacts for machine portability
+    const fileName = path.basename(filePath)
+    let dest = path.join(defaultPath, fileName)
+    if (fs.existsSync(dest) && dest.toLowerCase() !== filePath.toLowerCase()) {
+      const ext = path.extname(fileName)
+      const base = path.basename(fileName, ext)
+      dest = path.join(defaultPath, `${base}-${Date.now()}${ext}`)
+    }
+    if (dest.toLowerCase() !== filePath.toLowerCase()) {
+      await fsp.copyFile(filePath, dest)
+    }
+    const rel = path.relative(artifactsDir, dest).replace(/\\/g, '/')
+    return {
+      relativePath: rel,
+      name: path.basename(dest),
+      isDirectory: false,
+    }
+  }
+})
+
+ipcMain.handle('artifacts:pickDirectory', async (_e, subDir = '') => {
+  const artifactsDir = path.join(vaultPath, 'artifacts')
+  ensureVault()
+  const startDir = subDir ? path.resolve(artifactsDir, subDir) : artifactsDir
+  const defaultPath = startDir.startsWith(artifactsDir) && fs.existsSync(startDir) ? startDir : artifactsDir
+  const res = await dialog.showOpenDialog(win!, {
+    title: 'Select Artifact Folder',
+    defaultPath,
+    properties: ['openDirectory', 'createDirectory'],
+  })
+  if (res.canceled || !res.filePaths[0]) return null
+  const dirPath = res.filePaths[0]
+  if (dirPath.startsWith(artifactsDir)) {
+    const rel = path.relative(artifactsDir, dirPath).replace(/\\/g, '/')
+    return {
+      relativePath: rel,
+      name: path.basename(dirPath),
+      isDirectory: true,
+    }
+  } else {
+    const folderName = path.basename(dirPath)
+    if (dirPath.toLowerCase() === artifactsDir.toLowerCase()) {
+      return {
+        relativePath: '',
+        name: folderName,
+        isDirectory: true,
+      }
+    }
+    const dest = path.join(artifactsDir, folderName)
+    if (!fs.existsSync(dest)) {
+      await fsp.cp(dirPath, dest, { recursive: true })
+    }
+    const rel = path.relative(artifactsDir, dest).replace(/\\/g, '/')
+    return {
+      relativePath: rel,
+      name: folderName,
+      isDirectory: true,
+    }
+  }
+})
+
+ipcMain.handle('artifacts:reveal', async (_e, relativePath = '') => {
+  const artifactsDir = path.join(vaultPath, 'artifacts')
+  ensureVault()
+  const target = relativePath ? path.resolve(artifactsDir, relativePath) : artifactsDir
+  await shell.openPath(target)
 })
