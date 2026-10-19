@@ -3,6 +3,7 @@ import Canvas from './components/Canvas'
 import { useActiveEditor } from './editor/activeEditor'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toolbar from './components/Toolbar'
+import { nudgeInkSize } from './components/InkSizeControl'
 import Tree from './components/Tree'
 import SearchModal from './components/SearchModal'
 import SettingsModal from './components/SettingsModal'
@@ -312,6 +313,11 @@ export default function App() {
         }
         const fn = map[e.key.toLowerCase()]
         if (fn) { fn(); return }
+        if (e.key === '[' || e.key === ']') {
+          const size = nudgeInkSize(e.key === ']' ? 1 : -1)
+          if (size !== null) { e.preventDefault(); flash(`${st.tool === 'pen' ? 'Pen' : 'Highlighter'} thickness: ${size}px`) }
+          return
+        }
       }
 
       // Nudge the selected cells with the arrow keys.

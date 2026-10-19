@@ -3,6 +3,7 @@ import { useActiveEditor } from '../editor/activeEditor'
 import { insertImageFile } from '../editor/extensions'
 import { prettyShortcut } from '../editor/shortcuts'
 import { useStore } from '../store'
+import { InkSizeControl } from './InkSizeControl'
 import { Menu, type MenuItem } from './Menu'
 import {
   AlignCenter, AlignJustify, AlignLeft, AlignRight, ArtifactI, Bold, Check, CodeI, ColumnsI, Cursor, Eraser,
@@ -405,19 +406,7 @@ export default function Toolbar() {
             }
             style={{ width: 28, height: 26, padding: 2 }}
           />
-          <input
-            type="range"
-            min={1}
-            max={40}
-            title="Ink size"
-            value={tool === 'pen' ? settings.penSize : settings.highlighterSize}
-            onChange={(e) =>
-              useStore.getState().setSettings(
-                tool === 'pen' ? { penSize: Number(e.target.value) } : { highlighterSize: Number(e.target.value) },
-              )
-            }
-            style={{ width: 90 }}
-          />
+          <InkSizeControl tool={tool} />
         </>
       ) : null}
 
