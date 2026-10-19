@@ -251,11 +251,33 @@ export default function Toolbar() {
             ]
           : []),
         { label: 'Code block', icon: <CodeI />, hint: '```', onClick: run((c) => c.toggleCodeBlock().run()) },
+        ...(editor?.isActive('codeBlock')
+          ? [
+              {
+                label: 'Code language...',
+                icon: <CodeI />,
+                hint: editor.getAttributes('codeBlock').language || 'auto',
+                onClick: () => {
+                  const current = editor.getAttributes('codeBlock').language || ''
+                  const lang = window.prompt(
+                    'Programming language (e.g. python, javascript, typescript, html, css, rust, go):',
+                    current,
+                  )
+                  if (lang !== null) {
+                    editor
+                      .chain()
+                      .focus()
+                      .updateAttributes('codeBlock', { language: lang.trim().toLowerCase() || null })
+                      .run()
+                  }
+                },
+              },
+            ]
+          : []),
+        { label: 'LaTeX code', icon: <Sigma />, hint: '$$', onClick: run((c) => c.insertBlockMath('\\int_0^1 f(x)\\,dx').run()) },
+        { label: 'LaTeX inline', icon: <Sigma />, hint: '$x$', onClick: run((c) => c.insertInlineMath('x^2').run()) },
         { label: 'Quote', icon: <Quote />, hint: '> ', onClick: run((c) => c.toggleBlockquote().run()) },
         { label: 'Checklist', icon: <Check />, hint: '[] ', onClick: run((c) => c.toggleTaskList().run()) },
-        { separator: true },
-        { label: 'Inline math', icon: <Sigma />, hint: '$x$', onClick: run((c) => c.insertInlineMath('x^2').run()) },
-        { label: 'Block math', icon: <Sigma />, hint: '$$', onClick: run((c) => c.insertBlockMath('\\int_0^1 f(x)\\,dx').run()) },
         { separator: true },
         {
           label: 'Link',

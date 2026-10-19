@@ -1,6 +1,7 @@
-import React, { memo, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import React, { memo, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import RichEditor from './RichEditor'
-import { Grip } from './Icons'
+import { Grip, Copy, Check } from './Icons'
+import { htmlToMarkdown } from '../editor/markdown'
 import type { Cell, Settings } from '../types'
 
 interface Props {
@@ -38,6 +39,32 @@ function CellViewInner({
   onDeleteSelf,
 }: Props) {
   const titleRef = useRef<HTMLInputElement>(null)
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation()
+    e.preventDefault()
+    const titlePrefix = cell.title ? `## ${cell.title}\n\n` : ''
+    const md = `${titlePrefix}${htmlToMarkdown(cell.html || '')}`
+    const fullHtml = cell.title ? `<h2>${cell.title}</h2>${cell.html || ''}` : (cell.html || '')
+
+    try {
+      if (navigator.clipboard.write && window.ClipboardItem) {
+        const item = new window.ClipboardItem({
+          'text/html': new Blob([fullHtml], { type: 'text/html' }),
+          'text/plain': new Blob([md], { type: 'text/plain' }),
+        })
+        await navigator.clipboard.write([item])
+      } else {
+        await navigator.clipboard.writeText(md)
+      }
+    } catch {
+      await navigator.clipboard.writeText(md)
+    }
+
+    setCopied(true)
+    setTimeout(() => setCopied(false), 1500)
+  }, [cell.title, cell.html])
 
   const hasTitle = Boolean(cell.title && cell.title.trim().length > 0)
   const isTitleVisible = cell.showTitle && (hasTitle || selected || editing || cell.collapsed)
@@ -232,6 +259,17 @@ function CellViewInner({
           </div>
         )}
       </div>
+
+      <button
+        type="button"
+        className={`cell-copy-btn ${copied ? 'copied' : ''}`}
+        title={copied ? 'Copied to clipboard!' : 'Copy note content'}
+        onClick={handleCopy}
+        onPointerDown={(e) => e.stopPropagation()}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        {copied ? <Check size={14} /> : <Copy size={14} />}
+      </button>
 
       {!cell.locked && (
         <>

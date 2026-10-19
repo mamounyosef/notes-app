@@ -27,6 +27,14 @@ import { ColumnsKit } from './columns'
 import { WordFormatting } from './wordFormatting'
 import { ConfigurableShortcuts } from './shortcuts'
 import { ClickBelowBlock } from './clickBelow'
+import { HtmlEmbed, looksLikeHtmlDocument } from './HtmlEmbed'
+import {
+  CustomCodeBlockLowlight,
+  extractLanguageFromHtml,
+  isCodeHtml,
+  looksLikeCode,
+  looksLikeMixedMarkdown,
+} from './codeBlock'
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {
@@ -116,6 +124,16 @@ export const SmartPaste = Extension.create({
               }
             }
 
+            // Pasting inside an existing code block: insert plain text directly so newlines are preserved
+            if (editor.isActive('codeBlock')) {
+              const text = cb.getData('text/plain')
+              if (text) {
+                event.preventDefault()
+                editor.commands.insertContent(text.replace(/\r\n?/g, '\n'))
+                return true
+              }
+            }
+
             const html = cb.getData('text/html')
             const text = cb.getData('text/plain')
             const mode = pasteMode()
@@ -129,6 +147,36 @@ export const SmartPaste = Extension.create({
               return true
             }
 
+            if (looksLikeHtmlDocument(text)) {
+              event.preventDefault()
+              ;(editor.commands as any).insertHtmlEmbed(text)
+              return true
+            }
+
+            // Code detection: if copied from a code block (HTML with code tags/classes/white-space:pre)
+            // or if the plain text looks like a multi-line code snippet (e.g. from Claude's Copy button)
+            const codeDetection = looksLikeCode(text)
+            const htmlIsCode = isCodeHtml(html)
+            const shouldPasteAsCode =
+              (htmlIsCode &&
+                (codeDetection.isCode ||
+                  /<(?:pre|code)\b/i.test(html) ||
+                  /class=["'][^"']*(?:token|hljs|shiki|cm-line|code-block)[^"']*/i.test(html)) &&
+                text.trim().includes('\n')) ||
+              (codeDetection.isCode && !looksLikeMixedMarkdown(text))
+
+            if (shouldPasteAsCode) {
+              event.preventDefault()
+              const language = extractLanguageFromHtml(html) || codeDetection.language
+              const cleanCode = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '')
+              editor.commands.insertContent({
+                type: 'codeBlock',
+                attrs: { language },
+                content: cleanCode ? [{ type: 'text', text: cleanCode }] : [],
+              })
+              return true
+            }
+
             // Markdown-like plain text must win in auto mode so math delimiters,
             // emphasis, and blank-line paragraph breaks are parsed correctly.
             const preferMarkdown = mode === 'always' ? !!text : looksLikeMarkdown(text)
@@ -138,6 +186,46 @@ export const SmartPaste = Extension.create({
               return true
             }
             return false
+          },
+          transformPastedHTML(html) {
+            // If HTML contains inline newlines inside elements with white-space: pre / pre-wrap,
+            // replace them with <br> so ProseMirror's paragraph parser doesn't collapse them to spaces.
+            if (!html || !html.includes('\n')) return html
+            try {
+              const parser = new DOMParser()
+              const doc = parser.parseFromString(html, 'text/html')
+              const preWsNodes = doc.querySelectorAll('[style*="white-space"]')
+              let modified = false
+              preWsNodes.forEach((node) => {
+                if (node.tagName === 'PRE') return
+                const style = (node as HTMLElement).style.whiteSpace
+                if (style && /pre/.test(style)) {
+                  const walker = doc.createTreeWalker(node, NodeFilter.SHOW_TEXT)
+                  const textNodes: Text[] = []
+                  let cur: Node | null
+                  while ((cur = walker.nextNode())) {
+                    if (cur.nodeValue && cur.nodeValue.includes('\n')) {
+                      textNodes.push(cur as Text)
+                    }
+                  }
+                  textNodes.forEach((tn) => {
+                    const parts = (tn.nodeValue || '').split('\n')
+                    if (parts.length > 1) {
+                      const frag = doc.createDocumentFragment()
+                      parts.forEach((p, i) => {
+                        if (i > 0) frag.appendChild(doc.createElement('br'))
+                        if (p) frag.appendChild(doc.createTextNode(p))
+                      })
+                      tn.parentNode?.replaceChild(frag, tn)
+                      modified = true
+                    }
+                  })
+                }
+              })
+              return modified ? doc.body.innerHTML : html
+            } catch {
+              return html
+            }
           },
           handleDrop(_view, event) {
             const files = Array.from((event as DragEvent).dataTransfer?.files || [])
@@ -279,9 +367,10 @@ export function buildExtensions(placeholder: string) {
     StarterKit.configure({
       horizontalRule: false,
       heading: { levels: [1, 2, 3, 4] },
-      codeBlock: { HTMLAttributes: { class: 'code-block' } },
+      codeBlock: false,
       history: { depth: 200 },
     }),
+    CustomCodeBlockLowlight,
     DraggableHorizontalRule,
     Underline,
     TextStyle,
@@ -289,7 +378,7 @@ export function buildExtensions(placeholder: string) {
     FontSize,
     Kbd,
     Highlight.configure({ multicolor: true }),
-    TextAlign.configure({ types: ['heading', 'paragraph', 'image'] }),
+    TextAlign.configure({ types: ['heading', 'paragraph', 'image', 'htmlEmbed'] }),
     Link.configure({
       openOnClick: false,
       autolink: true,
@@ -304,7 +393,13 @@ export function buildExtensions(placeholder: string) {
         { scheme: 'artifact', optionalSlashes: true },
       ],
       isAllowedUri: () => true,
-      validate: () => true,
+      validate: (url: string) => {
+        if (/^(?:https?|ftp|file|mailto|artifact):/i.test(url)) return true
+        if (/^www\./i.test(url)) return true
+        // Only autolink domain-like strings that end with recognized common web TLDs
+        // Avoid treating Python method calls or object accesses like model.save_pretrained as links
+        return /^[a-zA-Z0-9-]+(?:\.[a-zA-Z0-9-]+)*\.(?:com|org|net|edu|gov|io|ai|dev|co|app|info|me|xyz)(?:\/|\?|#|$)/i.test(url)
+      },
       HTMLAttributes: { rel: 'noopener noreferrer', target: '_blank' },
     }),
     ResizableImage.configure({ inline: false, allowBase64: true }),
@@ -320,6 +415,7 @@ export function buildExtensions(placeholder: string) {
     WordFormatting,
     ConfigurableShortcuts,
     ThickHorizontalRule,
+    HtmlEmbed,
     ClickBelowBlock,
     // includeChildren marks the empty line inside a new side column so CSS can hint there.
     Placeholder.configure({ placeholder, includeChildren: true }),
