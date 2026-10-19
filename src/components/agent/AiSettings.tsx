@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { agentApi } from '../../agent/api'
 import { useAgent } from '../../agent/store'
-import { MODELS, DEFAULT_MODEL, modelInfo, fmtCtx } from '../../agent/models'
+import { MODELS, DEFAULT_MODEL, modelInfo, fmtCtx, paramsLabel } from '../../agent/models'
 
 /** Settings, AI: the Ollama key (this computer only), model and thinking. */
 export default function AiSettings() {
@@ -51,7 +51,7 @@ export default function AiSettings() {
       <div className="set-row">
         <label>
           Model
-          <span className="sub">{modelInfo(prefs.model).params} params, {fmtCtx(modelInfo(prefs.model).context)} context. Default {modelInfo(DEFAULT_MODEL).name}. Also in the chat box.</span>
+          <span className="sub">{paramsLabel(modelInfo(prefs.model))}, {fmtCtx(modelInfo(prefs.model).context)} context. Default {modelInfo(DEFAULT_MODEL).name}. Also in the chat box.</span>
         </label>
         <select value={prefs.model} onChange={(e) => setPrefs({ model: e.target.value })} style={{ width: 200 }}>
           {MODELS.map((m) => (

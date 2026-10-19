@@ -1,5 +1,5 @@
 /**
- * Ollama Cloud models the assistant can use, in the order the person chose
+ * Ollama Cloud models the assistant can use, in the order the user chose
  * (Gemma 4 first, and the default).
  * Facts from Ollama's /api/show (context, parameters, capabilities, date
  * added) and prices from ollama.com/pricing (US dollars per million tokens),
@@ -11,6 +11,8 @@ export interface ModelInfo {
   name: string
   /** Total parameters, as Ollama reports them. */
   params: string
+  /** Active parameters per token for mixture-of-experts models; absent means dense. */
+  active?: string
   context: number
   /** When the model was published on Ollama. */
   released: string
@@ -37,6 +39,7 @@ export const MODELS: ModelInfo[] = [
     id: 'beam',
     name: 'Beam',
     params: '501B',
+    active: '23B',
     context: 1_048_576,
     released: '2026-10-16',
     vision: false,
@@ -47,6 +50,7 @@ export const MODELS: ModelInfo[] = [
     id: 'nemotron-3-nano:30b',
     name: 'Nemotron 3 Nano 30B',
     params: '32B',
+    active: '3.2B',
     context: 262_144,
     released: '2025-12-15',
     vision: false,
@@ -56,6 +60,7 @@ export const MODELS: ModelInfo[] = [
     id: 'nemotron-3-super',
     name: 'Nemotron 3 Super',
     params: '120B',
+    active: '12B',
     context: 262_144,
     released: '2026-03-11',
     vision: false,
@@ -65,6 +70,7 @@ export const MODELS: ModelInfo[] = [
     id: 'nemotron-3-ultra',
     name: 'Nemotron 3 Ultra',
     params: '550B',
+    active: '55B',
     context: 262_144,
     released: '2026-06-04',
     vision: false,
@@ -74,6 +80,7 @@ export const MODELS: ModelInfo[] = [
     id: 'gpt-oss:120b',
     name: 'gpt-oss 120B',
     params: '117B',
+    active: '5.1B',
     context: 131_072,
     released: '2025-08-05',
     vision: false,
@@ -84,6 +91,7 @@ export const MODELS: ModelInfo[] = [
     id: 'gpt-oss:20b',
     name: 'gpt-oss 20B',
     params: '20.9B',
+    active: '3.6B',
     context: 131_072,
     released: '2025-08-05',
     vision: false,
@@ -134,4 +142,9 @@ export function fmtMoney(n: number) {
   if (n < 0.0001) return '<$0.0001'
   if (n < 0.01) return `$${n.toFixed(4)}`
   return `$${n.toFixed(n < 1 ? 3 : 2)}`
+}
+
+/** "Dense, 32.7B" or "MoE, 501B total, 23B active". */
+export function paramsLabel(m: Pick<ModelInfo, 'params' | 'active'>) {
+  return m.active ? `MoE, ${m.params} total, ${m.active} active` : `Dense, ${m.params}`
 }

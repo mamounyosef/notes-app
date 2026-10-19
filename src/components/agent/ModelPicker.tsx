@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { useAgent } from '../../agent/store'
-import { MODELS, modelInfo, fmtCtx, fmtDate, type ModelInfo } from '../../agent/models'
+import { MODELS, modelInfo, fmtCtx, fmtDate, paramsLabel, type ModelInfo } from '../../agent/models'
 import { Check, Chevron, ImageI } from '../Icons'
 
 const money = (n: number | null | undefined) => (n === null || n === undefined ? '-' : `$${n < 0.1 ? n.toFixed(3) : n.toFixed(2)}`)
@@ -41,7 +41,7 @@ export default function ModelPicker() {
       <button
         className={`mp-btn ${open ? 'on' : ''}`}
         onClick={() => setOpen(!open)}
-        title={`${cur.name}: ${cur.params} parameters, ${fmtCtx(cur.context)} context${cur.released ? `, released ${fmtDate(cur.released)}` : ''}`}
+        title={`${cur.name}: ${paramsLabel(cur)}, ${fmtCtx(cur.context)} context${cur.released ? `, released ${fmtDate(cur.released)}` : ''}`}
       >
         {cur.name}
         <Chevron size={11} className="mp-chev" />
@@ -68,7 +68,7 @@ export default function ModelPicker() {
                 {m.id === model && <Check size={13} className="mp-check" />}
               </div>
               <div className="mp-row2">
-                <span>{m.params} params</span>
+                <span>{paramsLabel(m)}</span>
                 <span>{fmtCtx(m.context)} context</span>
                 <span>{fmtDate(m.released)}</span>
               </div>

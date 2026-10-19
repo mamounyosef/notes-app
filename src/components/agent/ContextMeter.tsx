@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
 import { useAgent, contextBreakdown, estimateTokens, chatCost } from '../../agent/store'
-import { modelInfo, costOf, fmtMoney, fmtCtx, fmtDate } from '../../agent/models'
+import { modelInfo, costOf, fmtMoney, fmtCtx, fmtDate, paramsLabel } from '../../agent/models'
 import { SYSTEM_PROMPT } from '../../agent/prompt'
 import { TOOL_DEFS } from '../../agent/tools'
 import { buildContext } from '../../agent/context'
@@ -131,7 +131,7 @@ export function ContextInspector({ onClose }: { onClose(): void }) {
       <div className="ci-head">
         <div>
           <div className="ci-title">Context window</div>
-          <div className="ci-sub">{info.name} · {info.params} params · {fmtCtx(CONTEXT_LIMIT)} context · released {fmtDate(info.released)}</div>
+          <div className="ci-sub">{info.name} · {paramsLabel(info)} · {fmtCtx(CONTEXT_LIMIT)} context · released {fmtDate(info.released)}</div>
         </div>
         <button className="ag-icon-btn" onClick={onClose} title="Back to chat"><X size={15} /></button>
       </div>
