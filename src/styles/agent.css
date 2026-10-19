@@ -1023,6 +1023,41 @@
 
 /* ---------- titlebar button and flashes ---------- */
 
+/* ---------- page zoom, in the top bar ---------- */
+
+.zoom-pill {
+  display: inline-flex;
+  align-items: center;
+  height: 28px;
+  margin-right: 6px;
+  padding: 2px;
+  border-radius: 9px;
+  border: 1px solid var(--line);
+  background: var(--bg-2);
+}
+
+.zoom-pill button {
+  height: 22px;
+  min-width: 24px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--text-dim);
+  transition: background 0.1s, color 0.1s;
+}
+
+.zoom-pill button:hover { background: var(--bg-4); color: var(--text); }
+.zoom-pill button:active { transform: scale(0.94); }
+
+.zoom-pill .zoom-pct {
+  min-width: 46px;
+  padding: 0 4px;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.zoom-pill .zoom-pct.changed { color: var(--accent); }
+
 .tb-btn.agent-toggle.on {
   background: var(--ag-soft, color-mix(in srgb, var(--accent) 14%, transparent));
   color: var(--accent);

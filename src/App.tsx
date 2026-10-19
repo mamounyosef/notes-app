@@ -507,6 +507,11 @@ export default function App() {
             {syncCount > 0 && <span className="sync-count">{syncCount}</span>}
           </button>
         )}
+        <div className="zoom-pill" title="Page zoom">
+          <button title="Zoom out (Ctrl and minus)" onClick={() => useStore.getState().setZoom(zoom - settings.zoomStep)}><ZoomOut size={15} /></button>
+          <button className={`zoom-pct ${Math.abs(zoom - 1) < 0.001 ? '' : 'changed'}`} title="Reset to 100% (Ctrl+0)" onClick={() => useStore.getState().setZoom(1)}>{Math.round(zoom * 100)}%</button>
+          <button title="Zoom in (Ctrl and plus)" onClick={() => useStore.getState().setZoom(zoom + settings.zoomStep)}><ZoomIn size={15} /></button>
+        </div>
         <button
           className={`tb-btn agent-toggle ${agentOpen ? 'on' : ''}`}
           title="Assistant (Ctrl+J). Ctrl+L asks about the selection."
@@ -568,9 +573,6 @@ export default function App() {
               <span>{page ? `${page.cells.length} cells` : 'No page'}</span>
               <span className={syncError ? 'status-error' : ''}>{syncError ? 'Not saved yet, retrying' : dirty ? 'Saving...' : 'Saved'}</span>
               <div className="spacer" />
-              <button title="Zoom out (Ctrl and minus)" onClick={() => useStore.getState().setZoom(zoom - settings.zoomStep)}><ZoomOut size={13} /></button>
-              <button title="Reset zoom (Ctrl+0)" onClick={() => useStore.getState().setZoom(1)}>{Math.round(zoom * 100)}%</button>
-              <button title="Zoom in (Ctrl and plus)" onClick={() => useStore.getState().setZoom(zoom + settings.zoomStep)}><ZoomIn size={13} /></button>
               <button title="Keyboard shortcuts (F1)" onClick={() => setShowKeys(true)}>Shortcuts</button>
             </div>
           )}
