@@ -493,7 +493,7 @@ export const TOOL_DEFS = [
     to_page_id: str('Copy onto this page instead (placed at its end).'),
     move: bool('Move instead of copy (removes them from the source).'),
   }, ['cell_ids']),
-  fn('view_image', 'Look at an image with a vision model and get back text: a faithful transcription (default, with Markdown and LaTeX), a description, or the answer to a question about it. Works whatever model you are, for images the user attached (source "attachment:<sha>") and images inside cells (cell_id, optionally index). Use it before transcribing, replacing or answering about any image you cannot see yourself.', {
+  fn('view_image', 'Look at an image with a vision model and get back text: a faithful transcription (default: text in Markdown and LaTeX, plus a detailed [Figure] block for every diagram or chart: elements, labeled arrows A -> B, structure, axes and values), a full description (task describe, best for diagrams and charts), or the answer to a question about it. Ask follow-up questions when a detail matters. Works whatever model you are, for images the user attached (source "attachment:<sha>") and images inside cells (cell_id, optionally index). Use it before transcribing, replacing or answering about any image you cannot see yourself.', {
     source: str('"attachment:<sha>", an "asset://local/..." image, or a URL.'),
     cell_id: str('Read the images inside this cell instead.'),
     page_id: str('Page of cell_id. Omit for the open page.'),
@@ -1015,15 +1015,17 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     }
     if (!refs.length) throw new ToolError('Give source (attachment:<sha>, asset://..., or a URL) or cell_id.')
     const task = a.question
-      ? `Answer from the image(s) only: ${a.question}`
+      ? `Answer from the image(s) only: ${a.question}\nBe specific (exact labels, values, positions, arrow directions). If the image does not show the answer, say so.\n\n${FIGURE_RULES}`
       : a.task === 'describe'
-        ? 'Describe the image(s) precisely: what it shows, its layout, all visible text, and anything notable. Do not guess beyond what is visible.'
-        : 'Transcribe everything in the image(s) exactly as written, in reading order, as Markdown: headings, bullet and numbered lists, tables as Markdown tables, every formula as LaTeX ($...$ inline, $$...$$ for display). Keep the original wording, symbols and order. Do not add, explain, summarize or correct anything. Mark anything you cannot read as [unclear]. Output only the transcription.'
+        ? `Describe the image(s) completely and precisely, for someone who cannot see it and must rebuild it from your words.\nStart with one line: what kind of image it is and what it is about. Then give every visible text exactly, and describe every figure as below.\n\n${FIGURE_RULES}`
+        : `Transcribe everything in the image(s) exactly as written, in reading order, as Markdown: headings, bullet and numbered lists, tables as Markdown tables, every formula as LaTeX ($...$ inline, $$...$$ for display). Keep the original wording, symbols and order. Do not add, explain, summarize or correct text.\nWhere the image has a diagram, chart, drawing or other figure, do not skip it: at that point in the reading order write a block starting with "[Figure]" that describes it as below.\nOutput only the transcription.\n\n${FIGURE_RULES}`
     const model = MODELS.find((m) => m.vision)?.id || DEFAULT_MODEL
     const res = await agentApi.complete({
       model,
+      // No thinking: it is much faster, and the figure rules above keep the reading careful.
       think: false,
-      options: { temperature: 0.1 },
+      // A hard stop and a repeat penalty, so a stuck model cannot loop for minutes.
+      options: { temperature: 0.1, num_predict: 3500, repeat_penalty: 1.1 },
       timeout_ms: 150_000,
       messages: [{ role: 'user', content: task, images: refs }],
     })
@@ -1207,6 +1209,20 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
 }
 
 /** Scrolls the canvas so a cell is in view and flashes it. */
+/**
+ * How the vision model must describe figures, so a model that cannot see the
+ * image gets everything it would need to redraw it.
+ */
+const FIGURE_RULES = `How to describe a figure:
+- Kind: flowchart, architecture or block diagram, graph or tree, sequence or timeline, mind map, table drawn by hand, plot or chart, geometry sketch, circuit, or other. One line on what it shows.
+- Elements: list every box, node, shape, icon and region with its exact label (word for word), shape, color if meaningful, and where it sits (top left, center, second row...). Give each one a short name you reuse below.
+- Connections: list every arrow and line as "A -> B" (or "A <-> B", "A - B" when undirected), with the label written on it, and its style when it carries meaning (dashed, thick, colored). Read arrow heads carefully; if a direction is unclear, say so instead of guessing.
+- Structure: grouping and containment (what is inside which box or region), layers or stages, loops and feedback paths, and the order of the flow from start to end.
+- Charts and plots: chart type, title, each axis (label, units, range, scale, tick values), legend entries, and every series with its values as read from the chart (mark estimates with ~). Then the visible trends, peaks, crossings and outliers. Give the data as a Markdown table when there are discrete values.
+- Math in a figure (labels, equations, annotations) as LaTeX.
+- Handwritten marks, highlights, circles or ticks that point at something: say what they point at.
+- Only what is visible: no outside knowledge, no interpretation presented as content. Mark unreadable text as [unclear] and anything you are unsure of as (uncertain).`
+
 /** An image src from the notes (data:, asset://, or a web URL) as plain base64 for the model. */
 async function imageAsBase64(src: string): Promise<string> {
   const data = /^data:image\/[\w.+-]+;base64,(.+)$/i.exec(src)

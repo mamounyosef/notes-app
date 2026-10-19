@@ -204,6 +204,21 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL): any[] {
   return out
 }
 
+/**
+ * True when reasoning is going in circles: its latest stretch already appeared
+ * twice before, or it ran far past any useful length without an answer.
+ */
+export function thinkingIsStuck(t: string) {
+  if (t.length > 24000) return true
+  if (t.length < 3000) return false
+  const tail = t.slice(-240).replace(/\s+/g, ' ').trim()
+  if (tail.length < 120) return false
+  const flat = t.slice(0, -240).replace(/\s+/g, ' ')
+  let n = 0
+  for (let i = flat.indexOf(tail.slice(0, 120)); i >= 0 && n < 2; i = flat.indexOf(tail.slice(0, 120), i + 1)) n++
+  return n >= 2
+}
+
 function parseArgs(a: any) {
   if (a && typeof a === 'object') return a
   try {
@@ -239,10 +254,12 @@ export const useAgent = create<AgentState>((set, get) => {
     update((c) => ({ ...c, messages: c.messages.map((m) => (m.id === id ? { ...m, ...patch, v: (m.v || 0) + 1 } : m)) }))
 
   /** Streams one model reply. Returns it, or null if stopped or failed. */
-  async function streamOnce(chat: Chat): Promise<ChatMessage | null> {
+  async function streamOnce(chat: Chat, noThink = false): Promise<ChatMessage | null> {
     const prefs = get().prefs
     const reqId = nanoid()
     currentReq = reqId
+    let looping = false
+    let checkedAt = 0
     const msg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', thinking: '', toolCalls: [] }
     set({ live: msg, activity: 'Thinking' })
     let thinkStart = 0
@@ -259,6 +276,14 @@ export const useAgent = create<AgentState>((set, get) => {
       if (m.thinking) {
         if (!thinkStart) thinkStart = Date.now()
         msg.thinking += m.thinking
+        // Models sometimes get stuck repeating their reasoning: cut it off and answer without thinking.
+        if (!looping && !msg.content && msg.thinking!.length - checkedAt > 1500) {
+          checkedAt = msg.thinking!.length
+          if (thinkingIsStuck(msg.thinking!)) {
+            looping = true
+            agentApi.abort(reqId)
+          }
+        }
       }
       if (m.content) {
         if (thinkStart && !thinkEnd) thinkEnd = Date.now()
@@ -279,11 +304,15 @@ export const useAgent = create<AgentState>((set, get) => {
       tools: TOOL_DEFS,
       options: { temperature: 0.4 },
     }
-    body.think = thinkValue(prefs.model || DEFAULT_MODEL, prefs.think)
+    body.think = noThink ? thinkValue(prefs.model || DEFAULT_MODEL, false) : thinkValue(prefs.model || DEFAULT_MODEL, prefs.think)
     const res = await agentApi.chat(reqId, body)
     off()
     if (frame) cancelAnimationFrame(frame)
     currentReq = null
+    if (looping && !stopped) {
+      set({ live: null, activity: 'Reasoning went in circles, answering directly' })
+      return streamOnce(chat, true)
+    }
     if (thinkStart) msg.thinkingMs = (thinkEnd || Date.now()) - thinkStart
     if (!res.ok) {
       set({ live: null })

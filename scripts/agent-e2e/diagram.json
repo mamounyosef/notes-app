@@ -1,0 +1,13 @@
+{
+  "fresh": true,
+  "setup": "setup-diagram.js",
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'beam' }); return 'beam' })()"
+  ],
+  "prompts": [
+    "Describe the diagram in the Model diagram cell in detail. Do not change anything."
+  ],
+  "eval": [
+    "(() => __notesDebug.useAgent.getState().chat.messages.filter(m => m.role === 'tool').map(m => m.toolName + ':\\n' + m.content).join('\\n\\n'))()"
+  ]
+}
