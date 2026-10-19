@@ -1,6 +1,6 @@
 /// <reference types="vite/client" />
 /**
- * Turns files the person drops, pastes or picks into chat attachments:
+ * Turns files the user drops, pastes or picks into chat attachments:
  * images as they are (downscaled when huge), PDFs as text plus page images
  * when they have little text (scans), Word files and text files as text.
  */

@@ -1,5 +1,5 @@
 /**
- * What the person has selected in their notes, kept current for the
+ * What the user has selected in their notes, kept current for the
  * assistant: the chip next to the model name shows it, and unless they
  * dismiss it, it goes with the next message as context.
  */
@@ -76,23 +76,26 @@ export function readSelection(): LiveSelection | null {
 /** Keeps useAgent.selection in step with the notes, ignoring focus moves into the panel. */
 export function trackSelection() {
   let raf = 0
-  const update = () => {
+  const update = (force = false) => {
     cancelAnimationFrame(raf)
     raf = requestAnimationFrame(() => {
-      // Clicking into the assistant must not lose what was selected in the notes.
-      if (document.activeElement?.closest('.agent-panel')) return
+      // Clicking into the assistant must not lose what was selected in the notes,
+      // but opening another page always replaces it.
+      if (!force && document.activeElement?.closest('.agent-panel')) return
       const sel = readSelection()
       const cur = useAgent.getState().selection
       if (sel?.key !== cur?.key) useAgent.setState({ selection: sel })
     })
   }
-  document.addEventListener('selectionchange', update)
+  const onDom = () => update()
+  document.addEventListener('selectionchange', onDom)
   const off1 = useStore.subscribe((s, p) => {
-    if (s.selection !== p.selection || s.page?.id !== p.page?.id || s.editingCellId !== p.editingCellId) update()
+    if (s.page?.id !== p.page?.id) update(true)
+    else if (s.selection !== p.selection || s.editingCellId !== p.editingCellId) update()
   })
-  const off2 = useActiveEditor.subscribe(update)
+  const off2 = useActiveEditor.subscribe(() => update())
   return () => {
-    document.removeEventListener('selectionchange', update)
+    document.removeEventListener('selectionchange', onDom)
     off1()
     off2()
     cancelAnimationFrame(raf)

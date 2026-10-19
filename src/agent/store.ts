@@ -12,6 +12,8 @@ import { TOOL_DEFS, READ_ONLY, TurnRecorder, keepSnapshot, runTool, undoTurn, sc
 import { storage } from '../lib/storage'
 import { useStore, findNode } from '../store'
 import type { LiveSelection } from './selection'
+import { activePath, messageOrder, PENDING, parentKey, ROOT, tipOf, treeOf } from './branches'
+export { messageOrder }
 
 import { DEFAULT_MODEL, modelInfo, thinkValue, costOf } from './models'
 export { DEFAULT_MODEL }
@@ -61,6 +63,8 @@ interface AgentState {
   newChat(): void
   deleteChat(id: string): Promise<void>
   renameChat(id: string, title: string): Promise<void>
+  /** Folds a copy from disk or the cloud into the open chat without losing anything held only in memory. */
+  mergeRemote(c: Chat): void
 
   busy: boolean
   /** The assistant message being streamed right now. */
@@ -76,7 +80,7 @@ interface AgentState {
   attachments: ChatAttachment[]
   mentions: Mention[]
   quote: string | null
-  /** Live selection in the notes, and the one the person dismissed with x. */
+  /** Live selection in the notes, and the one the user dismissed with x. */
   selection: LiveSelection | null
   selectionDismissed: string | null
   dismissSelection(): void
@@ -94,6 +98,19 @@ interface AgentState {
   stop(): void
   undo(turnId: string): Promise<void>
   retry(): Promise<void>
+  /** Sends a changed version of one of your messages as a new branch from the same point. */
+  editMessage(id: string, text: string): Promise<void>
+  /** A new reply to one of your messages, as another version beside the old one. */
+  regenerate(userMessageId: string): Promise<void>
+  /** Shows another version at a fork (parent key from versionsOf). */
+  showVersion(parent: string, id: string): void
+}
+
+let lastStamp = 0
+/** Message times that always increase, so a reply never sorts before the message it answers. */
+function stamp() {
+  lastStamp = Math.max(Date.now(), lastStamp + 1)
+  return lastStamp
 }
 
 let currentReq: string | null = null
@@ -131,7 +148,8 @@ function attachmentText(a: ChatAttachment) {
 
 function toRequestMessages(chat: Chat, model = DEFAULT_MODEL): any[] {
   const canSee = modelInfo(model).vision
-  const msgs = chat.messages
+  // Only the branch being shown: other versions are not part of this conversation.
+  const msgs = activePath(chat)
   const lastUserIdx = msgs.map((m) => m.role).lastIndexOf('user')
   // Images only for the last few messages that carried any, to keep requests light.
   const withImages = new Set(
@@ -144,14 +162,14 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL): any[] {
       const parts: string[] = []
       if (i === lastUserIdx && m.meta?.context) parts.push(`<app_context>\n${m.meta.context}\n</app_context>`)
       else if (m.meta?.brief) parts.push(`<app_context_then>${m.meta.brief}</app_context_then>`)
-      if (m.meta?.quote) parts.push(`The person quoted this from their notes:\n"""${m.meta.quote}"""`)
+      if (m.meta?.quote) parts.push(`The user quoted this from their notes:\n"""${m.meta.quote}"""`)
       if (m.meta?.selection) {
         const s = m.meta.selection
         const where =
           s.kind === 'text'
             ? `text in cell ${s.cellIds[0] ? `[${s.cellIds[0]}]` : ''}${s.cellTitle ? ` "${s.cellTitle}"` : ''}`
             : `cells ${s.cellIds.map((id) => `[${id}]`).join(', ')}`
-        parts.push(`THE PERSON HAS THIS SELECTED (${where}); "this" most likely means it:\n"""${s.text}"""`)
+        parts.push(`THE USER HAS THIS SELECTED (${where}); "this" most likely means it:\n"""${s.text}"""`)
       }
       if (m.meta?.mentions?.length) parts.push(`Mentioned: ${m.meta.mentions.map((x) => `${x.kind} "${x.title}" [${x.id}]`).join(', ')}`)
       for (const a of m.attachments || []) parts.push(attachmentText(a))
@@ -165,9 +183,10 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL): any[] {
           for (const p of (a.pages || []).slice(0, 20)) imgs.push(`sha:${p}`)
         }
         if (imgs.length && canSee) msg.images = imgs
-        else if (imgs.length) msg.content += `
+        else if (imgs.length)
+          msg.content += `
 
-(${imgs.length} image(s) attached, but the current model cannot see images. Say so if they matter, and suggest switching to Gemma 4.)`
+(${imgs.length} image(s) attached: ${imgs.map((r) => `attachment:${r.slice(4)}`).join(', ')}. You cannot see images yourself, so call view_image on them to read or describe them before answering. Never ask them to switch models for this.)`
       }
       out.push(msg)
     } else if (m.role === 'assistant') {
@@ -205,7 +224,17 @@ export const useAgent = create<AgentState>((set, get) => {
     if (save) persist(next)
   }
 
-  const pushMsg = (m: ChatMessage) => update((c) => ({ ...c, messages: [...c.messages, m] }))
+  /** Adds a message after the last shown one (or after m.parent), and shows it at that fork. */
+  const pushMsg = (m: ChatMessage) =>
+    update((c) => {
+      const parent = m.parent !== undefined ? m.parent : tipOf(c)
+      const key = parent ?? ROOT
+      return {
+        ...c,
+        messages: [...c.messages, { ...m, parent }],
+        chosen: { ...(c.chosen || {}), [key]: { id: m.id, at: stamp() } },
+      }
+    })
   const patchMsg = (id: string, patch: Partial<ChatMessage>) =>
     update((c) => ({ ...c, messages: c.messages.map((m) => (m.id === id ? { ...m, ...patch, v: (m.v || 0) + 1 } : m)) }))
 
@@ -214,7 +243,7 @@ export const useAgent = create<AgentState>((set, get) => {
     const prefs = get().prefs
     const reqId = nanoid()
     currentReq = reqId
-    const msg: ChatMessage = { id: nanoid(14), at: Date.now(), v: 1, role: 'assistant', content: '', thinking: '', toolCalls: [] }
+    const msg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', thinking: '', toolCalls: [] }
     set({ live: msg, activity: 'Thinking' })
     let thinkStart = 0
     let usage: { prompt: number; output: number; cached: number; ms: number } | null = null
@@ -303,7 +332,11 @@ export const useAgent = create<AgentState>((set, get) => {
         if (!reply) break
         // Now and then the model ends with nothing at all: ask again.
         if (!reply.content && !reply.toolCalls?.length) {
-          update((c) => ({ ...c, messages: c.messages.filter((m) => m.id !== reply.id) }))
+          update((c) => {
+            // Its fork goes back to waiting for a reply, instead of falling back to an older version.
+            const chosen = Object.fromEntries(Object.entries(c.chosen || {}).map(([k, v]) => [k, v.id === reply.id ? { id: PENDING, at: v.at } : v]))
+            return { ...c, messages: c.messages.filter((m) => m.id !== reply.id), chosen }
+          })
           if (emptyTries++ < 2) continue
           break
         }
@@ -317,7 +350,7 @@ export const useAgent = create<AgentState>((set, get) => {
             attachments: attachmentsOf(),
             ask: (q: { question: string; options?: string[]; multi?: boolean }) =>
               new Promise<string>((resolve) => {
-                const askMsg: ChatMessage = { id: nanoid(14), at: Date.now(), v: 1, role: 'assistant', content: '', meta: { ask: { ...q } } }
+                const askMsg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', meta: { ask: { ...q } } }
                 pushMsg(askMsg)
                 set({ pendingAsk: { messageId: askMsg.id, resolve }, activity: 'Waiting for your answer' })
               }),
@@ -329,7 +362,7 @@ export const useAgent = create<AgentState>((set, get) => {
           }
           pushMsg({
             id: nanoid(14),
-            at: Date.now(),
+            at: stamp(),
             v: 1,
             role: 'tool',
             toolName: call.name,
@@ -345,6 +378,15 @@ export const useAgent = create<AgentState>((set, get) => {
         keepSnapshot(turnId, rec.snap)
         patchMsg(firstAssistantId, { meta: { ...(get().chat?.messages.find((m) => m.id === firstAssistantId)?.meta || {}), turnId } })
       }
+      // A fork still waiting (the reply failed or was stopped) shows its newest version again.
+      if (Object.values(get().chat?.chosen || {}).some((v) => v.id === PENDING))
+        update((c) => {
+          const kids = treeOf(c.messages).children
+          const chosen = Object.fromEntries(
+            Object.entries(c.chosen || {}).map(([k, v]) => [k, v.id === PENDING ? { id: kids.get(k)?.slice(-1)[0]?.id || '', at: stamp() } : v]),
+          )
+          return { ...c, chosen }
+        })
       set({ busy: false, live: null, activity: '', pendingAsk: null })
       const c = get().chat
       if (c) {
@@ -356,7 +398,7 @@ export const useAgent = create<AgentState>((set, get) => {
   }
 
   async function nameChat(c: Chat) {
-    const first = c.messages.find((m) => m.role === 'user')
+    const first = activePath(c).find((m) => m.role === 'user')
     if (!first) return
     const res = await agentApi.complete({
       model: get().prefs.model || DEFAULT_MODEL,
@@ -372,7 +414,7 @@ export const useAgent = create<AgentState>((set, get) => {
           content: [
             `Message: ${first.content.slice(0, 1200) || first.attachments?.map((a) => a.name).join(', ') || '(attachment)'}`,
             first.meta?.brief ? `Where: ${first.meta.brief.slice(0, 300)}` : '',
-            `Outcome: ${[...c.messages].reverse().find((m) => m.role === 'assistant' && m.content)?.content.slice(0, 600) || ''}`,
+            `Outcome: ${[...activePath(c)].reverse().find((m) => m.role === 'assistant' && m.content)?.content.slice(0, 600) || ''}`,
           ]
             .filter(Boolean)
             .join('\n'),
@@ -442,6 +484,31 @@ export const useAgent = create<AgentState>((set, get) => {
       await get().loadChats()
     },
 
+    mergeRemote(remote) {
+      const cur = get().chat
+      if (!cur || cur.id !== remote.id) return
+      const byId = new Map<string, ChatMessage>()
+      for (const m of cur.messages) byId.set(m.id, m)
+      for (const m of remote.messages || []) {
+        const mine = byId.get(m.id)
+        if (!mine || (m.v || 0) > (mine.v || 0)) byId.set(m.id, m)
+      }
+      const messages = [...byId.values()].sort(messageOrder)
+      const same = messages.length === cur.messages.length && messages.every((m, i) => m === cur.messages[i])
+      const titled = (remote.titleAt || 0) > (cur.titleAt || 0)
+      // Branch choices: the most recent choice at each fork wins.
+      const chosen = { ...(cur.chosen || {}) }
+      let picked = false
+      for (const [k, v] of Object.entries(remote.chosen || {})) {
+        if (!chosen[k] || (v.at || 0) > (chosen[k].at || 0)) {
+          chosen[k] = v
+          picked = true
+        }
+      }
+      if (same && !titled && !picked) return
+      set({ chat: { ...cur, ...(titled ? { title: remote.title, titleAt: remote.titleAt } : {}), messages, chosen } })
+    },
+
     busy: false,
     live: null,
     activity: '',
@@ -468,6 +535,39 @@ export const useAgent = create<AgentState>((set, get) => {
       setTimeout(() => (document.querySelector('.agent-input') as HTMLTextAreaElement | null)?.focus(), 50)
     },
 
+    async editMessage(id, text) {
+      const c = get().chat
+      const old = c?.messages.find((m) => m.id === id)
+      if (!c || !old || get().busy || !text.trim()) return
+      for (const m of c.messages) lastStamp = Math.max(lastStamp, m.at || 0)
+      // Same place, attachments and selection as before; the screen context is fresh.
+      const ctx = buildContext({ mentions: old.meta?.mentions || [], mentionPages: {}, ignoreSelection: true })
+      pushMsg({
+        ...old,
+        id: nanoid(14),
+        at: stamp(),
+        v: 1,
+        parent: parentKey(c, id) === ROOT ? null : parentKey(c, id),
+        content: text.trim(),
+        meta: { ...old.meta, context: ctx.full, brief: ctx.brief },
+      })
+      await runLoop()
+    },
+
+    async regenerate(userMessageId) {
+      const c = get().chat
+      if (!c || get().busy || !c.messages.some((m) => m.id === userMessageId)) return
+      for (const m of c.messages) lastStamp = Math.max(lastStamp, m.at || 0)
+      // Show the conversation up to that message; the new reply becomes the chosen one when it arrives.
+      update((x) => ({ ...x, chosen: { ...(x.chosen || {}), [userMessageId]: { id: PENDING, at: stamp() } } }))
+      await runLoop()
+    },
+
+    showVersion(parent, id) {
+      if (get().busy) return
+      update((x) => ({ ...x, chosen: { ...(x.chosen || {}), [parent]: { id, at: stamp() } } }))
+    },
+
     async send(textArg) {
       const text = (textArg ?? get().draft).trim()
       if (get().pendingAsk) {
@@ -490,11 +590,15 @@ export const useAgent = create<AgentState>((set, get) => {
         else mentionPages[m.id] = (await storage.readPage(m.id).catch(() => null))?.data || null
       }
       const ctx = buildContext({ mentions, mentionPages, ignoreSelection: true })
+      // Later than anything already in the chat, even if it came from a computer whose clock runs ahead.
+      for (const m of get().chat?.messages || []) lastStamp = Math.max(lastStamp, m.at || 0)
       const live = get().selection
-      const sel = live && live.key !== get().selectionDismissed ? live : null
+      // A selection only counts while its cells are on the open page (not one left behind on another page).
+      const onPage = new Set(useStore.getState().page?.cells.map((c) => c.id) || [])
+      const sel = live && live.key !== get().selectionDismissed && live.cellIds.some((id) => onPage.has(id)) ? live : null
       const msg: ChatMessage = {
         id: nanoid(14),
-        at: Date.now(),
+        at: stamp(),
         v: 1,
         role: 'user',
         content: text,
@@ -527,7 +631,7 @@ export const useAgent = create<AgentState>((set, get) => {
       const p = get().pendingAsk
       if (p) {
         set({ pendingAsk: null })
-        p.resolve('(The person stopped the task instead of answering.)')
+        p.resolve('(The user stopped the task instead of answering.)')
       }
     },
 
@@ -556,6 +660,8 @@ function labelFor(name: string) {
     read_page: 'Reading the page',
     read_cell: 'Reading a cell',
     search_notes: 'Searching your notes',
+    recent_notes: 'Looking at recent notes',
+    view_image: 'Reading the image',
     create_cells: 'Adding cells',
     update_cell: 'Updating a cell',
     edit_cell_text: 'Editing text',
@@ -591,7 +697,7 @@ export async function goToTarget(t?: { pageId?: string; cellId?: string }) {
 }
 
 function lastUsage(c: Chat) {
-  const m = [...c.messages].reverse().find((x) => (x.meta as any)?.usage)
+  const m = [...activePath(c)].reverse().find((x) => (x.meta as any)?.usage)
   return m ? { ...(m.meta as any).usage, at: m.at } : null
 }
 
@@ -648,7 +754,8 @@ export function contextBreakdown(chat: Chat | null, liveContext?: string, model 
   const est = parts.reduce((a, p) => a + p.tokens, 0)
   const last = chat ? lastUsage(chat) : null
   // Scale to the real count when this chat has one and nothing new was added since.
-  if (last && last.prompt && chat && chat.messages[chat.messages.length - 1]?.meta && (chat.messages[chat.messages.length - 1].meta as any).usage) {
+  const tail = activePath(chat).slice(-1)[0]
+  if (last && last.prompt && (tail?.meta as any)?.usage) {
     const f = last.prompt / Math.max(1, est)
     for (const p of parts) p.tokens = Math.round(p.tokens * f)
     return { parts, total: last.prompt, exact: true }

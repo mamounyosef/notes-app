@@ -36,6 +36,16 @@ function newer(a, b) {
   return stable(a) >= stable(b) ? a : b
 }
 
+/**
+ * Order of chat messages. Older chats can hold messages made in the same
+ * millisecond (a reply starts the instant a message is sent); for those the
+ * natural order is the person's message, then tool results, then replies.
+ */
+const ROLE_ORDER = { user: 0, tool: 1, assistant: 2 }
+export function messageOrder(x, y) {
+  return (x.at || 0) - (y.at || 0) || (ROLE_ORDER[x.role] ?? 3) - (ROLE_ORDER[y.role] ?? 3) || String(x.id).localeCompare(String(y.id))
+}
+
 /** Joins two copies of a chat without dropping anything either one has. */
 export function mergeChats(a, b) {
   if (!a) return b
@@ -43,7 +53,7 @@ export function mergeChats(a, b) {
   const byId = new Map()
   for (const m of a.messages || []) byId.set(m.id, m)
   for (const m of b.messages || []) byId.set(m.id, byId.has(m.id) ? newer(byId.get(m.id), m) : m)
-  const messages = [...byId.values()].sort((x, y) => (x.at || 0) - (y.at || 0) || String(x.id).localeCompare(String(y.id)))
+  const messages = [...byId.values()].sort(messageOrder)
   const titled = (a.titleAt || 0) >= (b.titleAt || 0) ? a : b
   return {
     id: a.id,
@@ -53,7 +63,15 @@ export function mergeChats(a, b) {
     updatedAt: Math.max(a.updatedAt || 0, b.updatedAt || 0),
     deleted: Boolean(a.deleted || b.deleted),
     messages,
+    chosen: mergeChosen(a.chosen, b.chosen),
   }
+}
+
+/** Branch choices: per fork, the most recent choice wins. */
+function mergeChosen(a, b) {
+  const out = { ...(a || {}) }
+  for (const [k, v] of Object.entries(b || {})) if (!out[k] || (v?.at || 0) > (out[k].at || 0)) out[k] = v
+  return out
 }
 
 /** Every attachment hash a chat refers to. */

@@ -25,6 +25,12 @@ export interface ChatMessage {
   at: number
   /** Bumped on every edit of this message, so merges keep the latest. */
   v?: number
+  /**
+   * The message this one follows (null: the first). Edits and regenerations
+   * add siblings, so a chat is a tree. Missing on chats from before branching:
+   * then it follows the message before it.
+   */
+  parent?: string | null
   role: 'user' | 'assistant' | 'tool'
   content: string
   thinking?: string
@@ -37,11 +43,11 @@ export interface ChatMessage {
     context?: string
     /** Short form of it for older turns. */
     brief?: string
-    /** Pages the person mentioned with @. */
+    /** Pages the user mentioned with @. */
     mentions?: { id: string; title: string; kind: string }[]
     /** Quoted selection sent with "Ask the agent". */
     quote?: string
-    /** What the person had selected when sending (unless they dismissed it). */
+    /** What the user had selected when sending (unless they dismissed it). */
     selection?: { kind: 'text' | 'cells'; label: string; text: string; cellIds: string[]; cellTitle?: string }
     /** A question the agent asked (ask_user) and the answer. */
     ask?: { question: string; options?: string[]; multi?: boolean; answer?: string }
@@ -64,7 +70,13 @@ export interface Chat {
   createdAt: number
   updatedAt: number
   deleted?: boolean
+  /** Every message of every branch. The shown conversation is activePath(chat). */
   messages: ChatMessage[]
+  /**
+   * Which branch is shown after each fork: parent id ("root" for the first
+   * message) to the chosen child. "pending" waits for a reply being made.
+   */
+  chosen?: Record<string, { id: string; at: number }>
 }
 
 export interface ChatSummary {
@@ -88,6 +100,7 @@ export const agentApi = {
   chat: (reqId: string, body: unknown): Promise<{ ok: boolean; error?: string; aborted?: boolean }> =>
     desk?.agent ? desk.agent.chat(reqId, body) : Promise.resolve({ ok: false, error: 'The agent needs the desktop app.' }),
   abort: (reqId: string) => desk?.agent?.abort(reqId),
+  /** One reply without streaming. Messages may carry images ("sha:<hash>" or base64); timeout_ms defaults to 30 s. */
   complete: (body: unknown): Promise<{ ok: boolean; content?: string; error?: string }> =>
     desk?.agent ? desk.agent.complete(body) : Promise.resolve({ ok: false }),
   onChunk: (cb: (reqId: string, chunk: any) => void): (() => void) => (desk?.agent ? desk.agent.onChunk(cb) : () => {}),

@@ -13,6 +13,7 @@ import { DEFAULT_SETTINGS, type Cell, type Page, type Settings, type TreeNode } 
 import { agentInlineToHtml, agentToHtml, htmlToAgent, htmlToText, softenMarks } from './content'
 import { buildContext } from './context'
 import { agentApi, chatApi, type ChatAttachment } from './api'
+import { DEFAULT_MODEL, MODELS } from './models'
 
 const now = () => Date.now()
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
@@ -138,7 +139,7 @@ export interface ToolEnv {
   rec: TurnRecorder
   /** Attachments in this chat, by sha, for insert_image. */
   attachments: Map<string, ChatAttachment>
-  /** Asks the person and waits for the answer (ask_user). */
+  /** Asks the user and waits for the answer (ask_user). */
   ask(q: { question: string; options?: string[]; multi?: boolean }): Promise<string>
 }
 
@@ -384,7 +385,7 @@ const fn = (name: string, description: string, properties: Record<string, any>, 
 })
 
 export const TOOL_DEFS = [
-  fn('get_context', 'Fresh snapshot of what the person sees now (open page, cells on screen, selection, caret, tree). Use after navigating or when unsure the context is current.', {}),
+  fn('get_context', 'Fresh snapshot of what the user sees now (open page, cells on screen, selection, caret, tree). Use after navigating or when unsure the context is current.', {}),
   fn('list_tree', 'List notebooks, sections and pages with ids. Optionally only under one node.', {
     root_id: str('Only list under this node id.'),
     include_archived: bool('Include archived notebooks.'),
@@ -397,10 +398,17 @@ export const TOOL_DEFS = [
     page_id: str('Page id. Omit for the open page.'),
     format: { type: 'string', enum: ['markdown', 'html'], description: 'Default markdown.' },
   }, ['cell_id']),
-  fn('search_notes', 'Full text search across all pages and cells. Returns pages and matching cells with snippets.', {
-    query: str('Words to find.'),
+  fn('search_notes', 'Ranked search across every page, cell, notebook and section name, archived ones included. Forgives typos and matches word starts; "quotes" force an exact phrase. Returns pages best first, each with its path and the matching cells (snippet and a note: link to cite). Search before answering anything about what their notes say or where something is.', {
+    query: str('Words to find. Keep it to the key words.'),
+    also: { type: 'array', items: { type: 'string' }, description: 'Other phrasings searched at the same time: synonyms, singular or plural, related terms, a likely title, another language.' },
+    max_results: { type: 'number', description: 'Pages to return, default 12, max 30.' },
   }, ['query']),
-  fn('create_cells', 'Create one or more text cells on a page. Content is Markdown with $LaTeX$, tables, task lists, code blocks; inline HTML allowed for colors (<span style="color:#e06c75">x</span>), highlight (<mark data-color="#ffd75e">x</mark>), font size (<span style="font-size:20px">x</span>), underline (<u>), and [columns][column]..[/column][column]..[/column][/columns] for side by side columns. Placement default: in the area the person is looking at, never overlapping.', {
+  fn('recent_notes', 'Cells created or edited recently, newest first, with path, time, a text preview and a note: link. For "what did I write yesterday", "a note I added last week", or finding a lost recent note.', {
+    days: { type: 'number', description: 'How far back, in days (0.5 = 12 hours). Default 7.' },
+    root_id: str('Only under this notebook, section or page.'),
+    limit: { type: 'number', description: 'Default 25, max 60.' },
+  }),
+  fn('create_cells', 'Create one or more text cells on a page. Content is Markdown with $LaTeX$, tables, task lists, code blocks; inline HTML allowed for colors (<span style="color:#e06c75">x</span>), highlight (<mark data-color="#ffd75e">x</mark>), font size (<span style="font-size:20px">x</span>), underline (<u>), and [columns][column]..[/column][column]..[/column][/columns] for side by side columns. Placement default: in the area the user is looking at, never overlapping.', {
     page_id: str('Page id. Omit for the open page.'),
     cells: {
       type: 'array',
@@ -485,7 +493,15 @@ export const TOOL_DEFS = [
     to_page_id: str('Copy onto this page instead (placed at its end).'),
     move: bool('Move instead of copy (removes them from the source).'),
   }, ['cell_ids']),
-  fn('insert_image', 'Put an image into a cell or a new cell: an image the person attached in this chat (source "attachment:<sha>"), a rendered PDF page ("attachment:<sha>" of the page image), an image already in the notes ("asset://local/..."), or a web URL.', {
+  fn('view_image', 'Look at an image with a vision model and get back text: a faithful transcription (default, with Markdown and LaTeX), a description, or the answer to a question about it. Works whatever model you are, for images the user attached (source "attachment:<sha>") and images inside cells (cell_id, optionally index). Use it before transcribing, replacing or answering about any image you cannot see yourself.', {
+    source: str('"attachment:<sha>", an "asset://local/..." image, or a URL.'),
+    cell_id: str('Read the images inside this cell instead.'),
+    page_id: str('Page of cell_id. Omit for the open page.'),
+    index: { type: 'number', description: 'Which image in the cell, from 1. Default: all (up to 4).' },
+    task: { type: 'string', enum: ['transcribe', 'describe'], description: 'Default transcribe.' },
+    question: str('A specific question about the image, instead of task.'),
+  }),
+  fn('insert_image','Put an image into a cell or a new cell: an image the user attached in this chat (source "attachment:<sha>"), a rendered PDF page ("attachment:<sha>" of the page image), an image already in the notes ("asset://local/..."), or a web URL.', {
     source: str('attachment:<sha>, asset://local/<name> or https URL.'),
     page_id: str('Page id. Omit for the open page.'),
     cell_id: str('Add to this existing cell (at the end). Omit to create a new cell.'),
@@ -495,7 +511,7 @@ export const TOOL_DEFS = [
     placement: { type: 'string', enum: ['in_view', 'below', 'right_of', 'end', 'top'] },
     anchor_cell_id: str('Cell to place the new cell relative to.'),
   }, ['source']),
-  fn('focus', 'Scroll the person\'s view to a cell (and select it), or open a page. Use to show them what you changed.', {
+  fn('focus', 'Scroll the user\'s view to a cell (and select it), or open a page. Use to show them what you changed.', {
     page_id: str('Page to open (if not open).'),
     cell_id: str('Cell to scroll to and select.'),
     zoom: num('Optional zoom, 0.3 to 3.'),
@@ -512,7 +528,7 @@ export const TOOL_DEFS = [
     title: str('Title.'),
     parent_id: str('Parent id (notebook/section for sections; section or page for pages). Omit for a notebook.'),
     color: str('Optional color for the node.'),
-    open: bool('Open the new page for the person (default false).'),
+    open: bool('Open the new page for the user (default false).'),
     cells: { type: 'array', description: 'For pages: cells to create, same shape as create_cells.cells.', items: { type: 'object' } },
   }, ['kind', 'title']),
   fn('update_node', 'Rename, recolor, archive/unarchive, favorite/unfavorite or move a notebook, section or page.', {
@@ -535,10 +551,10 @@ export const TOOL_DEFS = [
     query: str('Search query, specific and in the language most likely to find good sources.'),
     max_results: num('1 to 10, default 5.'),
   }, ['query']),
-  fn('web_fetch', 'Read a web page (from web_search or a URL the person gave) as text.', {
+  fn('web_fetch', 'Read a web page (from web_search or a URL the user gave) as text.', {
     url: str('The page URL.'),
   }, ['url']),
-  fn('ask_user', 'Ask the person a question and wait for the answer. Use when the request is ambiguous and a wrong guess would cost them work. Offer short options when you can; they can always type their own answer.', {
+  fn('ask_user', 'Ask the user a question and wait for the answer. Use when the request is ambiguous and a wrong guess would cost them work. Offer short options when you can; they can always type their own answer.', {
     question: str('The question, short and specific.'),
     options: { type: 'array', items: { type: 'string' }, description: '2 to 5 short answer options.' },
     multi: bool('Allow picking several options.'),
@@ -662,13 +678,67 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
   },
 
   async search_notes(a) {
-    const hits = await storage.search(String(a.query || ''))
-    const out = hits.slice(0, 30).map((h) => ({
+    const st = useStore.getState()
+    // Search what is on screen too, even if it was edited a moment ago.
+    if (st.dirty) await st.save()
+    const queries = [a.query, ...(Array.isArray(a.also) ? a.also : [])].map((q) => String(q || '').trim()).filter(Boolean)
+    if (!queries.length) throw new ToolError('query is empty.')
+    const limit = Math.min(30, Math.max(1, Number(a.max_results) || 12))
+    // Several phrasings at once: each page keeps its best score, pages found by more phrasings rank higher.
+    const best = new Map<string, { h: Awaited<ReturnType<typeof storage.search>>[number]; score: number; via: string[] }>()
+    for (const q of queries) {
+      for (const h of await storage.search(q)) {
+        const cur = best.get(h.pageId)
+        if (!cur) best.set(h.pageId, { h, score: h.score, via: [q] })
+        else {
+          cur.via.push(q)
+          cur.score = Math.max(cur.score, h.score) * 1.15
+          if (h.score > cur.h.score) cur.h = h
+        }
+      }
+    }
+    const ranked = [...best.values()].sort((x, y) => y.score - x.score).slice(0, limit)
+    const out = ranked.map(({ h, via }) => ({
       page: `"${h.title}" [${h.pageId}]`,
-      path: pathTo(useStore.getState().workspace.tree, h.pageId).map((n) => n.title).join(' > '),
-      cells: h.hits.slice(0, 8).map((x) => `[${x.cellId}] "${x.cellTitle}": ${x.snippet}`),
+      link: `note:${h.pageId}`,
+      path: pathTo(st.workspace.tree, h.pageId).map((n) => n.title).join(' > '),
+      ...(queries.length > 1 ? { found_by: via } : {}),
+      ...(h.partial ? { partial_match: true } : {}),
+      ...(h.near?.length ? { near_match: h.near.map((n) => `"${n.term}" matched "${n.word}"`).join(', ') } : {}),
+      ...(h.missing?.length ? { missing_words: h.missing } : {}),
+      ...(h.archived ? { archived: true } : {}),
+      cells: h.hits.slice(0, 6).map((x) => ({ link: `note:${h.pageId}#${x.cellId}`, title: x.cellTitle, snippet: x.snippet })),
     }))
-    return ok(out.length ? out : 'No matches.', `Searched for "${a.query}" (${hits.length} pages)`)
+    const summary = `Searched notes for ${queries.map((q) => `"${q}"`).join(', ')} (${best.size} ${best.size === 1 ? 'page' : 'pages'})`
+    return ok(out.length ? out : 'No matches. Try other words: synonyms, a shorter word, the likely cell or page title.', summary)
+  },
+
+  async recent_notes(a) {
+    const st = useStore.getState()
+    if (st.dirty) await st.save()
+    const days = Math.min(365, Math.max(0.05, Number(a.days) || 7))
+    const since = Date.now() - days * 864e5
+    const limit = Math.min(60, Math.max(1, Number(a.limit) || 25))
+    const under = a.root_id ? findNode(st.workspace.tree, a.root_id) : null
+    const ids: string[] = []
+    walk(under ? [under] : st.workspace.tree, (n) => {
+      if (n.kind === 'page') ids.push(n.id)
+    })
+    const rows: { at: number; line: string }[] = []
+    for (const id of ids) {
+      const p = id === st.page?.id ? st.page : (await storage.readPage(id).catch(() => null))?.data
+      if (!p) continue
+      const path = pathTo(st.workspace.tree, id).map((n) => n.title).join(' > ')
+      for (const c of p.cells || []) {
+        const at = c.updatedAt || c.createdAt || 0
+        if (at < since || c.kind === 'ink') continue
+        const text = htmlToText(c.html).replace(/\s+/g, ' ').trim()
+        rows.push({ at, line: `${new Date(at).toLocaleString()} | ${path} | cell "${c.title || text.slice(0, 40)}" (note:${id}#${c.id}): ${text.slice(0, 160)}` })
+      }
+    }
+    rows.sort((x, y) => y.at - x.at)
+    const out = rows.slice(0, limit).map((r) => r.line)
+    return ok(out.length ? out.join('\n') : `No cells changed in the last ${days} days.`, `Listed notes changed in the last ${days < 1 ? `${Math.round(days * 24)} hours` : `${days} days`}`)
   },
 
   async create_cells(a, env) {
@@ -929,6 +999,39 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     return ok({ cell: made[0]?.id }, 'Added an image', { pageId: pid, cellId: made[0]?.id })
   },
 
+  async view_image(a) {
+    const refs: string[] = []
+    const source = String(a.source || '')
+    if (source.startsWith('attachment:')) refs.push(`sha:${source.slice('attachment:'.length)}`)
+    else if (source) refs.push(await imageAsBase64(source))
+    if (a.cell_id) {
+      const pid = await pageOfCell(a.cell_id, a.page_id)
+      const c = findCell(await loadPage(pid), a.cell_id)
+      const srcs = [...(c.html || '').matchAll(/<img[^>]*\ssrc="([^"]+)"/gi)].map((m) => m[1].replace(/&amp;/g, '&'))
+      if (!srcs.length) throw new ToolError(`Cell [${c.id}] has no images.`)
+      const pick = a.index ? [srcs[Number(a.index) - 1]].filter(Boolean) : srcs.slice(0, 4)
+      if (!pick.length) throw new ToolError(`Cell [${c.id}] has ${srcs.length} image(s); index starts at 1.`)
+      for (const s of pick) refs.push(await imageAsBase64(s))
+    }
+    if (!refs.length) throw new ToolError('Give source (attachment:<sha>, asset://..., or a URL) or cell_id.')
+    const task = a.question
+      ? `Answer from the image(s) only: ${a.question}`
+      : a.task === 'describe'
+        ? 'Describe the image(s) precisely: what it shows, its layout, all visible text, and anything notable. Do not guess beyond what is visible.'
+        : 'Transcribe everything in the image(s) exactly as written, in reading order, as Markdown: headings, bullet and numbered lists, tables as Markdown tables, every formula as LaTeX ($...$ inline, $$...$$ for display). Keep the original wording, symbols and order. Do not add, explain, summarize or correct anything. Mark anything you cannot read as [unclear]. Output only the transcription.'
+    const model = MODELS.find((m) => m.vision)?.id || DEFAULT_MODEL
+    const res = await agentApi.complete({
+      model,
+      think: false,
+      options: { temperature: 0.1 },
+      timeout_ms: 150_000,
+      messages: [{ role: 'user', content: task, images: refs }],
+    })
+    if (!res.ok || !res.content?.trim()) throw new ToolError(`Could not read the image (${res.error || 'empty answer'}).`)
+    const what = a.question ? 'Looked at the image' : a.task === 'describe' ? 'Described the image' : 'Read the image'
+    return ok(`From ${model}, which looked at the image for you:\n${res.content.trim()}`, `${what}${refs.length > 1 ? ` (${refs.length})` : ''}`)
+  },
+
   async focus(a) {
     const st = useStore.getState()
     if (a.page_id && a.page_id !== st.activePageId) await st.openPage(pageIdOr(a.page_id))
@@ -1099,11 +1202,28 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
   async ask_user(a, env) {
     const options = Array.isArray(a.options) ? a.options.map(String).slice(0, 6) : undefined
     const answer = await env.ask({ question: String(a.question || ''), options, multi: Boolean(a.multi) })
-    return ok(`The person answered: ${answer}`, 'Asked you a question')
+    return ok(`The user answered: ${answer}`, 'Asked you a question')
   },
 }
 
 /** Scrolls the canvas so a cell is in view and flashes it. */
+/** An image src from the notes (data:, asset://, or a web URL) as plain base64 for the model. */
+async function imageAsBase64(src: string): Promise<string> {
+  const data = /^data:image\/[\w.+-]+;base64,(.+)$/i.exec(src)
+  if (data) return data[1]
+  let res: Response
+  try {
+    res = await fetch(src)
+  } catch {
+    throw new ToolError(`Could not load the image ${src.slice(0, 80)}.`)
+  }
+  if (!res.ok) throw new ToolError(`Could not load the image (${res.status}).`)
+  const bytes = new Uint8Array(await res.arrayBuffer())
+  let bin = ''
+  for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+  return btoa(bin)
+}
+
 export function scrollToCell(cellId: string) {
   requestAnimationFrame(() => {
     const wrap = document.querySelector('.canvas-wrap') as HTMLElement | null
@@ -1147,4 +1267,4 @@ export async function runTool(name: string, args: Args, env: ToolEnv): Promise<T
 }
 
 /** Tools that only read: they never need an undo point. */
-export const READ_ONLY = new Set(['web_search', 'web_fetch', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'get_settings', 'ask_user', 'focus'])
+export const READ_ONLY = new Set(['view_image', 'web_search', 'web_fetch', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'recent_notes', 'get_settings', 'ask_user', 'focus'])

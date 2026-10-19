@@ -1,5 +1,5 @@
 /**
- * A fresh picture of what the person is looking at, built right before every
+ * A fresh picture of what the user is looking at, built right before every
  * message: where they are in the notebooks, which cells are on screen (and
  * which lines of a tall cell), what is selected, where the caret is, plus the
  * full text of the open page.
@@ -132,7 +132,7 @@ function cellLine(c: Cell) {
   return `x=${Math.round(c.x)} y=${Math.round(c.y)} w=${Math.round(c.w)} h=${Math.round(c.h)} z=${c.z}${flags ? `, ${flags}` : ''}`
 }
 
-/** The editor caret and selected text, if the person is typing in a cell. */
+/** The editor caret and selected text, if the user is typing in a cell. */
 function caretInfo(ignoreSelection = false): string[] {
   const out: string[] = []
   const st = useStore.getState()
@@ -142,7 +142,7 @@ function caretInfo(ignoreSelection = false): string[] {
       const { from, to, $from } = ed.state.selection
       const parentText: string = $from.parent.textContent || ''
       const off = $from.parentOffset
-      out.push(`The person is typing in cell [${st.editingCellId}].`)
+      out.push(`The user is typing in cell [${st.editingCellId}].`)
       if (to > from && !ignoreSelection) {
         const sel = ed.state.doc.textBetween(from, to, '\n')
         out.push(`Selected text in that cell: """${sel.slice(0, 4000)}"""`)
@@ -184,7 +184,7 @@ export function buildContext(opts: { mentions?: { id: string; kind: string }[]; 
     const view = readView()
     if (view) {
       const r = view.rect
-      lines.push(`SCREEN: the person sees the page area x ${r.x} to ${r.x + r.w}, y ${r.y} to ${r.y + r.h} (page coordinates, y grows downward; the page title sits above y=100).`)
+      lines.push(`SCREEN: the user sees the page area x ${r.x} to ${r.x + r.w}, y ${r.y} to ${r.y + r.h} (page coordinates, y grows downward; the page title sits above y=100).`)
     }
     if (lastPointer && Date.now() - lastPointer.at < 120_000) {
       lines.push(`Mouse last over the page at x=${lastPointer.x} y=${lastPointer.y}${lastPointer.cellId ? `, over cell [${lastPointer.cellId}]` : ', over empty space'}.`)
@@ -221,7 +221,7 @@ export function buildContext(opts: { mentions?: { id: string; kind: string }[]; 
 
   if (opts.mentions?.length) {
     lines.push('')
-    lines.push('THE PERSON POINTED AT THESE WITH @:')
+    lines.push('THE USER POINTED AT THESE WITH @:')
     for (const m of opts.mentions) {
       const node = findNode(workspace.tree, m.id)
       if (!node) continue

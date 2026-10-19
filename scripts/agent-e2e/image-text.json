@@ -1,0 +1,13 @@
+{
+  "fresh": true,
+  "setup": "setup-recall.js",
+  "before": [
+    "(async () => { __notesDebug.useAgent.getState().setPrefs({ model: 'gpt-oss:120b' }); const S = __notesDebug.useStore.getState(); const act = S.workspace.tree.flatMap(n => n.children).flatMap(n => n.children).find(n => n.title === 'Activations'); await S.openPage(act.id); return act.id })()"
+  ],
+  "prompts": [
+    "Replace the image in the activation functions cell with the actual text."
+  ],
+  "eval": [
+    "(async () => { const S = __notesDebug.useStore.getState(); const A = __notesDebug.useAgent.getState(); const tools = A.chat.messages.filter(m => m.role === 'tool').map(m => m.toolName + ': ' + m.content.slice(0, 400)); return { tools, cells: S.page.cells.map(c => ({ hasImg: /<img/.test(c.html), text: c.html.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').slice(0, 300) })), undo: document.querySelectorAll('.agent-panel .ag-undo').length, error: A.error } })()"
+  ]
+}

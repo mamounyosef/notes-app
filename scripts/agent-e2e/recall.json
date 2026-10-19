@@ -1,0 +1,18 @@
+{
+  "fresh": true,
+  "setup": "setup-recall.js",
+  "shots": ["p1", "end"],
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gpt-oss:20b' }); return 'gpt-oss:20b' })()",
+    "(async () => { const S = __notesDebug.useStore.getState(); const id = S.workspace.tree[S.workspace.tree.length - 1].children[0].children[0].id; await S.openPage(id); return S.page && S.page.title })()"
+  ],
+  "prompts": [
+    "Where did I write about the learning rate, and what did I say about it?",
+    "Replace the image in the activation functions cell with the actual text."
+  ],
+  "eval": [
+    "(async () => { const refs = [...document.querySelectorAll('.agent-panel a.note-ref')]; const info = refs.map(a => ({ text: a.textContent, page: a.dataset.page, cell: a.dataset.cell, missing: a.classList.contains('missing') })); const S = __notesDebug.useStore; const before = S.getState().activePageId; if (refs[0]) refs[0].click(); await new Promise(r => setTimeout(r, 900)); return { refs: info, before, after: S.getState().activePageId, afterTitle: S.getState().page && S.getState().page.title, selected: S.getState().selection } })()",
+    "(() => ({ undoButtons: document.querySelectorAll('.agent-panel .ag-undo').length, userCopy: document.querySelectorAll('.agent-panel .ag-user-copy').length }))()",
+    "(async () => { const S = __notesDebug.useStore.getState(); const id = S.workspace.tree[S.workspace.tree.length - 1].children[0].children[0].id; const p = (await window.notes.page.read(id)).data; return p.cells.map(c => ({ title: c.title, hasImg: /<img/.test(c.html), text: c.html.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').slice(0, 300) })) })()"
+  ]
+}

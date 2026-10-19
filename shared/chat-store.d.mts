@@ -15,6 +15,8 @@ export interface ChatMessage {
   at: number
   /** Bumped on every edit of this message, so merges keep the latest. */
   v?: number
+  /** The message this one follows (null: the first); missing on older chats. */
+  parent?: string | null
   role: 'user' | 'assistant' | 'tool'
   content: string
   thinking?: string
@@ -34,7 +36,11 @@ export interface Chat {
   updatedAt: number
   deleted?: boolean
   messages: ChatMessage[]
+  /** Chosen branch per fork: parent id ("root" for the first message) to child id. */
+  chosen?: Record<string, { id: string; at: number }>
 }
+
+export function messageOrder(x: ChatMessage, y: ChatMessage): number
 
 export interface ChatSummary {
   id: string

@@ -1,0 +1,7 @@
+{
+  "fresh": true,
+  "prompts": [],
+  "eval": [
+    "(async () => { const A = __notesDebug.useAgent; A.getState().newChat(); const c = A.getState().chat; const u1 = { id: 'u1', at: 1, v: 1, role: 'user', content: 'q1' }; const a1 = { id: 'a1', at: 2, v: 1, role: 'assistant', content: 'r1' }; A.setState({ chat: { ...c, messages: [u1, a1] } }); const stale = { ...c, messages: [u1, a1] }; const u2 = { id: 'u2', at: 3, v: 1, role: 'user', content: 'q2' }; A.setState({ chat: { ...A.getState().chat, messages: [u1, a1, u2] } }); A.getState().mergeRemote(stale); const a2 = { id: 'a2', at: 4, v: 1, role: 'assistant', content: 'r2' }; A.setState({ chat: { ...A.getState().chat, messages: [...A.getState().chat.messages, a2] } }); const newer = { ...c, title: 'T', titleAt: 9, messages: [u1, { ...a1, v: 2, content: 'r1 edited' }] }; A.getState().mergeRemote(newer); const ch = A.getState().chat; return { order: ch.messages.map(m => m.id).join(','), a1: ch.messages[1].content, title: ch.title } })()"
+  ]
+}

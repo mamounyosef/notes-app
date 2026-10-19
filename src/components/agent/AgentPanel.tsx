@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAgent, goToTarget } from '../../agent/store'
+import { activePath, versionsOf } from '../../agent/branches'
 import { agentApi, chatApi, type ChatMessage } from '../../agent/api'
 import { canUndo } from '../../agent/tools'
 import { renderMarkdown } from '../../agent/render'
-import { useStore } from '../../store'
+import { pathTo, useStore } from '../../store'
 import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
 import Composer from './Composer'
 import { ContextRing, ContextInspector } from './ContextMeter'
@@ -22,6 +23,7 @@ interface Turn {
 
 function toTurns(messages: ChatMessage[]): Turn[] {
   const turns: Turn[] = []
+  // messages is the shown branch, in order (see branches.ts).
   for (const m of messages) {
     if (m.role === 'user') turns.push({ user: m, items: [] })
     else {
@@ -44,6 +46,19 @@ function relDay(t: number) {
   if (Date.now() - t < 7 * 864e5) return 'This week'
   if (Date.now() - t < 31 * 864e5) return 'This month'
   return d.toLocaleDateString([], { month: 'long', year: 'numeric' })
+}
+
+/** Format a timestamp as a short AM/PM string for the chat list. */
+function chatTime(t: number) {
+  const d = new Date(t)
+  const today = new Date()
+  const y = new Date()
+  y.setDate(today.getDate() - 1)
+  const time = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit', hour12: true })
+  if (d.toDateString() === today.toDateString()) return time
+  if (d.toDateString() === y.toDateString()) return `Yesterday ${time}`
+  if (Date.now() - t < 7 * 864e5) return `${d.toLocaleDateString([], { weekday: 'short' })} ${time}`
+  return `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} ${time}`
 }
 
 /* ------------------------------------------------------------------ *
@@ -70,7 +85,28 @@ function Markdown({ text, live }: { text: string; live?: boolean }) {
       pre.appendChild(b)
     })
   }, [html, live])
-  return <div ref={ref} className={`md ${live ? 'live' : ''}`} dangerouslySetInnerHTML={{ __html: html }} />
+  // Note links: show where each one points, and mark ones whose page no longer exists.
+  const tree = useStore((s) => s.workspace.tree)
+  useEffect(() => {
+    ref.current?.querySelectorAll<HTMLAnchorElement>('a.note-ref').forEach((a) => {
+      const path = pathTo(tree, a.dataset.page || '')
+      a.classList.toggle('missing', !path.length)
+      a.title = path.length ? `Open ${path.map((n) => n.title).join(' > ')}${a.dataset.cell ? ' (jumps to the cell)' : ''}` : 'This page no longer exists'
+    })
+  }, [html, tree])
+  return (
+    <div
+      ref={ref}
+      className={`md ${live ? 'live' : ''}`}
+      dangerouslySetInnerHTML={{ __html: html }}
+      onClick={(e) => {
+        const a = (e.target as HTMLElement).closest<HTMLAnchorElement>('a.note-ref')
+        if (!a) return
+        e.preventDefault()
+        if (!a.classList.contains('missing')) goToTarget({ pageId: a.dataset.page, cellId: a.dataset.cell })
+      }}
+    />
+  )
 }
 
 function Thinking({ text, ms, live }: { text: string; ms?: number; live?: boolean }) {
@@ -161,7 +197,43 @@ function AskCard({ m }: { m: ChatMessage }) {
   )
 }
 
+/** "‹ 2/3 ›" between the versions at a fork (edits of a message, or regenerated replies). */
+function VersionNav({ m, label }: { m: ChatMessage; label: string }) {
+  const chat = useAgent((s) => s.chat)
+  const busy = useAgent((s) => s.busy)
+  const show = useAgent((s) => s.showVersion)
+  if (!chat) return null
+  const { list, index, parent } = versionsOf(chat, m)
+  if (list.length < 2) return null
+  const go = (d: number) => {
+    const next = list[index + d]
+    if (next) show(parent, next.id)
+  }
+  return (
+    <div className="ag-versions" title={`${list.length} ${label}`}>
+      <button className="ag-icon-btn" disabled={busy || index === 0} onClick={() => go(-1)} title={`Previous ${label.replace(/s$/, '')}`}>
+        <Chevron size={13} className="flip" />
+      </button>
+      <span>
+        {index + 1}/{list.length}
+      </span>
+      <button className="ag-icon-btn" disabled={busy || index === list.length - 1} onClick={() => go(1)} title={`Next ${label.replace(/s$/, '')}`}>
+        <Chevron size={13} />
+      </button>
+    </div>
+  )
+}
+
+function relTime(t: number) {
+  const s = (Date.now() - t) / 1000
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)} min ago`
+  return timeOf(t)
+}
+
 function UserBubble({ m, onImage }: { m: ChatMessage; onImage(items: LightboxItem[], i: number): void }) {
+  const busy = useAgent((s) => s.busy)
+  const [editing, setEditing] = useState(false)
   const images = (m.attachments || []).filter((a) => a.kind === 'image')
   const others = (m.attachments || []).filter((a) => a.kind !== 'image')
   const items: LightboxItem[] = images.map((a) => ({ sha: a.sha, mime: a.mime, name: a.name }))
@@ -194,15 +266,96 @@ function UserBubble({ m, onImage }: { m: ChatMessage; onImage(items: LightboxIte
           ))}
         </div>
       )}
-      {(m.content || m.meta?.mentions?.length) && (
-        <div className="ag-user-text">
+      {editing ? (
+        <EditBox
+          initial={m.content}
+          onCancel={() => setEditing(false)}
+          onSend={(text) => {
+            setEditing(false)
+            useAgent.getState().editMessage(m.id, text)
+          }}
+        />
+      ) : (m.content || m.meta?.mentions?.length) && (
+        <div className="ag-user-text" onDoubleClick={() => !busy && setEditing(true)}>
           {m.meta?.mentions?.map((x) => (
             <span key={x.id} className="ag-mention" onClick={() => x.kind === 'page' && goToTarget({ pageId: x.id })}>@{x.title}</span>
           ))}
           {m.content}
         </div>
       )}
+      {!editing && (
+        <div className="ag-user-bar">
+          <span className="ag-when" title={new Date(m.at).toLocaleString()}>{relTime(m.at)}</span>
+          <button className="ag-icon-btn" disabled={busy} onClick={() => useAgent.getState().regenerate(m.id)} title="New reply (keeps this one as a version)">
+            <Retry size={13} />
+          </button>
+          <button className="ag-icon-btn" disabled={busy} onClick={() => setEditing(true)} title="Edit and resend (keeps the original as a version)">
+            <Pencil size={13} />
+          </button>
+          {m.content && <CopyText text={m.content} title="Copy message" />}
+          <VersionNav m={m} label="versions of your message" />
+        </div>
+      )}
     </div>
+  )
+}
+
+/** In place editor for one of your messages: Enter sends, Shift+Enter breaks a line, Esc cancels. */
+function EditBox({ initial, onCancel, onSend }: { initial: string; onCancel(): void; onSend(text: string): void }) {
+  const [text, setText] = useState(initial)
+  const ta = useRef<HTMLTextAreaElement>(null)
+  useEffect(() => {
+    const el = ta.current
+    if (!el) return
+    el.focus()
+    el.setSelectionRange(el.value.length, el.value.length)
+  }, [])
+  useEffect(() => {
+    const el = ta.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 260)}px`
+  }, [text])
+  const changed = text.trim() && text.trim() !== initial.trim()
+  return (
+    <div className="ag-edit">
+      <textarea
+        ref={ta}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault()
+            if (text.trim()) onSend(text)
+          }
+          if (e.key === 'Escape') onCancel()
+        }}
+      />
+      <div className="ag-edit-bar">
+        <span className="ag-edit-hint">Sends as a new version; the original stays one click away.</span>
+        <button className="ag-btn sm" onClick={onCancel}>Cancel</button>
+        <button className="ag-btn primary sm" disabled={!text.trim()} onClick={() => onSend(text)}>
+          {changed ? 'Send' : 'Resend'}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function CopyText({ text, title, className }: { text: string; title: string; className?: string }) {
+  const [copied, setCopied] = useState(false)
+  return (
+    <button
+      className={`ag-icon-btn ${className || ''}`}
+      title={title}
+      onClick={() => {
+        navigator.clipboard.writeText(text)
+        setCopied(true)
+        setTimeout(() => setCopied(false), 1200)
+      }}
+    >
+      {copied ? <Check size={13} /> : <Copy size={13} />}
+    </button>
   )
 }
 
@@ -278,7 +431,8 @@ function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(
               </button>
             )}
             {turnMeta?.undone && <span className="ag-note">Changes undone</span>}
-            <span className="ag-time">{timeOf(turn.user.at)}</span>
+            {turn.items[0] && <VersionNav m={turn.items[0]} label="replies" />}
+            <span className="ag-time">{timeOf(turn.items[turn.items.length - 1]?.at || turn.user.at)}</span>
           </div>
         )}
       </div>
@@ -405,7 +559,10 @@ function HistoryView({ onClose }: { onClose(): void }) {
                   />
                 ) : (
                   <div className="ag-chat-main">
-                    <div className="ag-chat-title">{c.title}</div>
+                    <div className="ag-chat-title">
+                      {c.title}
+                      <span className="ag-chat-time">{chatTime(c.updatedAt)}</span>
+                    </div>
                     <div className="ag-chat-prev">{c.preview || `${c.count} messages`}</div>
                   </div>
                 )}
@@ -476,9 +633,10 @@ export default function AgentPanel() {
     const off2 = chatApi.onEvent(async (ev) => {
       useAgent.getState().loadChats()
       const st = useAgent.getState()
-      if (ev?.id && st.chat?.id === ev.id && !st.busy) {
+      if (ev?.id && st.chat?.id === ev.id) {
         const c = await chatApi.get(ev.id)
-        if (c) useAgent.setState({ chat: c })
+        // Merge, never replace: a message sent while this was loading must survive.
+        if (c) useAgent.getState().mergeRemote(c)
       }
     })
     return () => {
@@ -495,7 +653,7 @@ export default function AgentPanel() {
 
   const onImage = useCallback((items: LightboxItem[], index: number) => setLightbox({ items, index }), [])
 
-  const turns = useMemo(() => toTurns(chat?.messages || []), [chat?.messages])
+  const turns = useMemo(() => toTurns(activePath(chat)), [chat])
   const overlay = prefs.mode === 'overlay'
   const fl = clampFloat(prefs.float || defaultFloat())
   const floatStyle: React.CSSProperties = { left: fl.x, top: fl.y, width: fl.w, height: fl.h }

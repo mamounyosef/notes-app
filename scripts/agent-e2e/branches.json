@@ -1,0 +1,17 @@
+{
+  "fresh": true,
+  "setup": "setup-recall.js",
+  "shots": ["end"],
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gpt-oss:20b', think: false }); return 'gpt-oss:20b' })()"
+  ],
+  "prompts": [
+    "Reply with only the word one."
+  ],
+  "eval": [
+    "(async () => { const A = __notesDebug.useAgent; const u = A.getState().chat.messages.find(m => m.role === 'user'); await A.getState().editMessage(u.id, 'Reply with only the word two.'); const s = () => { const c = A.getState().chat; return c.messages.length } ; const vis = [...document.querySelectorAll('.agent-panel .ag-user-text, .agent-panel .md')].map(e => e.textContent.trim().slice(0, 40)); return { total: s(), shown: vis, nav: [...document.querySelectorAll('.agent-panel .ag-versions span')].map(e => e.textContent) } })()",
+    "(async () => { const A = __notesDebug.useAgent; const c = A.getState().chat; const users = c.messages.filter(m => m.role === 'user'); A.getState().showVersion('root', users[0].id); await new Promise(r => setTimeout(r, 300)); const vis = [...document.querySelectorAll('.agent-panel .ag-user-text, .agent-panel .md')].map(e => e.textContent.trim().slice(0, 40)); return { shown: vis, nav: [...document.querySelectorAll('.agent-panel .ag-versions span')].map(e => e.textContent) } })()",
+    "(async () => { const A = __notesDebug.useAgent; const c = A.getState().chat; const u = c.messages.filter(m => m.role === 'user')[0]; await A.getState().regenerate(u.id); await new Promise(r => setTimeout(r, 300)); const vis = [...document.querySelectorAll('.agent-panel .ag-user-text, .agent-panel .md')].map(e => e.textContent.trim().slice(0, 40)); return { total: A.getState().chat.messages.length, shown: vis, nav: [...document.querySelectorAll('.agent-panel .ag-versions span')].map(e => e.textContent), bars: document.querySelectorAll('.agent-panel .ag-user-bar button').length } })()",
+    "(async () => { const S = __notesDebug.useStore.getState(); const act = S.workspace.tree.flatMap(n => n.children).flatMap(n => n.children).find(n => n.title === 'Activations'); await S.openPage(act.id); await __notesDebug.useAgent.getState().send('Replace the image in the activation functions cell with the actual text.'); const p = (await window.notes.page.read(act.id)).data; const A = __notesDebug.useAgent.getState(); const tools = A.chat.messages.filter(m => m.role === 'tool').map(m => m.toolName + ': ' + (m.meta && m.meta.summary)); return { tools, cells: p.cells.map(c => ({ hasImg: /<img/.test(c.html), text: c.html.replace(/<[^>]+>/g, ' ').replace(/\\s+/g, ' ').slice(0, 300) })), undo: document.querySelectorAll('.agent-panel .ag-undo').length, error: A.error } })()"
+  ]
+}

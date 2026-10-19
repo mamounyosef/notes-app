@@ -128,6 +128,12 @@ export function setupAgent(opts: {
           res = await post(req, ctrl.signal)
         } else throw new Error(text || 'Bad request')
       }
+      // Ollama Cloud now and then answers 500/502/503 under load: try twice more before giving up.
+      for (let attempt = 1; attempt <= 2 && res.status >= 500 && !ctrl.signal.aborted; attempt++) {
+        await res.text().catch(() => '')
+        await new Promise((r) => setTimeout(r, 1500 * attempt))
+        res = await post(req, ctrl.signal)
+      }
       if (!res.ok || !res.body) {
         const text = await res.text().catch(() => '')
         let msg = text
@@ -197,9 +203,11 @@ export function setupAgent(opts: {
   /** One short non streaming call (chat titles). */
   ipcMain.handle('agent:complete', async (_e, body: any) => {
     const ctrl = new AbortController()
-    const t = setTimeout(() => ctrl.abort(), 30_000)
+    // timeout_ms is ours, not Ollama's: reading a dense image can take a while.
+    const { timeout_ms, ...req } = body || {}
+    const t = setTimeout(() => ctrl.abort(), Math.min(180_000, Number(timeout_ms) || 30_000))
     try {
-      const res = await post({ ...body, stream: false }, ctrl.signal)
+      const res = await post({ ...req, messages: await withImages(req.messages || []), stream: false }, ctrl.signal)
       if (!res.ok) return { ok: false, error: `${res.status}` }
       const j: any = await res.json()
       return { ok: true, content: j?.message?.content || '' }
