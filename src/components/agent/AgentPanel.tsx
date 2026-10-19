@@ -224,6 +224,19 @@ function VersionNav({ m, label }: { m: ChatMessage; label: string }) {
   )
 }
 
+/** Seconds since this reply started, shown after a few seconds so a slow model visibly is still working. */
+function Elapsed() {
+  const [start] = useState(() => Date.now())
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 1000)
+    return () => clearInterval(t)
+  }, [])
+  const s = Math.floor((Date.now() - start) / 1000)
+  if (s < 3) return null
+  return <span className="ag-elapsed">{s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${s % 60}s`}</span>
+}
+
 function relTime(t: number) {
   const s = (Date.now() - t) / 1000
   if (s < 60) return 'just now'
@@ -408,6 +421,7 @@ function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(
           <div className="ag-activity">
             <span className="ag-dots"><i /><i /><i /></span>
             <span className="shimmer">{activity || 'Working'}</span>
+            <Elapsed />
           </div>
         )}
         {!working && turn.user && (answer || turnMeta?.turnId) && (

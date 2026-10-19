@@ -1858,3 +1858,6 @@
   text-decoration: line-through;
   cursor: default;
 }
+
+/* Time since the reply started, next to the activity line. */
+.ag-elapsed { margin-left: 6px; font-size: 11.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }

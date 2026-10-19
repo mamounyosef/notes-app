@@ -408,7 +408,7 @@ export const TOOL_DEFS = [
     root_id: str('Only under this notebook, section or page.'),
     limit: { type: 'number', description: 'Default 25, max 60.' },
   }),
-  fn('create_cells', 'Create one or more text cells on a page. Content is Markdown with $LaTeX$, tables, task lists, code blocks; inline HTML allowed for colors (<span style="color:#e06c75">x</span>), highlight (<mark data-color="#ffd75e">x</mark>), font size (<span style="font-size:20px">x</span>), underline (<u>), and [columns][column]..[/column][column]..[/column][/columns] for side by side columns. Placement default: in the area the user is looking at, never overlapping.', {
+  fn('create_cells', 'Create one or more text cells on a page. Content is Markdown with $LaTeX$, tables, task lists, code blocks; inline HTML allowed for colors (<span style="color:#e06c75">x</span>), highlight (<mark data-color="#ffd75e">x</mark>), font size (<span style="font-size:20px">x</span>), underline (<u>), and [columns][column]..[/column][column]..[/column][/columns] for side by side columns ([columns divider] adds a thick vertical line between them). Placement default: in the area the user is looking at, never overlapping.', {
     page_id: str('Page id. Omit for the open page.'),
     cells: {
       type: 'array',

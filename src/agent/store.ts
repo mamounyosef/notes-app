@@ -357,7 +357,8 @@ export const useAgent = create<AgentState>((set, get) => {
       for (let step = 0; step < MAX_STEPS && !stopped; step++) {
         const chat = get().chat
         if (!chat) break
-        const reply = await streamOnce(chat)
+        // After an empty answer, ask again without thinking: models that reason at length sometimes never get to the reply.
+        const reply = await streamOnce(chat, emptyTries > 0)
         if (!reply) break
         // Now and then the model ends with nothing at all: ask again.
         if (!reply.content && !reply.toolCalls?.length) {
@@ -366,7 +367,13 @@ export const useAgent = create<AgentState>((set, get) => {
             const chosen = Object.fromEntries(Object.entries(c.chosen || {}).map(([k, v]) => [k, v.id === reply.id ? { id: PENDING, at: v.at } : v]))
             return { ...c, messages: c.messages.filter((m) => m.id !== reply.id), chosen }
           })
-          if (emptyTries++ < 2) continue
+          // Tools already ran this turn: the work is done, a closing line is optional.
+          if (firstAssistantId) break
+          if (emptyTries++ < 2) {
+            set({ activity: 'Empty answer, asking again' })
+            continue
+          }
+          set({ error: `${modelInfo(get().prefs.model || DEFAULT_MODEL).name} sent back an empty answer three times. Send again, or try another model.` })
           break
         }
         if (!firstAssistantId) firstAssistantId = reply.id

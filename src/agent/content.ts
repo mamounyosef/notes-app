@@ -94,7 +94,8 @@ td.addRule('image', {
 })
 td.addRule('columns', {
   filter: (node) => node.nodeType === 1 && (node as HTMLElement).getAttribute('data-type') === 'columns',
-  replacement: (content) => `\n\n[columns]\n${content}\n[/columns]\n\n`,
+  replacement: (content, node) =>
+    `\n\n[columns${(node as HTMLElement).getAttribute('data-divider') === 'true' ? ' divider' : ''}]\n${content}\n[/columns]\n\n`,
 })
 td.addRule('column', {
   filter: (node) => node.nodeType === 1 && (node as HTMLElement).getAttribute('data-type') === 'column',
@@ -151,17 +152,18 @@ function unescapeNewlines(s: string) {
 export function agentToHtml(text: string): string {
   const src = unescapeNewlines(String(text ?? '').replace(/\r\n/g, '\n'))
   if (!src.trim()) return ''
-  // Side by side columns: [columns][column]...[/column][column]...[/column][/columns]
-  if (/\[columns\]/.test(src)) {
+  // Side by side columns: [columns][column]...[/column][column]...[/column][/columns];
+  // [columns divider] draws the thick vertical line between them.
+  if (/\[columns(\s+divider)?\]/.test(src)) {
     return src
-      .split(/(\[columns\][\s\S]*?\[\/columns\])/)
+      .split(/(\[columns(?:\s+divider)?\][\s\S]*?\[\/columns\])/)
       .map((part) => {
-        const m = /^\[columns\]([\s\S]*)\[\/columns\]$/.exec(part)
+        const m = /^\[columns(\s+divider)?\]([\s\S]*)\[\/columns\]$/.exec(part)
         if (!m) return part.trim() ? agentToHtml(part) : ''
-        const cols = [...m[1].matchAll(/\[column\]([\s\S]*?)\[\/column\]/g)].map(
+        const cols = [...m[2].matchAll(/\[column\]([\s\S]*?)\[\/column\]/g)].map(
           (c) => `<div data-type="column">${agentToHtml(c[1]) || '<p></p>'}</div>`,
         )
-        return cols.length ? `<div data-type="columns">${cols.join('')}</div>` : ''
+        return cols.length ? `<div data-type="columns"${m[1] ? ' data-divider="true"' : ''}>${cols.join('')}</div>` : ''
       })
       .join('')
   }
