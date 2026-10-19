@@ -1,0 +1,9 @@
+{
+  "fresh": true,
+  "prompts": [],
+  "eval": [
+    "(async () => { const S = __notesDebug.useStore.getState(); const ws = await window.notes.workspace.read(); const pg = await window.notes.page.read('welcome-page'); const st = await window.notes.settings.read(); return { shownTree: S.workspace.tree.map(n => n.title), openPage: S.page && S.page.title, workspaceOnDisk: Boolean(ws.data), welcomeOnDisk: Boolean(pg.data), settingsOnDisk: Boolean(st.data) } })()",
+    "(async () => { const S = __notesDebug.useStore.getState(); S.setSettings({ bodySize: 17 }); await new Promise(r => setTimeout(r, 1200)); const st = await window.notes.settings.read(); const t = st.data._t || {}; return { stamped: Object.keys(t).filter(k => t[k] > 0) } })()",
+    "(async () => { const S = __notesDebug.useStore.getState(); S.addCell({ x: 40, y: 120, title: 'Hello', html: '<p>first edit</p>' }); await S.save(); await new Promise(r => setTimeout(r, 800)); const ws = await window.notes.workspace.read(); const pg = await window.notes.page.read('welcome-page'); return { workspaceOnDisk: Boolean(ws.data), welcomeOnDisk: Boolean(pg.data), cells: pg.data && pg.data.cells.length } })()"
+  ]
+}

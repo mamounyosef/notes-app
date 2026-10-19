@@ -11,11 +11,19 @@ function newNode(kind: TreeNode['kind'], title: string): TreeNode {
   return { id: uid(), kind, title, children: [], createdAt: now(), updatedAt: now() }
 }
 
+/** Ids of the starter notebook a new, empty notes folder shows. */
+const SEED_PAGE = 'welcome-page'
+
+/**
+ * The starter tree. Fixed ids, and it is only written to disk once the person
+ * changes something, so a new empty folder that is about to receive the
+ * cloud copy never adds a stray Welcome notebook to it.
+ */
 function emptyWorkspace(): Workspace {
-  const page = newNode('page', 'Welcome')
-  const section = newNode('section', 'General')
+  const page = { ...newNode('page', 'Welcome'), id: SEED_PAGE }
+  const section = { ...newNode('section', 'General'), id: 'welcome-section' }
   section.children = [page]
-  const notebook = newNode('notebook', 'My Notebook')
+  const notebook = { ...newNode('notebook', 'My Notebook'), id: 'welcome-notebook' }
   notebook.color = '#7c9cff'
   notebook.children = [section]
   return { version: 1, tree: [notebook], favorites: [], recent: [page.id], lastOpenPageId: page.id }
@@ -178,6 +186,8 @@ let gridScaleTimer: any = null
  * ------------------------------------------------------------------ */
 
 let pageBase: Page | null = null
+/** The folder was empty and only shows the starter tree, not yet written. */
+let starterOnly = false
 let pageSeq = 0
 let pageSaving: Promise<void> | null = null
 let pageSaveAgain = false
@@ -441,10 +451,9 @@ export const useStore = create<State>((set, get) => ({
     const workspace = ws && ws.tree?.length ? withLocal(ws) : emptyWorkspace()
     const settings = { ...DEFAULT_SETTINGS, ...(settingsBase || {}) }
     set({ workspace, settings, vaultPath: vault, ready: true })
-    if (!ws || !ws.tree?.length) {
-      wsDirty = true
-      await get().saveWorkspace()
-    }
+    // An empty folder shows the starter tree without writing it: if cloud
+    // sync is about to fill the folder, the real tree simply replaces it.
+    starterOnly = !ws || !ws.tree?.length
 
     unsubscribe?.()
     unsubscribe = storage.onVaultEvent((ev) => handleVaultEvent(ev))
@@ -469,6 +478,12 @@ export const useStore = create<State>((set, get) => ({
         pageSaveAgain = false
         const sent = get().page
         if (!sent || !get().dirty) break
+        if (starterOnly) {
+          // First real edit in a new folder: write the tree too, or the page would have no place in it.
+          starterOnly = false
+          wsDirty = true
+          await get().saveWorkspace()
+        }
         const t = takeTouched()
         const base = pageBase && pageBase.id === sent.id ? pageBase : null
         let res
@@ -514,6 +529,8 @@ export const useStore = create<State>((set, get) => ({
   },
 
   async saveWorkspace() {
+    // Writing the tree for real ends the "starter only" state of a new folder.
+    if (wsDirty) starterOnly = false
     if (wsSaving) {
       wsSaveAgain = true
       return wsSaving
@@ -651,7 +668,8 @@ export const useStore = create<State>((set, get) => ({
       future: [],
       dirty: fresh || retitled,
     })
-    if (fresh) await get().save()
+    if (fresh && starterOnly && id === SEED_PAGE) set({ dirty: false })
+    else if (fresh) await get().save()
     else if (retitled) scheduleSave(get)
   },
 
@@ -1193,6 +1211,7 @@ function scheduleSave(get: () => State) {
 }
 
 function scheduleWorkspace(ms: number) {
+  starterOnly = false
   wsDirty = true
   clearTimeout(wsTimer)
   wsTimer = setTimeout(() => useStore.getState().saveWorkspace(), ms)
@@ -1212,7 +1231,9 @@ async function saveSettings() {
       const sent = st.getState().settings
       let res
       try {
-        res = await storage.writeSettings(sent, settingsBase)
+        // No settings file yet: compare against the defaults, so only settings the
+        // person actually changed count as newer than another computer's.
+        res = await storage.writeSettings(sent, settingsBase ?? ({ ...DEFAULT_SETTINGS } as Settings))
       } catch (e) {
         settingsDirty = true
         clearTimeout(settingsTimer)
@@ -1280,6 +1301,8 @@ function onRemotePage(data: Page, seq: number) {
 
 function applyWorkspace(ws: Workspace) {
   const s = useStore.getState()
+  // The folder now has a real tree (from another computer); the starter is gone.
+  starterOnly = false
   useStore.setState({ workspace: ws })
   // The open page may have been deleted on the other computer.
   const active = s.activePageId
