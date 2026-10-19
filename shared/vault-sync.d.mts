@@ -15,7 +15,17 @@ export interface ConflictList {
 export function loadDeviceId(stateDir: string): string
 
 export class VaultSync {
-  constructor(opts: { stateDir: string; emit(ev: any): void; log?(...a: any[]): void })
+  constructor(opts: {
+    stateDir: string
+    emit(ev: any): void
+    log?(...a: any[]): void
+    onLocalChange?(kind: SyncKind, id: string | undefined, info?: { deleted?: boolean }): void
+  })
+  ready: Promise<void>
+  listDocs(): Promise<[SyncKind, string | undefined][]>
+  current(kind: SyncKind, id?: string): Promise<any | null>
+  applyRemote(kind: SyncKind, id: string | undefined, remote: any): Promise<any>
+  removeRemote(id: string): Promise<void>
   device: string
   vault: string | null
   setVault(vault: string): void

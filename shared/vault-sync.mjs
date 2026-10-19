@@ -63,13 +63,16 @@ const KINDS = {
 
 export class VaultSync {
   /**
-   * @param {{ stateDir: string, emit(ev: any): void, log?(...a: any[]): void }} opts
+   * @param {{ stateDir: string, emit(ev: any): void, log?(...a: any[]): void,
+   *   onLocalChange?(kind: string, id: string | undefined, info?: { deleted?: boolean }): void }} opts
    */
-  constructor({ stateDir, emit, log }) {
+  constructor({ stateDir, emit, log, onLocalChange }) {
     this.stateDir = stateDir
     this.device = loadDeviceId(stateDir)
     this.emit = emit
     this.log = log || (() => {})
+    // Tells the cloud sync that a file in the folder may now differ from the cloud.
+    this.onLocalChange = onLocalChange || (() => {})
     this.vault = null
     this.queues = new Map()
     this.reset()
@@ -322,7 +325,89 @@ export class VaultSync {
       await this.writeJournal(kind, id, merged)
       this.seq++
       this.track(kind, id, merged)
+      this.onLocalChange(kind, id)
       return { data: merged, seq: this.seq }
+    })
+  }
+
+  /* ---------------- cloud ---------------- */
+
+  /** Every note file in the folder, as [kind, id] pairs. */
+  async listDocs() {
+    await this.ready
+    const out = []
+    for (const kind of ['workspace', 'settings']) if (fs.existsSync(this.file(kind))) out.push([kind, undefined])
+    const names = await fsp.readdir(path.join(this.vault, 'pages')).catch(() => [])
+    for (const name of names) {
+      if (!name.endsWith('.json') || DUP_RE.test(name)) continue
+      const id = name.slice(0, -5)
+      if (safeId(id) === id) out.push(['page', id])
+    }
+    return out
+  }
+
+  /** What this computer has for a note right now (file merged with the journal), or null. */
+  async current(kind, id) {
+    await this.ready
+    const file = this.file(kind, id)
+    return this.queue(file, async () => {
+      const r = await this.readJson(file)
+      if (r.bad || !r.data) return null
+      const journal = await this.readJournal(kind, id)
+      if (!journal) return r.data
+      const k = KINDS[kind]
+      return k.merge(journal, k.adopt(r.data, journal, Date.now()), 'b')
+    })
+  }
+
+  /**
+   * A version of a note came from the cloud. It is merged with the file and
+   * the journal (never replaces them), written, and shown in the app.
+   */
+  async applyRemote(kind, id, remote) {
+    await this.ready
+    const file = this.file(kind, id)
+    return this.queue(file, async () => {
+      const k = KINDS[kind]
+      const now = Date.now()
+      let disk = await this.readJson(file)
+      if (disk.bad) {
+        await this.setAsideDamaged(file)
+        disk = { text: null, data: null }
+      }
+      const journal = await this.readJournal(kind, id)
+      let merged = remote
+      if (disk.data) merged = k.merge(k.adopt(disk.data, journal, now), merged, 'a')
+      if (journal) merged = k.merge(merged, journal, 'a')
+      const text = JSON.stringify(merged, null, 2)
+      if (text !== disk.text) await this.writeText(file, text)
+      else this.known.set(file, sha(text))
+      await this.writeJournal(kind, id, merged)
+      this.track(kind, id, merged)
+      if (!disk.data || core.stable(merged) !== core.stable(disk.data)) {
+        this.seq++
+        this.lastRemoteAt = now
+        this.emit({ type: kind, id, data: merged, seq: this.seq })
+      }
+      return merged
+    })
+  }
+
+  /** The page was deleted on another computer: set it aside here too. */
+  async removeRemote(id) {
+    await this.ready
+    const file = this.file('page', id)
+    return this.queue(file, async () => {
+      // Named so restoreFromTrash() does not bring it back on its own.
+      if (fs.existsSync(file)) await this.moveToTrash(file, `${safeId(id)}-cloud-deleted-${Date.now()}.json`).catch(() => {})
+      await fsp.rm(this.journal('page', id), { force: true }).catch(() => {})
+      this.known.delete(file)
+      this.stats.delete(file)
+      this.titles.delete(id)
+      this.emptyPages.delete(id)
+      this.conflictIndex.delete(id)
+      this.scheduleConflicts()
+      this.emit({ type: 'page-removed', id })
     })
   }
 
@@ -337,6 +422,7 @@ export class VaultSync {
       this.titles.delete(id)
       this.conflictIndex.delete(id)
       this.scheduleConflicts()
+      this.onLocalChange('page', id, { deleted: true })
       return true
     })
   }
@@ -494,6 +580,7 @@ export class VaultSync {
       }
       await this.writeJournal(kind, id, data)
       this.track(kind, id, data)
+      this.onLocalChange(kind, id)
       if (!force || core.stable(data) !== core.stable(r.data)) {
         this.seq++
         this.lastRemoteAt = now
@@ -521,6 +608,7 @@ export class VaultSync {
       await this.moveToTrash(dupFile, `conflict-${Date.now()}-${path.basename(dupFile)}`).catch(() => {})
       this.log('sync: merged a duplicate file made by the cloud drive', dupFile)
       this.track(kind, id, merged)
+      this.onLocalChange(kind, id)
       this.seq++
       this.lastRemoteAt = now
       this.emit({ type: kind, id, data: merged, seq: this.seq })

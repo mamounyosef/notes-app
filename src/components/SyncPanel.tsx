@@ -1,8 +1,9 @@
 import React, { useEffect, useState } from 'react'
 import { useStore } from '../store'
-import { storage, type SyncStatus } from '../lib/storage'
+import { storage, cloud, type SyncStatus } from '../lib/storage'
 import { askConfirm } from '../lib/confirm'
 import { X } from './Icons'
+import { cloudLine, useCloudStatus } from './CloudSync'
 
 /**
  * Everything sync needs a decision on: cells kept in two versions, cells
@@ -16,6 +17,7 @@ export default function SyncPanel({ onClose }: { onClose(): void }) {
   const st = useStore.getState
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [checking, setChecking] = useState(false)
+  const [cloudStatus] = useCloudStatus()
 
   useEffect(() => {
     storage.syncStatus().then(setStatus).catch(() => {})
@@ -25,6 +27,7 @@ export default function SyncPanel({ onClose }: { onClose(): void }) {
     setChecking(true)
     try {
       await storage.scanNow()
+      await cloud.syncNow()
       await st().refreshConflicts()
       setStatus(await storage.syncStatus())
     } finally {
@@ -123,6 +126,13 @@ export default function SyncPanel({ onClose }: { onClose(): void }) {
                   </button>
                 </div>
               ))}
+            </div>
+          )}
+
+          {cloud.available && (
+            <div className="sync-status">
+              <b>Cloud:</b> {cloudLine(cloudStatus)}
+              {cloudStatus?.skipped?.length ? ` Not synced (over 50 MB): ${cloudStatus.skipped.join(', ')}.` : ''}
             </div>
           )}
 
