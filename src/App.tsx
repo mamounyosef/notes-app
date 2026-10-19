@@ -201,12 +201,16 @@ export default function App() {
   }, [settings])
 
   /* ---------- keep the section pane in step with the open page ---------- */
-  useEffect(() => {
-    if (!activePageId) return
+  // Only when the open page (or the section holding it) changes, so browsing
+  // another section is not undone by unrelated tree edits.
+  const openPageSection = useMemo(() => {
+    if (!activePageId) return null
     const path = pathTo(workspace.tree, activePageId)
-    const section = [...path].reverse().find((n) => n.kind === 'section')
-    if (section) setActiveSectionId(section.id)
+    return [...path].reverse().find((n) => n.kind === 'section')?.id ?? null
   }, [activePageId, workspace.tree])
+  useEffect(() => {
+    if (openPageSection) setActiveSectionId(openPageSection)
+  }, [activePageId, openPageSection])
 
   const activeSection = activeSectionId ? findNode(workspace.tree, activeSectionId) : null
   const pageRoots = useMemo(() => activeSection?.children.filter((c) => c.kind === 'page') ?? [], [activeSection])
@@ -374,8 +378,6 @@ export default function App() {
                       onActivate={(n) => {
                         if (n.kind === 'section') {
                           setActiveSectionId(n.id)
-                          const firstPage = n.children.find((c) => c.kind === 'page')
-                          if (firstPage) useStore.getState().openPage(firstPage.id)
                         } else {
                           useStore.getState().toggleCollapse(n.id)
                         }
@@ -407,8 +409,6 @@ export default function App() {
                             onActivate={(n) => {
                               if (n.kind === 'section') {
                                 setActiveSectionId(n.id)
-                                const firstPage = n.children.find((c) => c.kind === 'page')
-                                if (firstPage) useStore.getState().openPage(firstPage.id)
                               } else {
                                 useStore.getState().toggleCollapse(n.id)
                               }
