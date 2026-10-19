@@ -8,6 +8,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url'
 import { VaultSync } from '../shared/vault-sync.mjs'
 import { CloudSync } from '../shared/cloud-sync.mjs'
 import { createSupabaseRemote } from '../shared/cloud-remote-supabase.mjs'
+import { pageIndex, searchPages } from '../shared/search-core.mjs'
 import { setupAgent } from './agent'
 
 // Disable hardware acceleration and sandbox to prevent Chromium GPU/D3D11 crash (0xC0000005) on Windows 11
@@ -616,77 +617,41 @@ ipcMain.handle('asset:import', async (_e, filePath: string) => {
   return `asset://local/${name}`
 })
 
-/** Full-text search over every page file. Fast enough for tens of thousands. */
+/** Parsed page files, kept until the file changes, so each keystroke searches from memory. */
+const searchCache = new Map<string, { mtime: number; page: any }>()
+
+/** Ranked, typo tolerant search over every page in the tree (see shared/search-core.mjs). */
 ipcMain.handle('search:all', async (_e, query: string) => {
-  const q = String(query || '').trim().toLowerCase()
-  if (!q) return []
-  const dir = path.join(vaultPath, 'pages')
-  let names: string[] = []
+  if (!String(query || '').trim()) return []
+  let tree: any[] = []
   try {
-    names = await fsp.readdir(dir)
+    tree = JSON.parse(await fsp.readFile(path.join(vaultPath, 'workspace.json'), 'utf8')).tree || []
   } catch {
-    return []
+    /* no tree yet */
   }
-  const results: any[] = []
-  for (const name of names) {
-    if (!name.endsWith('.json')) continue
-    let raw: string
-    try {
-      raw = await fsp.readFile(path.join(dir, name), 'utf8')
-    } catch {
-      continue
-    }
-    if (!raw.toLowerCase().includes(q)) continue
-    let page: any
-    try {
-      page = JSON.parse(raw)
-    } catch {
-      continue
-    }
-    const hits: { cellId: string; cellTitle: string; snippet: string }[] = []
-    const titleHit = String(page.title || '').toLowerCase().includes(q)
-    for (const cell of page.cells || []) {
-      const text = stripHtml(`${cell.title || ''}<br>${cell.html || ''}`)
-      const i = text.toLowerCase().indexOf(q)
-      if (i >= 0) {
-        hits.push({
-          cellId: cell.id,
-          cellTitle: cell.title || '',
-          snippet: lineSnippet(text, i, q.length),
-        })
+  const index = pageIndex(tree)
+  const dir = path.join(vaultPath, 'pages')
+  const pages: any[] = []
+  await Promise.all(
+    [...index.keys()].map(async (id) => {
+      const file = path.join(dir, `${id}.json`)
+      try {
+        const st = await fsp.stat(file)
+        let hit = searchCache.get(id)
+        if (!hit || hit.mtime !== st.mtimeMs) {
+          hit = { mtime: st.mtimeMs, page: JSON.parse(await fsp.readFile(file, 'utf8')) }
+          searchCache.set(id, hit)
+        }
+        const info = index.get(id)!
+        pages.push({ ...hit.page, id, path: info.path, archived: info.archived })
+      } catch {
+        /* missing or half written */
       }
-      if (hits.length >= 4) break
-    }
-    if (titleHit || hits.length) {
-      results.push({ pageId: page.id || name.replace(/\.json$/, ''), title: page.title || 'Untitled', hits })
-    }
-    if (results.length >= 80) break
-  }
-  return results
+    }),
+  )
+  const archived = new Set(pages.filter((p) => p.archived).map((p) => p.id))
+  return searchPages(query, pages).map((r) => ({ ...r, archived: archived.has(r.pageId) }))
 })
-
-function stripHtml(html: string) {
-  return String(html)
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/[ \t\r\f\v]+/g, ' ')
-    .replace(/ ?\n ?/g, '\n')
-    .replace(/\n+/g, '\n')
-    .trim()
-}
-
-/** Snippet limited to the line (paragraph) containing the match. */
-function lineSnippet(text: string, i: number, len: number) {
-  const start = text.lastIndexOf('\n', i) + 1
-  let end = text.indexOf('\n', i + len)
-  if (end < 0) end = text.length
-  return text.slice(Math.max(start, i - 40), Math.min(end, i + len + 60)).trim()
-}
 
 ipcMain.handle('export:file', async (_e, suggestedName: string, content: string) => {
   const res = await dialog.showSaveDialog(win!, { defaultPath: suggestedName })

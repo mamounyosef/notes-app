@@ -4,11 +4,11 @@
  *  - Browser:  localStorage, so `npm run dev` in a plain browser still works.
  */
 import type { Page, Settings, Workspace } from '../types'
+import { pageIndex, searchPages, type SearchResult } from '../../shared/search-core.mjs'
 
-export interface SearchHit {
-  pageId: string
-  title: string
-  hits: { cellId: string; cellTitle: string; snippet: string }[]
+/** A ranked search result, best first (see shared/search-core.mjs). */
+export interface SearchHit extends SearchResult {
+  archived?: boolean
 }
 
 /** What a read or write of a synced file gives back. */
@@ -177,31 +177,13 @@ const webBackend: Backend = {
   syncStatus: async () => null,
   saveAsset: async (dataUrl) => dataUrl, // inline in the browser build
   async search(q) {
-    const needle = q.trim().toLowerCase()
-    if (!needle) return []
-    const out: SearchHit[] = []
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)!
-      if (!key.startsWith('notes:page:')) continue
-      const raw = localStorage.getItem(key) || ''
-      if (!raw.toLowerCase().includes(needle)) continue
-      const page = JSON.parse(raw) as Page
-      const hits = (page.cells || [])
-        .map((c) => {
-          const text = stripHtml(`${c.title}<br>${c.html}`)
-          const i2 = text.toLowerCase().indexOf(needle)
-          return i2 < 0
-            ? null
-            : {
-                cellId: c.id,
-                cellTitle: c.title,
-                snippet: lineSnippet(text, i2, needle.length),
-              }
-        })
-        .filter(Boolean) as SearchHit['hits']
-      out.push({ pageId: page.id, title: page.title, hits: hits.slice(0, 4) })
-    }
-    return out
+    if (!q.trim()) return []
+    const index = pageIndex(LS.get<Workspace | null>('notes:workspace', null)?.tree || [])
+    const pages = [...index].flatMap(([id, info]) => {
+      const page = LS.get<Page | null>(`notes:page:${id}`, null)
+      return page ? [{ ...page, id, path: info.path }] : []
+    })
+    return searchPages(q, pages).map((r) => ({ ...r, archived: Boolean(index.get(r.pageId)?.archived) }))
   },
   async exportFile(name, content) {
     const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
@@ -332,24 +314,6 @@ async function syncPost<T>(url: string, body: unknown): Promise<SyncResult<T>> {
   const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   if (!r.ok) throw new Error(`Saving ${url} failed (${r.status})`)
   return (await r.json()) as SyncResult<T>
-}
-
-function stripHtml(html: string) {
-  const d = document.createElement('div')
-  d.innerHTML = html.replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, '$&\n')
-  return (d.textContent || '')
-    .replace(/[ \t\r\f\v ]+/g, ' ')
-    .replace(/ ?\n ?/g, '\n')
-    .replace(/\n+/g, '\n')
-    .trim()
-}
-
-/** Snippet limited to the line (paragraph) containing the match. */
-function lineSnippet(text: string, i: number, len: number) {
-  const start = text.lastIndexOf('\n', i) + 1
-  let end = text.indexOf('\n', i + len)
-  if (end < 0) end = text.length
-  return text.slice(Math.max(start, i - 40), Math.min(end, i + len + 60)).trim()
 }
 
 /** Chosen once at startup: desktop, the local server, or the browser itself. */

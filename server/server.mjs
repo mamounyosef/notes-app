@@ -12,6 +12,7 @@ import os from 'node:os'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { VaultSync } from '../shared/vault-sync.mjs'
+import { pageIndex, searchPages } from '../shared/search-core.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
@@ -103,23 +104,6 @@ function body(req) {
   })
 }
 
-function stripHtml(html) {
-  return String(html)
-    .replace(/<br\s*\/?>|<\/(p|div|li|h[1-6]|tr|blockquote|pre)>/gi, '\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/[ \t\r\f\v]+/g, ' ')
-    .replace(/ ?\n ?/g, '\n')
-    .replace(/\n+/g, '\n')
-    .trim()
-}
-
-function lineSnippet(text, i, len) {
-  const start = text.lastIndexOf('\n', i) + 1
-  let end = text.indexOf('\n', i + len)
-  if (end < 0) end = text.length
-  return text.slice(Math.max(start, i - 40), Math.min(end, i + len + 60)).trim()
-}
 
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost')
@@ -180,39 +164,21 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (p === '/api/search') {
-      const q = (url.searchParams.get('q') || '').trim().toLowerCase()
+      const q = (url.searchParams.get('q') || '').trim()
       if (!q) return send(res, 200, '[]')
-      const dir = path.join(VAULT, 'pages')
-      const names = await fsp.readdir(dir).catch(() => [])
-      const out = []
-      for (const name of names) {
-        if (!name.endsWith('.json')) continue
-        const raw = await fsp.readFile(path.join(dir, name), 'utf8').catch(() => '')
-        if (!raw.toLowerCase().includes(q)) continue
-        let page
+      const ws = JSON.parse(await fsp.readFile(path.join(VAULT, 'workspace.json'), 'utf8').catch(() => '{}'))
+      const index = pageIndex(ws.tree || [])
+      const pages = []
+      for (const [id, info] of index) {
+        const raw = await fsp.readFile(path.join(VAULT, 'pages', `${id}.json`), 'utf8').catch(() => '')
         try {
-          page = JSON.parse(raw)
+          if (raw) pages.push({ ...JSON.parse(raw), id, path: info.path, archived: info.archived })
         } catch {
-          continue
-        }
-        const hits = []
-        for (const cell of page.cells || []) {
-          const text = stripHtml(`${cell.title || ''}<br>${cell.html || ''}`)
-          const i = text.toLowerCase().indexOf(q)
-          if (i >= 0) {
-            hits.push({
-              cellId: cell.id,
-              cellTitle: cell.title || '',
-              snippet: lineSnippet(text, i, q.length),
-            })
-          }
-          if (hits.length >= 4) break
-        }
-        if (hits.length || String(page.title || '').toLowerCase().includes(q)) {
-          out.push({ pageId: page.id, title: page.title || 'Untitled', hits })
+          /* half written */
         }
       }
-      return send(res, 200, JSON.stringify(out))
+      const archived = new Set(pages.filter((x) => x.archived).map((x) => x.id))
+      return send(res, 200, JSON.stringify(searchPages(q, pages).map((r) => ({ ...r, archived: archived.has(r.pageId) }))))
     }
 
     // Images saved by either client. Kept off /assets, which belongs to the

@@ -1,0 +1,8 @@
+{
+  "fresh": true,
+  "prompts": [],
+  "eval": [
+    "(async () => { const S = __notesDebug.useStore.getState(); S.renamePage ? 0 : 0; S.addCell({ x: 40, y: 120, title: 'Chain rule', html: '<p>Backpropagation applies the chain rule.</p>' }); await S.save(); await new Promise(r => setTimeout(r, 800)); const r = await window.notes.search('backpropogation'); return r.map(x => ({ title: x.title, near: x.near, hit: x.hits[0] && x.hits[0].snippet })) })()",
+    "(async () => { const S = __notesDebug.useStore.getState(); const pid = S.page.id; S.archiveNode(pid, true); await new Promise(r => setTimeout(r, 600)); const mainRows = [...document.querySelectorAll('.pane .row.page .label')].map(e => e.textContent); const head = [...document.querySelectorAll('button.pane-head')].find(b => /Archive/.test(b.textContent)); head && head.click(); await new Promise(r => setTimeout(r, 300)); const nbs = [...document.querySelectorAll('.row')].map(e => (e.className.includes('arch-path') ? '[path] ' : '') + e.textContent.trim()); const r = await window.notes.search('chain rule'); return { mainRows, rows: nbs, searchArchived: r[0] && r[0].archived } })()"
+  ]
+}

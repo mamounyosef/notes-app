@@ -14,13 +14,30 @@ interface Props {
   activeId: string | null
   onActivate(node: TreeNode): void
   emptyHint?: string
+  /**
+   * Archive view: shows only archived items, each under copies of its original
+   * notebook and sections, so the archive mirrors where things came from.
+   */
+  archive?: boolean
 }
 
-export default function Tree({ kinds, roots, activeId, onActivate, emptyHint }: Props) {
+/** True when the node or anything below it is archived. */
+const holdsArchived = (n: TreeNode): boolean => Boolean(n.archived) || n.children.some(holdsArchived)
+
+export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, archive }: Props) {
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [dropTarget, setDropTarget] = useState<{ id: string; pos: 'before' | 'after' | 'inside' } | null>(null)
   const dragId = useRef<string | null>(null)
+  // The archive keeps its own open/closed state, so folding it never folds the main tree.
+  const [archClosed, setArchClosed] = useState<Set<string>>(() => new Set())
+  const toggleArch = (id: string) =>
+    setArchClosed((s) => {
+      const next = new Set(s)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   const st = useStore
 
   const nodeMenu = (n: TreeNode): MenuItem[] => {
@@ -34,9 +51,7 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint }: 
         : []),
       { separator: true },
       { label: 'Rename', hint: 'F2', onClick: () => setRenaming(n.id) },
-      ...(n.kind === 'notebook'
-        ? [{ label: n.archived ? 'Unarchive notebook' : 'Archive notebook', icon: <Archive />, onClick: () => s.archiveNode(n.id, !n.archived) }]
-        : []),
+      { label: n.archived ? `Unarchive ${n.kind}` : `Archive ${n.kind}`, icon: <Archive />, onClick: () => s.archiveNode(n.id, !n.archived) },
       ...(n.kind === 'page'
         ? [
             {
@@ -86,10 +101,16 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint }: 
     ]
   }
 
-  const renderNode = (n: TreeNode, depth: number): React.ReactNode => {
+  const renderNode = (n: TreeNode, depth: number, inArchived = false): React.ReactNode => {
     if (!kinds.includes(n.kind)) return null
+    if (!archive && n.archived) return null
+    if (archive && !inArchived && !holdsArchived(n)) return null
+    const archivedHere = inArchived || Boolean(n.archived)
     const children = n.children.filter((c) => kinds.includes(c.kind))
-    const open = !n.collapsed
+    const open = archive ? !archClosed.has(n.id) : !n.collapsed
+    const toggle = () => (archive ? toggleArch(n.id) : st.getState().toggleCollapse(n.id))
+    // In the archive, a row that only stands for the original place is dimmed.
+    const pathOnly = archive && !archivedHere
     const isActive = activeId === n.id
     const Icon = n.kind === 'notebook' ? Book : n.kind === 'section' ? Folder : File
     const fav = st.getState().workspace.favorites.includes(n.id)
@@ -102,15 +123,16 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint }: 
             n.kind,
             isActive ? 'active' : '',
             dropTarget?.id === n.id ? `drop-${dropTarget.pos}` : '',
+            pathOnly ? 'arch-path' : '',
           ].join(' ')}
           style={{ paddingLeft: 6 + depth * 13, ['--node-color' as any]: n.color || 'var(--accent)' }}
-          onClick={() => onActivate(n)}
-          onDoubleClick={() => setRenaming(n.id)}
+          onClick={() => (archive && n.kind !== 'page' ? toggle() : onActivate(n))}
+          onDoubleClick={() => !pathOnly && setRenaming(n.id)}
           onContextMenu={(e) => {
             e.preventDefault()
             setMenu({ x: e.clientX, y: e.clientY, items: nodeMenu(n) })
           }}
-          draggable={renaming !== n.id}
+          draggable={!archive && renaming !== n.id}
           onDragStart={(e) => {
             dragId.current = n.id
             e.dataTransfer.effectAllowed = 'move'
@@ -136,7 +158,7 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint }: 
               className={`twisty ${open ? 'open' : ''}`}
               onClick={(e) => {
                 e.stopPropagation()
-                st.getState().toggleCollapse(n.id)
+                toggle()
               }}
             >
               <Chevron size={13} />
@@ -163,6 +185,18 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint }: 
 
           {fav && <Star size={12} />}
 
+          {archive && n.archived ? (
+            <button
+              className="row-btn"
+              title={`Unarchive ${n.kind}`}
+              onClick={(e) => {
+                e.stopPropagation()
+                st.getState().archiveNode(n.id, false)
+              }}
+            >
+              <Archive size={13} />
+            </button>
+          ) : archive ? null : (
           <button
             className="row-btn"
             title="Add inside"
@@ -173,14 +207,15 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint }: 
           >
             <Plus size={13} />
           </button>
+          )}
         </div>
 
-        {open && children.map((c) => renderNode(c, depth + 1))}
+        {open && children.map((c) => renderNode(c, depth + 1, archivedHere))}
       </div>
     )
   }
 
-  const visible = roots.filter((r) => kinds.includes(r.kind))
+  const visible = roots.filter((r) => kinds.includes(r.kind) && (archive ? holdsArchived(r) : !r.archived))
 
   return (
     <>

@@ -368,7 +368,8 @@ export default function App() {
               )}
               {(() => {
                 const activeNotebooks = workspace.tree.filter((n) => !n.archived)
-                const archivedNotebooks = workspace.tree.filter((n) => n.archived)
+                const holds = (n: TreeNode): boolean => Boolean(n.archived) || n.children.some(holds)
+                const archivedNotebooks = workspace.tree.filter(holds)
                 return (
                   <>
                     <Tree
@@ -399,19 +400,16 @@ export default function App() {
                             <Chevron size={12} />
                           </div>
                           <Archive size={12} />
-                          Archived Notebooks
+                          Archive
                         </button>
                         {showArchive && (
                           <Tree
-                            kinds={['notebook', 'section']}
+                            archive
+                            kinds={['notebook', 'section', 'page']}
                             roots={archivedNotebooks}
-                            activeId={activeSectionId}
+                            activeId={activePageId}
                             onActivate={(n) => {
-                              if (n.kind === 'section') {
-                                setActiveSectionId(n.id)
-                              } else {
-                                useStore.getState().toggleCollapse(n.id)
-                              }
+                              if (n.kind === 'page') useStore.getState().openPage(n.id)
                             }}
                           />
                         )}
@@ -448,7 +446,7 @@ export default function App() {
                 <Plus size={14} />
               </button>
             </div>
-            <div className="pane-body">
+            <div className={`pane-body${pageRoots.length <= 5 ? ' few-pages' : ''}`}>
               <Tree
                 kinds={['page']}
                 roots={pageRoots}
