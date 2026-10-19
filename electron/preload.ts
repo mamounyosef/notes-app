@@ -35,6 +35,19 @@ const api = {
       return () => ipcRenderer.removeListener('vault:event', fn)
     },
   },
+  cloud: {
+    status: () => ipcRenderer.invoke('cloud:status'),
+    signIn: (url: string, key: string, email: string, password: string) =>
+      ipcRenderer.invoke('cloud:signIn', url, key, email, password) as Promise<{ ok: boolean; error?: string }>,
+    signOut: () => ipcRenderer.invoke('cloud:signOut'),
+    syncNow: () => ipcRenderer.invoke('cloud:syncNow'),
+    /** Cloud sync state changes. Returns an unsubscribe. */
+    onStatus: (cb: (s: unknown) => void) => {
+      const fn = (_e: unknown, s: unknown) => cb(s)
+      ipcRenderer.on('cloud:status', fn)
+      return () => ipcRenderer.removeListener('cloud:status', fn)
+    },
+  },
   asset: {
     save: (dataUrl: string) => ipcRenderer.invoke('asset:save', dataUrl) as Promise<string | null>,
     import: (filePath: string) => ipcRenderer.invoke('asset:import', filePath) as Promise<string | null>,
@@ -67,6 +80,44 @@ const api = {
     minimize: () => ipcRenderer.invoke('win:minimize'),
     maximize: () => ipcRenderer.invoke('win:maximize'),
     close: () => ipcRenderer.invoke('win:close'),
+  },
+  agent: {
+    keyStatus: () => ipcRenderer.invoke('agent:keyStatus') as Promise<{ hasKey: boolean; masked: string }>,
+    setKey: (key: string) => ipcRenderer.invoke('agent:setKey', key) as Promise<{ ok: boolean; error?: string }>,
+    chat: (reqId: string, body: unknown) =>
+      ipcRenderer.invoke('agent:chat', reqId, body) as Promise<{ ok: boolean; error?: string; aborted?: boolean }>,
+    abort: (reqId: string) => ipcRenderer.invoke('agent:abort', reqId),
+    dictate: () => ipcRenderer.invoke('agent:dictate') as Promise<boolean>,
+    web: (kind: 'search' | 'fetch', arg: unknown) =>
+      ipcRenderer.invoke('agent:web', kind, arg) as Promise<{ ok: boolean; data?: any; error?: string }>,
+    complete: (body: unknown) => ipcRenderer.invoke('agent:complete', body) as Promise<{ ok: boolean; content?: string; error?: string }>,
+    /** Streamed chunks of a running chat request. Returns an unsubscribe. */
+    onChunk: (cb: (reqId: string, chunk: any) => void) => {
+      const fn = (_e: unknown, reqId: string, chunk: any) => cb(reqId, chunk)
+      ipcRenderer.on('agent:chunk', fn)
+      return () => ipcRenderer.removeListener('agent:chunk', fn)
+    },
+  },
+  chats: {
+    list: () => ipcRenderer.invoke('chats:list'),
+    get: (id: string) => ipcRenderer.invoke('chats:get', id),
+    put: (chat: unknown) => ipcRenderer.invoke('chats:put', chat),
+    remove: (id: string) => ipcRenderer.invoke('chats:remove', id),
+    status: () => ipcRenderer.invoke('chats:status'),
+    syncNow: () => ipcRenderer.invoke('chats:syncNow'),
+    saveBlob: (b64: string) => ipcRenderer.invoke('blob:save', b64) as Promise<string>,
+    getBlob: (sha: string) => ipcRenderer.invoke('blob:get', sha) as Promise<string | null>,
+    blobToAsset: (sha: string, mime: string) => ipcRenderer.invoke('blob:toAsset', sha, mime) as Promise<string | null>,
+    onEvent: (cb: (ev: any) => void) => {
+      const fn = (_e: unknown, ev: any) => cb(ev)
+      ipcRenderer.on('chats:event', fn)
+      return () => ipcRenderer.removeListener('chats:event', fn)
+    },
+    onStatus: (cb: (s: any) => void) => {
+      const fn = (_e: unknown, s: any) => cb(s)
+      ipcRenderer.on('chats:status', fn)
+      return () => ipcRenderer.removeListener('chats:status', fn)
+    },
   },
 }
 

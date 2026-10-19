@@ -3,7 +3,8 @@ import CellView from './CellView'
 import { Menu, type MenuItem } from './Menu'
 import { markTouched, useStore } from '../store'
 import type { Cell, Stroke } from '../types'
-import { Copy, Layers, Trash, SpaceI, Plus, ArtifactI } from './Icons'
+import { Copy, Layers, Trash, SpaceI, Plus, ArtifactI, AssistantMark } from './Icons'
+import { askAboutSelection } from '../agent/selection'
 import { columnLineMenu } from '../editor/columns'
 import { flashSearchMatches } from '../editor/searchHighlight'
 import { storage } from '../lib/storage'
@@ -388,6 +389,8 @@ export default function Canvas() {
     const ids = selection.includes(cell.id) ? selection : [cell.id]
     const st = store.getState()
     return [
+      { label: 'Ask the assistant about this', hint: 'Ctrl+L', icon: <AssistantMark />, onClick: () => askAboutSelection(ids) },
+      { separator: true },
       { label: 'Duplicate', hint: 'Ctrl+D', icon: <Copy />, onClick: () => st.duplicateCells(ids) },
       { label: cell.collapsed ? 'Expand' : 'Collapse', onClick: () => st.updateCell(cell.id, { collapsed: !cell.collapsed }, true) },
       { label: cell.showTitle ? 'Hide title' : 'Show title', onClick: () => st.updateCell(cell.id, { showTitle: !cell.showTitle }, true) },

@@ -9,13 +9,17 @@ import SettingsModal from './components/SettingsModal'
 import LinkModal from './components/LinkModal'
 import ArtifactModal from './components/ArtifactModal'
 import SyncPanel from './components/SyncPanel'
+import AgentPanel from './components/agent/AgentPanel'
+import { useAgent } from './agent/store'
+import { trackPointer } from './agent/context'
+import { askAboutSelection, trackSelection } from './agent/selection'
 import { findNode, pathTo, useStore, walk } from './store'
 import { setPasteMode } from './editor/extensions'
 import { isDesktop, storage } from './lib/storage'
 import type { TreeNode } from './types'
 import {
   Book, File as FileIcon, Folder, Gear, Max, Min, PanelLeft, PanelMid, Plus, Search as SearchIcon,
-  Star, X, ZoomIn, ZoomOut, Archive, Chevron, SidebarPeek, ArrowLeft, ArrowRight, SyncI
+  Star, X, ZoomIn, ZoomOut, Archive, Chevron, SidebarPeek, ArrowLeft, ArrowRight, SyncI, AssistantMark
 } from './components/Icons'
 
 export default function App() {
@@ -34,6 +38,7 @@ export default function App() {
   const syncError = useStore((s) => s.syncError)
   const showSyncPanel = useStore((s) => s.showSyncPanel)
   const fatal = useStore((s) => s.fatal)
+  const agentOpen = useAgent((s) => s.prefs.open)
 
   const [showSearch, setShowSearch] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
@@ -142,6 +147,9 @@ export default function App() {
     init()
   }, [init])
 
+  useEffect(() => trackPointer(), [])
+  useEffect(() => trackSelection(), [])
+
   /* ---------- mouse back / forward side buttons (buttons 3 and 4) ---------- */
   useEffect(() => {
     // Block the default browser history action and the canvas handlers.
@@ -218,6 +226,13 @@ export default function App() {
       if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); useActiveEditor.getState().setLinkModalOpen(true); return }
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); useActiveEditor.getState().setArtifactModalOpen(true); return }
       if (e.ctrlKey && e.key === ',') { e.preventDefault(); setShowSettings(true); return }
+      if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'j') {
+        e.preventDefault()
+        if (e.shiftKey) { useAgent.getState().toggle(true); useAgent.getState().newChat() }
+        else useAgent.getState().toggle()
+        return
+      }
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') { e.preventDefault(); askAboutSelection(); return }
       if (e.key === 'F1') { e.preventDefault(); setShowKeys(true); return }
       if (e.ctrlKey && e.key === '1') { e.preventDefault(); setSettings({ sidebarVisible: !st.settings.sidebarVisible }); return }
       if (e.ctrlKey && e.key === '2') { e.preventDefault(); setSettings({ pagelistVisible: !st.settings.pagelistVisible }); return }
@@ -492,6 +507,13 @@ export default function App() {
             {syncCount > 0 && <span className="sync-count">{syncCount}</span>}
           </button>
         )}
+        <button
+          className={`tb-btn agent-toggle ${agentOpen ? 'on' : ''}`}
+          title="Assistant (Ctrl+J). Ctrl+L asks about the selection."
+          onClick={() => useAgent.getState().toggle()}
+        >
+          <AssistantMark size={17} /> Assistant
+        </button>
         <button className="tb-btn" title="Settings (Ctrl+,)" onClick={() => setShowSettings(true)}><Gear /></button>
         {isDesktop && (
           <>
@@ -553,6 +575,7 @@ export default function App() {
             </div>
           )}
         </div>
+        {agentOpen && <ErrorBoundary label="the assistant"><AgentPanel /></ErrorBoundary>}
       </div>
 
       {showSearch && <SearchModal onClose={() => setShowSearch(false)} />}
@@ -625,6 +648,9 @@ function ShortcutSheet({ onClose }: { onClose(): void }) {
     ['Ctrl K', 'Insert or edit link'],
     ['Ctrl Shift A', 'Insert or edit artifact (folder or file link)'],
     ['Ctrl ,', 'Settings'],
+    ['Ctrl J', 'Show or hide the assistant'],
+    ['Ctrl Shift J', 'New assistant chat'],
+    ['Ctrl L', 'Ask the assistant about the selection'],
     ['Ctrl Enter', 'New cell'],
     ['Ctrl Shift N', 'New page'],
     ['Ctrl D', 'Duplicate selected cells'],

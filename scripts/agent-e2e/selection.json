@@ -1,0 +1,22 @@
+{
+  "fresh": true,
+  "setup": "setup-page.js",
+  "before": [
+    "(() => { document.activeElement && document.activeElement.blur(); const S = __notesDebug.useStore.getState(); const c = S.page.cells.find(x => x.title === 'Variants'); S.setSelection([c.id]); return new Promise(r => setTimeout(() => r(__notesDebug.useAgent.getState().selection && __notesDebug.useAgent.getState().selection.label), 400)) })()",
+    "(() => { __notesDebug.useAgent.getState().dismissSelection(); return __notesDebug.useAgent.getState().selectionDismissed })()",
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gpt-oss:120b' }); return __notesDebug.useAgent.getState().prefs.model })()"
+  ],
+  "shots": ["p1"],
+  "prompts": [
+    "Make this bold",
+    "Which cell do I have selected right now? Answer in a few words.",
+    "Add a short cell titled Note saying: tested with gpt-oss"
+  ],
+  "eval": [
+    "(() => { const c = __notesDebug.useAgent.getState().chat; return c.messages.filter(m => m.role === 'user').map(m => m.meta.selection ? m.meta.selection.label : 'no selection sent') })()",
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b' }); return 'reset' })()"
+  ],
+  "finalShots": [
+    { "name": "picker", "eval": "(document.querySelector('.mp-btn').click(), true)" }
+  ]
+}

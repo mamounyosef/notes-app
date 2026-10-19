@@ -84,3 +84,32 @@ export const ArtifactI = (p: P) => (
   </svg>
 )
 
+/** The assistant's mark: a glowing orb in the accent color. */
+export const AssistantMark = (p: P) => {
+  const id = React.useId().replace(/:/g, '')
+  const size = p.size ?? 16
+  return (
+    <svg width={size} height={size} viewBox="0 0 26 26" className={p.className} aria-hidden="true">
+      <defs>
+        <radialGradient id={`am${id}`} cx="50%" cy="50%" r="50%">
+          <stop offset="0" stopColor="#fff" />
+          <stop offset=".25" style={{ stopColor: 'color-mix(in srgb, var(--accent) 45%, #fff)' }} />
+          <stop offset=".7" style={{ stopColor: 'var(--accent)', stopOpacity: 0.9 }} />
+          <stop offset="1" style={{ stopColor: 'var(--accent)', stopOpacity: 0 }} />
+        </radialGradient>
+      </defs>
+      <circle cx="13" cy="13" r="12.5" fill={`url(#am${id})`} />
+    </svg>
+  )
+}
+export const Send = (p: P) => (<svg {...s(p)}><path d="M12 19V5M5 12l7-7 7 7" /></svg>)
+export const StopI = (p: P) => (<svg {...s(p)}><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" /></svg>)
+export const Mic = (p: P) => (<svg {...s(p)}><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>)
+export const Clip = (p: P) => (<svg {...s(p)}><path d="M21 11.5l-8.5 8.5a5 5 0 01-7-7L14 4.5a3.4 3.4 0 014.8 4.8L10.3 17.8a1.7 1.7 0 01-2.4-2.4L15.5 8" /></svg>)
+export const History = (p: P) => (<svg {...s(p)}><path d="M3 12a9 9 0 103-6.7L3 8" /><path d="M3 3v5h5M12 7v5l3 3" /></svg>)
+export const Dock = (p: P) => (<svg {...s(p)}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M15 4v16" /></svg>)
+export const Float = (p: P) => (<svg {...s(p)}><rect x="3" y="4" width="18" height="16" rx="2" /><rect x="12" y="8" width="6" height="8" rx="1" /></svg>)
+export const Brain = (p: P) => (<svg {...s(p)}><path d="M9 18h6M10 21h4" /><path d="M12 3a6 6 0 00-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0012 3z" /></svg>)
+export const AtI = (p: P) => (<svg {...s(p)}><circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-4 8" /></svg>)
+export const Retry = (p: P) => (<svg {...s(p)}><path d="M21 12a9 9 0 11-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>)
+export const Pencil = (p: P) => (<svg {...s(p)}><path d="M4 20h4L19 9l-4-4L4 16z" /></svg>)

@@ -1,10 +1,21 @@
-import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Menu } from 'electron'
+import './ws-env'
+import { app, BrowserWindow, ipcMain, dialog, shell, protocol, net, Menu, safeStorage, powerMonitor } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import crypto from 'node:crypto'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { VaultSync } from '../shared/vault-sync.mjs'
+import { CloudSync } from '../shared/cloud-sync.mjs'
+import { createSupabaseRemote } from '../shared/cloud-remote-supabase.mjs'
+import { setupAgent } from './agent'
+
+// Disable hardware acceleration and sandbox to prevent Chromium GPU/D3D11 crash (0xC0000005) on Windows 11
+app.disableHardwareAcceleration()
+app.commandLine.appendSwitch('no-sandbox')
+app.commandLine.appendSwitch('disable-gpu')
+app.commandLine.appendSwitch('disable-gpu-sandbox')
+app.commandLine.appendSwitch('disable-software-rasterizer')
 
 const DIST_ELECTRON = __dirname
 const ROOT = path.join(DIST_ELECTRON, '..')
@@ -12,6 +23,24 @@ const DIST = path.join(ROOT, 'dist')
 const DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL
 
 let win: BrowserWindow | null = null
+/** Automated tests run the app off screen so it never covers the person's work. */
+const TEST_OFFSCREEN = process.env.NOTES_TEST_OFFSCREEN === '1'
+
+const LOG_FILE = 'C:\\Users\\mamou\\AppData\\Local\\Temp\\notes-debug.log'
+try { fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] MAIN PROCESS EVALUATED\n`, 'utf8') } catch {}
+
+function debugLog(...args: unknown[]) {
+  try {
+    fs.appendFileSync(LOG_FILE, `[${new Date().toISOString()}] ${args.map(a => typeof a === 'object' ? JSON.stringify(a) : String(a)).join(' ')}\n`)
+  } catch {}
+}
+
+process.on('uncaughtException', (err: any) => {
+  debugLog('uncaughtException', err?.stack || err)
+})
+process.on('unhandledRejection', (reason: any) => {
+  debugLog('unhandledRejection', reason?.stack || reason)
+})
 
 /* ------------------------------------------------------------------ *
  * Vault (the folder that holds all notes). Its location is remembered
@@ -46,7 +75,81 @@ const sync = new VaultSync({
     if (win && !win.isDestroyed()) win.webContents.send('vault:event', ev)
   },
   log: (...a) => console.log(...a),
+  onLocalChange: (kind, id, info) => cloud.markDirty(kind, id, info),
 })
+
+/* ------------------------------------------------------------------ *
+ * Cloud sync (Supabase). The notes folder stays the working copy; the
+ * cloud is where the computers meet. See shared/cloud-sync.mjs.
+ * ------------------------------------------------------------------ */
+
+const cloud = new CloudSync({
+  vault: sync,
+  stateDir: path.join(app.getPath('userData'), 'sync'),
+  onStatus: (s) => {
+    if (win && !win.isDestroyed()) win.webContents.send('cloud:status', s)
+  },
+  log: (...a) => {
+    console.log(...a)
+    debugLog(...a.map((x) => (x instanceof Error ? x.message : x)))
+  },
+})
+
+interface CloudConfig {
+  url?: string
+  key?: string
+}
+
+const cloudConfig = (): CloudConfig => (readConfig() as { cloud?: CloudConfig }).cloud || {}
+
+/** Where supabase-js keeps the sign-in session: a file in userData, encrypted by Windows. */
+function sessionStorage() {
+  const file = path.join(app.getPath('userData'), 'cloud-session.bin')
+  const load = (): Record<string, string> => {
+    try {
+      const raw = fs.readFileSync(file)
+      const text = safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8')
+      return JSON.parse(text)
+    } catch {
+      return {}
+    }
+  }
+  const save = (all: Record<string, string>) => {
+    const text = JSON.stringify(all)
+    const data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(text) : Buffer.from(text, 'utf8')
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.writeFileSync(file, data)
+  }
+  return {
+    getItem: (k: string) => load()[k] ?? null,
+    setItem: (k: string, v: string) => save({ ...load(), [k]: v }),
+    removeItem: (k: string) => {
+      const all = load()
+      delete all[k]
+      save(all)
+    },
+  }
+}
+
+let remote: ReturnType<typeof createSupabaseRemote> | null = null
+
+function makeRemote() {
+  const { url, key } = cloudConfig()
+  remote = url && key ? createSupabaseRemote({ url, key, storage: sessionStorage() }) : null
+  return remote
+}
+
+/** Starts syncing if this computer is set up and signed in. */
+async function startCloud() {
+  const r = makeRemote()
+  if (r && (await r.session().catch(() => null))) {
+    cloud.setRemote(r)
+    agent.chats.setRemote(r)
+  } else {
+    cloud.setRemote(null)
+    agent.chats.setRemote(null)
+  }
+}
 
 function ensureVault(p = vaultPath) {
   fs.mkdirSync(path.join(p, 'pages'), { recursive: true })
@@ -84,12 +187,13 @@ function sanitizeId(id: string) {
 
 function createWindow() {
   win = new BrowserWindow({
+    ...(TEST_OFFSCREEN ? { skipTaskbar: true } : {}),
     title: 'Notes',
     width: 1500,
     height: 950,
     minWidth: 860,
     minHeight: 560,
-    show: false,
+    show: !TEST_OFFSCREEN,
     frame: false,
     backgroundColor: '#1f1f1f',
     autoHideMenuBar: true,
@@ -99,6 +203,9 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       spellcheck: true,
+      sandbox: false,
+      // Tests render without any window on screen.
+      ...(TEST_OFFSCREEN ? { offscreen: true } : {}),
     },
   })
 
@@ -115,12 +222,58 @@ function createWindow() {
     })
   }
 
-  win.once('ready-to-show', () => win?.show())
+  if (!TEST_OFFSCREEN) {
+    win.show()
+    win.focus()
+  }
+
+  win.once('ready-to-show', () => {
+    debugLog('ready-to-show fired')
+    if (TEST_OFFSCREEN) return
+    win?.show()
+    win?.focus()
+  })
+
+  // Ensure window is always shown even if ready-to-show is missed or delayed
+  setTimeout(() => {
+    if (win && !win.isDestroyed() && !win.isVisible()) {
+      if (TEST_OFFSCREEN) return
+      debugLog('Fallback: forcing win.show() after timeout')
+      win.show()
+    }
+  }, 1000)
+
+  win.webContents.on('did-fail-load', (_e, code, desc, url) => {
+    debugLog('did-fail-load', code, desc, url)
+  })
+
+  win.webContents.on('did-finish-load', () => {
+    debugLog('webContents did-finish-load successfully')
+  })
+
+  win.webContents.on('console-message', (_e, level, message, line, sourceId) => {
+    debugLog('console-message', `[lvl:${level}]`, message, `(${sourceId}:${line})`)
+  })
+
+  let renderCrashCount = 0
+  win.webContents.on('render-process-gone', (_e, details) => {
+    debugLog('render-process-gone', details)
+    if (details.reason === 'crashed' && renderCrashCount < 2) {
+      renderCrashCount++
+      debugLog('reloading renderer after crash (attempt ' + renderCrashCount + ')')
+      setTimeout(() => {
+        if (win && !win.isDestroyed()) win.webContents.reload()
+      }, 500)
+    }
+  })
 
   if (DEV_SERVER_URL) {
+    debugLog('Loading DEV_SERVER_URL', DEV_SERVER_URL)
     win.loadURL(DEV_SERVER_URL)
   } else {
-    win.loadFile(path.join(DIST, 'index.html'))
+    const htmlPath = path.join(DIST, 'index.html')
+    debugLog('Loading local HTML', htmlPath, 'exists:', fs.existsSync(htmlPath))
+    win.loadFile(htmlPath)
   }
 
   // External links open in the real browser or associated app, never inside the app.
@@ -140,6 +293,7 @@ function createWindow() {
   // Let the page write its last edits before the window goes away.
   let flushed = false
   win.on('close', (e) => {
+    debugLog('win on close event received, flushed:', flushed)
     if (flushed || !win || win.webContents.isDestroyed()) return
     e.preventDefault()
     const w = win
@@ -147,6 +301,7 @@ function createWindow() {
       clearTimeout(timer)
       ipcMain.removeListener('app:flushed', done)
       flushed = true
+      debugLog('flush done, destroying or closing window')
       if (!w.isDestroyed()) w.close()
     }
     const timer = setTimeout(done, 5000)
@@ -155,6 +310,7 @@ function createWindow() {
   })
 
   win.on('closed', () => {
+    debugLog('win on closed event')
     win = null
   })
 }
@@ -251,8 +407,7 @@ async function openExternalUrl(rawUrl: string) {
 Menu.setApplicationMenu(null)
 
 // Makes Windows group the window under the pinned shortcut correctly.
-// From source, a fixed id keeps Notes apart from any other Electron app.
-const APP_ID = app.isPackaged ? process.execPath : 'com.mamoun.notesapp.source'
+const APP_ID = 'com.mamoun.notesapp'
 app.setAppUserModelId(APP_ID)
 
 // Serve pasted images from the vault without disabling web security.
@@ -260,22 +415,38 @@ protocol.registerSchemesAsPrivileged([
   { scheme: 'asset', privileges: { standard: true, secure: true, supportFetchAPI: true, bypassCSP: true } },
 ])
 
+debugLog('app starting, requesting single instance lock')
 const gotLock = app.requestSingleInstanceLock()
 if (!gotLock) {
+  debugLog('Single instance lock NOT acquired. Quitting.')
   app.quit()
 } else {
+  debugLog('Single instance lock acquired.')
   app.on('second-instance', () => {
+    debugLog('second-instance event received')
     if (win) {
       if (win.isMinimized()) win.restore()
+      win.show()
       win.focus()
     }
   })
 
   app.whenReady().then(() => {
+    debugLog('app.whenReady fired')
     ensureVault()
+    debugLog('ensureVault completed')
     sync.setVault(vaultPath)
+    debugLog('sync.setVault completed')
+    cloud.setVaultDir(vaultPath)
+    startCloud().catch((e) => debugLog('cloud start failed', e?.message || e))
     // Coming back to the window is a good moment to look for new files.
-    app.on('browser-window-focus', () => sync.scan())
+    app.on('browser-window-focus', () => {
+      sync.scan()
+      cloud.schedule(0)
+      agent.chats.schedule(0)
+    })
+    // Waking from sleep usually means the network just came back.
+    powerMonitor.on('resume', () => cloud.schedule(3000))
 
     protocol.handle('asset', (request) => {
       const name = decodeURIComponent(new URL(request.url).pathname.replace(/^\/+/, ''))
@@ -284,14 +455,31 @@ if (!gotLock) {
     })
 
     createWindow()
+    debugLog('createWindow returned')
 
     app.on('activate', () => {
+      debugLog('app.activate')
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
     })
+  }).catch((err) => {
+    debugLog('app.whenReady error:', err?.stack || err)
   })
 }
 
+app.on('before-quit', (e) => {
+  debugLog('app before-quit event, defaultPrevented:', e.defaultPrevented)
+})
+
+app.on('will-quit', () => {
+  debugLog('app will-quit event')
+})
+
+app.on('quit', (_e, code) => {
+  debugLog('app quit event with code:', code)
+})
+
 app.on('window-all-closed', () => {
+  debugLog('app window-all-closed event, platform:', process.platform)
   if (process.platform !== 'darwin') app.quit()
 })
 
@@ -312,6 +500,7 @@ ipcMain.handle('vault:choose', async () => {
   ensureVault()
   writeConfig({ ...readConfig(), vault: vaultPath })
   sync.setVault(vaultPath)
+  cloud.setVaultDir(vaultPath)
   return vaultPath
 })
 
@@ -334,6 +523,28 @@ ipcMain.handle('page:delete', (_e, id: string) => sync.deletePage(id))
 ipcMain.handle('sync:conflicts', () => sync.listConflicts())
 ipcMain.handle('sync:scan', () => sync.scan())
 ipcMain.handle('sync:status', () => sync.status())
+
+ipcMain.handle('cloud:status', () => ({ ...cloud.status(), url: cloudConfig().url || '', key: cloudConfig().key || '' }))
+ipcMain.handle('cloud:signIn', async (_e, url: string, key: string, email: string, password: string) => {
+  try {
+    writeConfig({ ...readConfig(), cloud: { url: String(url).trim(), key: String(key).trim() } })
+    const r = makeRemote()
+    if (!r) return { ok: false, error: 'Enter the project URL and key.' }
+    await r.signIn(String(email).trim(), String(password))
+    cloud.setRemote(r)
+    agent.chats.setRemote(r)
+    return { ok: true }
+  } catch (e: any) {
+    return { ok: false, error: e?.message || String(e) }
+  }
+})
+ipcMain.handle('cloud:signOut', async () => {
+  cloud.setRemote(null)
+  agent.chats.setRemote(null)
+  await remote?.signOut()
+  return true
+})
+ipcMain.handle('cloud:syncNow', () => cloud.syncNow())
 
 /* Per computer state (last open page, recent pages, folded folders). Kept out
  * of the synced folder so two laptops never overwrite each other's. */
@@ -360,6 +571,25 @@ ipcMain.handle('local:write', async (_e, data: unknown) => {
   return true
 })
 
+/** Saves image bytes into the notes folder's assets, named by content. */
+async function saveAssetBytes(buf: Buffer, ext: string) {
+  const name = `${crypto.createHash('sha1').update(buf).digest('hex').slice(0, 20)}.${ext}`
+  const file = path.join(vaultPath, 'assets', name)
+  if (!fs.existsSync(file)) {
+    await fsp.mkdir(path.dirname(file), { recursive: true })
+    await fsp.writeFile(file, buf)
+  }
+  cloud.schedule(1000)
+  return `asset://local/${name}`
+}
+
+const agent = setupAgent({
+  getWin: () => win,
+  device: sync.device,
+  log: (...a) => debugLog(...a),
+  saveAsset: saveAssetBytes,
+})
+
 ipcMain.handle('asset:save', async (_e, dataUrl: string) => {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl)
   if (!m) return null
@@ -372,6 +602,7 @@ ipcMain.handle('asset:save', async (_e, dataUrl: string) => {
     await fsp.mkdir(path.dirname(file), { recursive: true })
     await fsp.writeFile(file, buf)
   }
+  cloud.schedule(1000)
   return `asset://local/${name}`
 })
 
@@ -381,6 +612,7 @@ ipcMain.handle('asset:import', async (_e, filePath: string) => {
   const name = `${crypto.createHash('sha1').update(buf).digest('hex').slice(0, 20)}.${ext}`
   const dest = path.join(vaultPath, 'assets', name)
   if (!fs.existsSync(dest)) await fsp.writeFile(dest, buf)
+  cloud.schedule(1000)
   return `asset://local/${name}`
 })
 
@@ -562,6 +794,7 @@ ipcMain.handle('artifacts:pickFile', async (_e, subDir = '') => {
     }
     if (dest.toLowerCase() !== filePath.toLowerCase()) {
       await fsp.copyFile(filePath, dest)
+      cloud.schedule(1000)
     }
     const rel = path.relative(artifactsDir, dest).replace(/\\/g, '/')
     return {
@@ -603,6 +836,7 @@ ipcMain.handle('artifacts:pickDirectory', async (_e, subDir = '') => {
     const dest = path.join(artifactsDir, folderName)
     if (!fs.existsSync(dest)) {
       await fsp.cp(dirPath, dest, { recursive: true })
+      cloud.schedule(1000)
     }
     const rel = path.relative(artifactsDir, dest).replace(/\\/g, '/')
     return {

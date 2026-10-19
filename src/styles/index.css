@@ -857,6 +857,50 @@ select:focus {
   border-bottom: 2px solid var(--accent);
 }
 
+.cell-copy-btn {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 10;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  color: var(--text-dim);
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .15s ease, background .12s ease, color .12s ease, transform .1s ease, border-color .12s ease;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+}
+
+.cell:hover .cell-copy-btn,
+.cell.selected .cell-copy-btn {
+  opacity: 0.75;
+  pointer-events: auto;
+}
+
+.cell-copy-btn:hover {
+  opacity: 1 !important;
+  background: var(--bg-3);
+  color: var(--text);
+  border-color: var(--line-soft);
+  transform: scale(1.08);
+}
+
+.cell-copy-btn.copied {
+  opacity: 1 !important;
+  pointer-events: auto;
+  color: #98c379;
+  border-color: #98c379;
+  background: var(--bg-2);
+}
+
 .marquee {
   position: absolute;
   border: 1px solid var(--accent);
@@ -976,19 +1020,297 @@ select:focus {
   font-size: .92em;
 }
 
-.ProseMirror pre {
-  background: color-mix(in srgb, var(--text) 8%, transparent);
-  border: 1px solid var(--line-soft);
-  border-radius: 6px;
-  padding: .6em .8em;
-  overflow-x: auto;
-  font-family: var(--font-mono);
-  font-size: .92em;
+/* ------------------------------------------------------------------ *
+ * Code Block & VS Code Syntax Theme
+ * ------------------------------------------------------------------ */
+
+.code-block-wrapper {
+  position: relative;
+  margin: .6em 0;
 }
 
-.ProseMirror pre code {
+.ProseMirror pre.code-block {
+  background: #1e1e1e;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  padding: .85em 1.1em 2.5em 1.1em;
+  overflow-x: auto;
+  font-family: var(--font-mono, Consolas, 'Courier New', monospace);
+  font-size: .92em;
+  line-height: 1.55;
+  tab-size: 4;
+  position: relative;
+}
+
+/* Language Badge (Top-Right) */
+.ProseMirror pre.code-block[data-language]:not([data-language=""])::after {
+  content: attr(data-language);
+  position: absolute;
+  top: 7px;
+  right: 11px;
+  font-size: .68em;
+  font-weight: 600;
+  color: #6e7681;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  pointer-events: none;
+  user-select: none;
+  opacity: .8;
+}
+
+/* Copy Button (Bottom-Right) */
+.code-block-wrapper .code-block-copy-btn {
+  position: absolute;
+  bottom: 8px;
+  right: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 500;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  background: rgba(255, 255, 255, 0.08);
+  color: #a5a5a5;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  cursor: pointer;
+  user-select: none;
+  opacity: 0.7;
+  transition: all .15s ease;
+  z-index: 5;
+}
+
+.code-block-wrapper:hover .code-block-copy-btn {
+  opacity: 1;
+}
+
+.code-block-wrapper .code-block-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.25);
+}
+
+.code-block-wrapper .code-block-copy-btn:active {
+  transform: scale(0.96);
+}
+
+.code-block-wrapper .code-block-copy-btn.copied {
+  background: #10b981;
+  color: #ffffff;
+  border-color: #10b981;
+  opacity: 1;
+}
+
+.ProseMirror pre.code-block code {
   background: none;
   padding: 0;
+  color: #9cdcfe; /* VS Code default variable/identifier light blue! */
+  font-family: inherit;
+  font-size: inherit;
+  white-space: pre;
+}
+
+/* VS Code Dark+ Syntax Highlighting Tokens */
+.ProseMirror pre.code-block code .hljs-comment,
+.ProseMirror pre.code-block code .hljs-quote {
+  color: #6a9955;
+  font-style: italic;
+}
+
+.ProseMirror pre.code-block code .hljs-keyword,
+.ProseMirror pre.code-block code .hljs-selector-tag {
+  color: #c586c0;
+  font-weight: normal;
+}
+
+.ProseMirror pre.code-block code .hljs-string,
+.ProseMirror pre.code-block code .hljs-symbol,
+.ProseMirror pre.code-block code .hljs-bullet,
+.ProseMirror pre.code-block code .hljs-addition {
+  color: #ce9178;
+}
+
+.ProseMirror pre.code-block code .hljs-number,
+.ProseMirror pre.code-block code .hljs-literal {
+  color: #b5cea8;
+}
+
+.ProseMirror pre.code-block code .hljs-built_in {
+  color: #4ec9b0;
+}
+
+.ProseMirror pre.code-block code .hljs-type,
+.ProseMirror pre.code-block code .hljs-title.class_,
+.ProseMirror pre.code-block code .hljs-class,
+.ProseMirror pre.code-block code .class_ {
+  color: #4ec9b0;
+  font-weight: normal;
+}
+
+.ProseMirror pre.code-block code .hljs-title,
+.ProseMirror pre.code-block code .hljs-title.function_,
+.ProseMirror pre.code-block code .hljs-function,
+.ProseMirror pre.code-block code .function_ {
+  color: #dcdcaa;
+}
+
+.ProseMirror pre.code-block code .hljs-params,
+.ProseMirror pre.code-block code .hljs-variable {
+  color: #9cdcfe;
+}
+
+.ProseMirror pre.code-block code .hljs-attr,
+.ProseMirror pre.code-block code .hljs-attribute {
+  color: #9cdcfe;
+}
+
+.ProseMirror pre.code-block code .hljs-meta,
+.ProseMirror pre.code-block code .hljs-meta .hljs-keyword {
+  color: #c586c0;
+}
+
+.ProseMirror pre.code-block code .hljs-operator {
+  color: #d4d4d4;
+}
+
+.ProseMirror pre.code-block code .hljs-punctuation {
+  color: #d4d4d4;
+}
+
+/* Light Theme (VS Code Light+) */
+[data-theme='light'] .ProseMirror pre.code-block {
+  background: #f8f9fa;
+  border-color: #e1e4e8;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block[data-language]:not([data-language=""])::after {
+  color: #8c959f;
+}
+
+[data-theme='light'] .code-block-wrapper .code-block-copy-btn {
+  background: #ffffff;
+  color: #57606a;
+  border-color: #d0d7de;
+}
+
+[data-theme='light'] .code-block-wrapper .code-block-copy-btn:hover {
+  background: #f3f4f6;
+  color: #24292f;
+  border-color: #8c959f;
+}
+
+[data-theme='light'] .code-block-wrapper .code-block-copy-btn.copied {
+  background: #059669;
+  color: #ffffff;
+  border-color: #059669;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block code {
+  color: #001080;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-comment,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-quote {
+  color: #008000;
+  font-style: italic;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-keyword,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-selector-tag {
+  color: #af00db;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-string,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-symbol {
+  color: #a31515;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-number,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-literal {
+  color: #098658;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-type,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-title.class_,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-class,
+[data-theme='light'] .ProseMirror pre.code-block code .class_ {
+  color: #267f99;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-title,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-title.function_,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-function,
+[data-theme='light'] .ProseMirror pre.code-block code .function_ {
+  color: #795e26;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-params,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-variable,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-attr {
+  color: #001080;
+}
+
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-operator,
+[data-theme='light'] .ProseMirror pre.code-block code .hljs-punctuation {
+  color: #383838;
+}
+
+/* Sepia Theme */
+[data-theme='sepia'] .ProseMirror pre.code-block {
+  background: #f4ecdf;
+  border-color: #d8cbb5;
+}
+
+[data-theme='sepia'] .code-block-wrapper .code-block-copy-btn {
+  background: #e8ded0;
+  color: #6a5a44;
+  border-color: #d1c3ad;
+}
+
+[data-theme='sepia'] .code-block-wrapper .code-block-copy-btn:hover {
+  background: #dfd4c4;
+  color: #33291c;
+}
+
+[data-theme='sepia'] .ProseMirror pre.code-block code {
+  color: #3f6888;
+}
+
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-comment,
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-quote {
+  color: #5d7c50;
+  font-style: italic;
+}
+
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-keyword {
+  color: #8c428a;
+}
+
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-string {
+  color: #aa5035;
+}
+
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-number {
+  color: #557945;
+}
+
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-type,
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-title.class_,
+[data-theme='sepia'] .ProseMirror pre.code-block code .class_ {
+  color: #2b7d77;
+}
+
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-title,
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-title.function_,
+[data-theme='sepia'] .ProseMirror pre.code-block code .function_ {
+  color: #8a7029;
+}
+
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-operator,
+[data-theme='sepia'] .ProseMirror pre.code-block code .hljs-punctuation {
+  color: #5c5243;
 }
 
 .ProseMirror hr {
@@ -1282,9 +1604,13 @@ select:focus {
 }
 
 .math-inline {
+  position: relative;
+  display: inline-block;
   cursor: pointer;
-  padding: 0 1px;
-  border-radius: 3px;
+  padding: 1px 4px;
+  border-radius: 4px;
+  transition: background .12s ease;
+  vertical-align: middle;
 }
 
 .math-inline:hover {
@@ -1294,32 +1620,401 @@ select:focus {
 .math-block {
   cursor: pointer;
   text-align: center;
-  margin: .5em 0;
-  border-radius: 4px;
+  margin: .6em 0;
+  border-radius: 6px;
+  padding: 6px 8px;
+  transition: background .12s ease;
 }
 
 .math-block:hover {
   background: var(--sel);
 }
 
-.math-input {
+.math-empty {
+  display: inline-block;
+  padding: 2px 8px;
+  font-size: .85em;
   font-family: var(--font-mono);
-  font-size: .95em;
+  color: var(--text-faint);
   background: var(--bg-3);
-  border: 1px solid var(--accent);
+  border: 1px dashed var(--line);
   border-radius: 4px;
-  padding: 2px 5px;
-  min-width: 140px;
+  user-select: none;
+}
+
+/* Block Math Editor */
+.math-block-editor {
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin: .6em 0;
+  box-shadow: var(--shadow);
+  text-align: left;
+  cursor: default;
+}
+
+.math-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.math-editor-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-dim);
+}
+
+.math-editor-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.math-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  font-size: 12px;
+  font-family: var(--font-sans);
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: var(--bg-1);
+  color: var(--text);
+  cursor: pointer;
+  transition: all .12s ease;
+  line-height: 1.2;
+}
+
+.math-btn:hover {
+  background: var(--bg-3);
+}
+
+.math-btn-primary {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.math-btn-primary:hover {
+  filter: brightness(1.1);
+}
+
+.math-btn-danger {
+  color: #e06c75;
+}
+
+.math-btn-danger:hover {
+  background: rgba(224, 108, 117, 0.12);
+  border-color: #e06c75;
+}
+
+.math-editor-textarea {
   width: 100%;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  overflow: hidden;
-  resize: none;
+  min-height: 54px;
+  max-height: 240px;
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 8px 10px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--text);
+  resize: vertical;
   box-sizing: border-box;
+}
+
+.math-editor-textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.math-editor-preview-wrap {
+  margin-top: 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: 6px;
+  padding: 10px 14px;
+  text-align: center;
+  min-height: 36px;
+  overflow-x: auto;
+}
+
+.math-editor-preview-label {
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--text-faint);
+  text-align: left;
+  margin-bottom: 4px;
+}
+
+.math-editor-preview {
+  display: block;
+  width: 100%;
+}
+
+.math-editor-footer {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+  display: flex;
+  justify-content: space-between;
+}
+
+/* Inline Math Popover */
+.math-inline-popover {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 1000;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  padding: 8px;
+  min-width: 280px;
+  max-width: 440px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text);
+  cursor: default;
+}
+
+.math-popover-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.math-popover-input {
+  flex: 1;
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  padding: 4px 8px;
+  background: var(--bg-1);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--text);
+  box-sizing: border-box;
+}
+
+.math-popover-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.math-popover-preview-wrap {
+  background: var(--bg-1);
+  border: 1px solid var(--line-soft);
+  border-radius: 4px;
+  padding: 6px 10px;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow-x: auto;
+}
+
+.math-popover-preview {
+  display: inline-block;
+}
+
+.math-popover-footer {
+  font-size: 11px;
+  color: var(--text-faint);
+  text-align: left;
 }
 
 .katex {
   font-size: 1.05em;
+}
+
+/* ------------------------------------------------------------------ *
+ * HTML Embed
+ * ------------------------------------------------------------------ */
+.html-embed-wrapper {
+  margin: .5em 0;
+}
+
+.html-embed {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-2);
+  transition: border-color .12s ease, box-shadow .12s ease;
+}
+
+.html-embed-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.html-embed-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: color-mix(in srgb, var(--text) 6%, transparent);
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .03em;
+  user-select: none;
+  flex: none;
+  cursor: grab;
+}
+
+.html-embed-label {
+  flex: 1;
+}
+
+.html-embed-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.html-embed-divider {
+  width: 1px;
+  height: 14px;
+  background: var(--line);
+  margin: 0 3px;
+}
+
+.html-embed-btn {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.html-embed-btn:hover {
+  background: var(--bg-4);
+  color: var(--text);
+}
+
+.html-embed-btn.active {
+  background: var(--bg-4);
+  color: var(--accent);
+}
+
+.html-embed-frame {
+  flex: 1;
+  width: 100%;
+  border: none;
+  background: #fff;
+  min-height: 60px;
+}
+
+.html-embed-editor {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.html-embed-code {
+  flex: 1;
+  width: 100%;
+  min-height: 120px;
+  background: var(--bg-1);
+  color: var(--text);
+  border: none;
+  border-radius: 0;
+  padding: 8px 10px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+  resize: none;
+  outline: none;
+  white-space: pre;
+  overflow: auto;
+}
+
+.html-embed-editor-actions {
+  display: flex;
+  gap: 6px;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--text) 4%, transparent);
+  justify-content: flex-end;
+}
+
+.html-embed-save,
+.html-embed-cancel {
+  padding: 3px 14px;
+  border-radius: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.html-embed-save {
+  background: var(--accent);
+  color: #fff;
+}
+
+.html-embed-save:hover {
+  filter: brightness(1.12);
+}
+
+.html-embed-cancel {
+  background: var(--bg-4);
+  color: var(--text-dim);
+}
+
+.html-embed-cancel:hover {
+  background: var(--line);
+  color: var(--text);
+}
+
+.html-embed-corner {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--accent, #7c9cff);
+  border: 2px solid var(--bg-1, #202020);
+  border-radius: 50%;
+  z-index: 10;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
+.html-embed-edge-s {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: -4px;
+  height: 9px;
+  cursor: ns-resize;
+  z-index: 5;
+}
+
+.html-embed-edge-e {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  right: -4px;
+  width: 9px;
+  cursor: ew-resize;
+  z-index: 5;
 }
 
 /* ------------------------------------------------------------------ *
@@ -2190,4 +2885,16 @@ select:focus {
   border-top: 1px solid var(--line-soft);
   font-size: 12px;
   color: var(--text-faint);
+}
+
+.cloud-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 420px;
+  padding: 4px 0 10px;
+}
+
+.cloud-form .btn {
+  align-self: flex-start;
 }

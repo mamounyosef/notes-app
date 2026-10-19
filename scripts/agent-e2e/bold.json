@@ -1,0 +1,12 @@
+{
+  "fresh": true,
+  "setup": "setup-page.js",
+  "before": [
+    "(() => { document.activeElement && document.activeElement.blur(); const S = __notesDebug.useStore.getState(); const c = S.page.cells.find(x => x.title === 'Variants'); S.setSelection([c.id]); return new Promise(r => setTimeout(() => r(__notesDebug.useAgent.getState().selection && __notesDebug.useAgent.getState().selection.label), 400)) })()"
+  ],
+  "prompts": ["Make this bold"],
+  "finalShots": [
+    { "name": "orb", "eval": "(document.querySelector('.ag-head .ag-icon-btn[title=\"New chat (Ctrl+Shift+J)\"]').click(), true)" },
+    { "name": "picker", "eval": "(document.querySelector('.mp-btn').click(), true)" }
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "fresh": true,
+  "setup": "setup-page.js",
+  "prompts": [],
+  "finalShots": [
+    { "name": "ctxpop", "eval": "(__notesDebug.useAgent.setState({ hasKey: true }), new Promise(r => setTimeout(() => { document.querySelector('.ag-ring').click(); r(true) }, 300)))" },
+    { "name": "menu", "eval": "(document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })), document.querySelector('.mp-btn').click(), true)" }
+  ]
+}

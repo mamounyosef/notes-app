@@ -156,6 +156,10 @@ interface State {
   clearPageInk(): void
   setZoom(z: number): void
   setTool(t: State['tool']): void
+  /** Replaces the open page with an edited copy (agent edits and their undo). Undoable with Ctrl+Z. */
+  applyPageEdit(fn: (p: Page) => Page, cells?: string[]): boolean
+  /** Replaces the notebook tree and favorites (undo of agent changes). */
+  replaceTree(tree: TreeNode[], favorites: string[]): void
 }
 
 let saveTimer: any = null
@@ -1154,6 +1158,32 @@ export const useStore = create<State>((set, get) => ({
 
   setTool(t) {
     set({ tool: t, selection: t === 'select' ? get().selection : [] })
+  },
+
+  applyPageEdit(fn, cells) {
+    const { page } = get()
+    if (!page) return false
+    get().pushHistory()
+    const next = fn(clone(page))
+    const ids = new Set(next.cells.map((c) => c.id))
+    if (cells) markTouched({ cells, meta: true })
+    else markTouched({ all: true })
+    set({
+      page: { ...next, updatedAt: now() },
+      dirty: true,
+      selection: get().selection.filter((id) => ids.has(id)),
+      editingCellId: get().editingCellId && ids.has(get().editingCellId!) ? get().editingCellId : null,
+    })
+    scheduleSave(get)
+    return true
+  },
+
+  replaceTree(tree, favorites) {
+    const ws = clone(get().workspace)
+    ws.tree = tree
+    ws.favorites = favorites
+    set({ workspace: withLocal(ws) })
+    scheduleWorkspace(100)
   },
 }))
 

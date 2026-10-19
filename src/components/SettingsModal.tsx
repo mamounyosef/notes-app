@@ -4,6 +4,8 @@ import { DEFAULT_SETTINGS, type Settings } from '../types'
 import { storage, isDesktop } from '../lib/storage'
 import { askConfirm } from '../lib/confirm'
 import { X, Plus, Min, Undo } from './Icons'
+import { CloudSyncSection } from './CloudSync'
+import AiSettings from './agent/AiSettings'
 import { SHORTCUTS, prettyShortcut, shortcutFromEvent, type ShortcutKey } from '../editor/shortcuts'
 
 function getDecimals(step: number): number {
@@ -274,7 +276,7 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
   const set = useStore((s) => s.setSettings)
   const vaultPath = useStore((s) => s.vaultPath)
   const syncCount = useStore((s) => s.conflicts.cells.length + s.conflicts.orphans.length)
-  const [tab, setTab] = useState<'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'storage'>('look')
+  const [tab, setTab] = useState<'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'ai' | 'storage'>('look')
 
   const Num = ({
     k, label, sub, min, max, step = 1, unit = '',
@@ -353,9 +355,9 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
           <h2>Settings</h2>
           <div className="spacer" />
           <div className="theme-chips">
-            {(['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'storage'] as const).map((t) => (
+            {(['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'ai', 'storage'] as const).map((t) => (
               <button key={t} className={`theme-chip ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}>
-                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', shortcuts: 'Shortcuts', storage: 'Storage' }[t]}
+                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', shortcuts: 'Shortcuts', ai: 'AI', storage: 'Storage' }[t]}
               </button>
             ))}
           </div>
@@ -498,6 +500,8 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
             </div>
           )}
 
+          {tab === 'ai' && <AiSettings />}
+
           {tab === 'storage' && (
             <div className="set-group">
               <h3>Notes folder</h3>
@@ -524,11 +528,12 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
                 </div>
               </div>
               <div className="empty-hint" style={{ padding: '6px 0' }}>
-                Put this folder inside OneDrive, Google Drive or Dropbox and your laptops will
-                stay in sync. Each page is a plain JSON file, images live in the assets folder.
-                Changes from another computer appear here by themselves. If both computers changed
-                the same cell, both versions are kept and the sync button next to Settings lights up.
+                Each page is a plain JSON file, images live in the assets folder. Sign in to cloud
+                sync below on every computer and they stay in step, even after working offline.
+                If both computers changed the same cell, both versions are kept and the sync button
+                next to Settings lights up.
               </div>
+              <CloudSyncSection />
               <div className="set-row">
                 <label>
                   Sync

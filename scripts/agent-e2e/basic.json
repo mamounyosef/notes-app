@@ -1,0 +1,11 @@
+{
+  "fresh": true,
+  "setup": "setup-page.js",
+  "shots": ["start", "p1", "p3", "end"],
+  "prompts": [
+    "Fix the typo in the learning rate cell and make the word Too red in that cell",
+    "Add a cell to the right of the learning rate one with a small table comparing the three variants by speed and noise",
+    "What is on my screen right now? Answer in two sentences.",
+    "Undo is fine, but now rename this page to Gradient Descent Basics and color the Machine Learning section blue"
+  ]
+}

@@ -39,8 +39,50 @@ MyNotes/
 ```
 
 Default location is `Documents\MyNotes`. Change it in **Settings, Storage**.
-To keep a laptop and a desktop in step, point both at the same folder inside
-OneDrive, Google Drive or Dropbox.
+
+## Syncing computers (Supabase)
+
+Each computer keeps its own notes folder and syncs it through a free Supabase
+project. Offline edits wait and upload later. A copy that is out of date
+never replaces newer notes: the cloud is pulled and merged first, and a save
+only lands on top of the latest version.
+
+1. Create a project at supabase.com.
+2. SQL Editor: paste `supabase/schema.sql` and run it.
+3. Authentication, Users: add one user (email + password). Then turn off
+   new sign ups under Authentication, Sign In / Providers.
+4. In the app on every computer: **Settings, Storage, Cloud sync**. Enter the
+   project URL, the publishable (anon) key (Project Settings, API) and your
+   email and password.
+
+Do not also keep the folder in OneDrive or Google Drive: let only one thing sync it.
+Old versions of every note stay in the `doc_history` table for 30 days.
+
+## Assistant
+
+A chat panel on the right (**Ctrl+J**, or the Assistant button) that can do
+anything in the app: add, edit, style, move and delete cells, create and
+rename pages, sections and notebooks, change settings and colors. It runs on
+Gemma 4 31B through Ollama Cloud.
+
+- **Setup:** Settings, AI. Paste your Ollama API key (ollama.com, Settings,
+  Keys). It is stored encrypted on that computer only, so enter it on each one.
+- **It sees what you see:** every message carries the open page and its full
+  content, the cells and the exact lines on screen, your selection, the caret
+  and the mouse position, plus the whole notebook tree.
+- **Undo:** each reply that changed something has an **Undo changes** button
+  that puts back everything that reply did.
+- **Attach:** paste images with Ctrl+V, drop or pick images, PDFs, Word and
+  text files. Click an image to view and zoom it. Photos of handwritten notes
+  can be turned into a page.
+- **Point at things:** type @ to name a page, section or notebook. Select text
+  or cells and press **Ctrl+L** (or right click a cell) to ask about them.
+- **Voice:** the mic button starts Windows voice typing (Win+H).
+- **Context meter:** the ring in the header shows how full the 256K token
+  window is. Click it to see the breakdown, the system prompt, the tools and
+  exactly what the assistant sees right now.
+- **Chats sync** between computers through cloud sync (table `agent_chats`
+  in `supabase/schema.sql`).
 
 ## Bringing OneNote notes across
 

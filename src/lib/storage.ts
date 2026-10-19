@@ -365,3 +365,26 @@ export const storage: Backend = new Proxy({} as Backend, {
   get: (_t, key: string) => (active as any)[key],
 })
 export const isDesktop = Boolean(desktop?.isDesktop)
+
+/** Cloud sync (Supabase) state, see shared/cloud-sync.mjs. Desktop only. */
+export interface CloudStatus {
+  phase: 'off' | 'signed-out' | 'idle' | 'syncing' | 'offline' | 'error'
+  email: string
+  lastSyncAt: number
+  lastError: string
+  skipped: string[]
+  pending: number
+  signedIn: boolean
+  url?: string
+  key?: string
+}
+
+export const cloud = {
+  available: Boolean(desktop?.cloud),
+  status: (): Promise<CloudStatus | null> => (desktop?.cloud ? desktop.cloud.status() : Promise.resolve(null)),
+  signIn: (url: string, key: string, email: string, password: string): Promise<{ ok: boolean; error?: string }> =>
+    desktop?.cloud ? desktop.cloud.signIn(url, key, email, password) : Promise.resolve({ ok: false, error: 'Desktop app only' }),
+  signOut: (): Promise<void> => (desktop?.cloud ? desktop.cloud.signOut() : Promise.resolve()),
+  syncNow: (): Promise<void> => (desktop?.cloud ? desktop.cloud.syncNow() : Promise.resolve()),
+  onStatus: (cb: (s: CloudStatus) => void): (() => void) => (desktop?.cloud ? desktop.cloud.onStatus(cb) : () => {}),
+}
