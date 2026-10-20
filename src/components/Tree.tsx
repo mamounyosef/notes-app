@@ -185,6 +185,9 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
 
           {fav && <Star size={12} />}
 
+          {n.kind === 'page' && <CellCount pageId={n.id} />}
+
+
           {archive && n.archived ? (
             <button
               className="row-btn"
@@ -265,4 +268,46 @@ async function copyPageMarkdown(pageId: string) {
 async function exportPageMarkdown(pageId: string, title: string) {
   const { storage } = await import('../lib/storage')
   await storage.exportFile(`${title.replace(/[\\/:*?"<>|]/g, '_')}.md`, await pageMarkdown(pageId))
+}
+
+export function CellCount({ pageId }: { pageId: string }) {
+  const counts = useStore((s) => s.pageCellCounts)
+  const activePageId = useStore((s) => s.activePageId)
+  const page = useStore((s) => s.page)
+  const [loading, setLoading] = useState(false)
+
+  useEffect(() => {
+    if (pageId === activePageId && page) {
+      useStore.getState().setPageCellCount(pageId, page.cells.length)
+      return
+    }
+    if (counts[pageId] === undefined) {
+      let cancelled = false
+      setLoading(true)
+      import('../lib/storage').then(({ storage }) =>
+        storage
+          .readPage(pageId)
+          .then((res) => {
+            if (cancelled) return
+            useStore.getState().setPageCellCount(pageId, res.data?.cells?.length ?? 0)
+            setLoading(false)
+          })
+          .catch(() => {
+            if (!cancelled) {
+              useStore.getState().setPageCellCount(pageId, 0)
+              setLoading(false)
+            }
+          }),
+      )
+      return () => {
+        cancelled = true
+      }
+    }
+  }, [pageId, activePageId, page?.cells?.length, counts[pageId]])
+
+  const known = pageId === activePageId && page ? page.cells.length : counts[pageId]
+  if (known === undefined) {
+    return <span className="cell-count pending">{loading ? '...' : ''}</span>
+  }
+  return <span className="cell-count">{known}</span>
 }

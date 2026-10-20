@@ -94,6 +94,9 @@ interface State {
   settings: Settings
   page: Page | null
   activePageId: string | null
+  /** Cell counts keyed by page id, for badges in the page list. */
+  pageCellCounts: Record<string, number>
+  setPageCellCount(id: string, n: number): void
   /** Notebook shown in the middle pane. */
   activeNotebookId: string | null
   selection: string[]
@@ -378,6 +381,8 @@ function interpolatePage(page: Page, fromGrid: number, toGrid: number, snapToGri
 export const useStore = create<State>((set, get) => ({
   ready: false,
   workspace: emptyWorkspace(),
+  pageCellCounts: {},
+  setPageCellCount: (id, n) => set((s) => ({ pageCellCounts: { ...s.pageCellCounts, [id]: n } })),
   settings: DEFAULT_SETTINGS,
   page: null,
   activePageId: null,
@@ -668,6 +673,7 @@ export const useStore = create<State>((set, get) => ({
     set({
       page,
       activePageId: id,
+      pageCellCounts: { ...get().pageCellCounts, [id]: (page?.cells?.length ?? 0) },
       activeNotebookId: notebook,
       workspace: { ...get().workspace, lastOpenPageId: local.lastOpenPageId, recent: local.recent || [] },
       selection: [],
@@ -764,8 +770,11 @@ export const useStore = create<State>((set, get) => ({
       if (pageSaving) await pageSaving
       set({ dirty: false })
     }
+    const newCounts = { ...get().pageCellCounts }
+    for (const pid of pageIds) delete newCounts[pid]
     set({
       workspace: ws,
+      pageCellCounts: newCounts,
       navBack: get().navBack.filter((r) => !pageIds.includes(r)),
       navForward: get().navForward.filter((r) => !pageIds.includes(r)),
     })
@@ -1390,6 +1399,7 @@ function onRemoteSettings(data: Settings, seq: number) {
 function handleVaultEvent(ev: VaultEvent) {
   switch (ev.type) {
     case 'page':
+      useStore.setState((s) => ({ pageCellCounts: { ...s.pageCellCounts, [ev.data.id]: (ev.data.cells || []).length } }))
       onRemotePage(ev.data, ev.seq)
       break
     case 'workspace':

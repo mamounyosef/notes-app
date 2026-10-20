@@ -4,7 +4,7 @@ import { useActiveEditor } from './editor/activeEditor'
 import ErrorBoundary from './components/ErrorBoundary'
 import Toolbar from './components/Toolbar'
 import { nudgeInkSize } from './components/InkSizeControl'
-import Tree from './components/Tree'
+import Tree, { CellCount } from './components/Tree'
 import SearchModal from './components/SearchModal'
 import SettingsModal from './components/SettingsModal'
 import LinkModal from './components/LinkModal'
@@ -366,6 +366,7 @@ export default function App() {
                       <span className="twisty" />
                       <FileIcon size={14} />
                       <span className="label">{p.title}</span>
+                      <CellCount pageId={p.id} />
                     </div>
                   ))}
                   <div style={{ height: 8 }} />

@@ -3107,3 +3107,20 @@ select:focus {
   cursor: grab;
 }
 .minimap svg:active .mm-view { cursor: grabbing; fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+
+.row .cell-count {
+  flex: none;
+  min-width: 18px;
+  padding: 1px 6px;
+  margin-right: 2px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-faint);
+  background: var(--bg-3);
+  border-radius: 999px;
+  text-align: center;
+}
+
+.row .cell-count.pending {
+  opacity: 0.45;
+}
