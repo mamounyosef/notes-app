@@ -29,6 +29,22 @@ const FILE_ROOTS = ['assets', 'artifacts']
 
 const sha1 = (data) => crypto.createHash('sha1').update(data).digest('hex')
 const docHash = (data) => sha1(core.stable(data))
+/** Fields each computer sets by itself: measured sizes and save times. */
+const SELF_SET = new Set(['x', 'y', 'w', 'h', 'z', 'updatedAt'])
+/**
+ * What decides whether a note needs pushing. For pages it leaves out what each
+ * computer measures or stamps on its own: a deliberate move or resize bumps
+ * the cell's version, which is still in here. Otherwise two computers that
+ * measure a cell differently keep pushing their own copy to each other forever.
+ */
+const syncHash = (kind, data) => {
+  if (kind !== 'page' || !data) return docHash(data)
+  const strip = (c) => Object.fromEntries(Object.entries(c).filter(([k]) => !SELF_SET.has(k)))
+  const { updatedAt: _u, ...page } = data
+  return 'v2:' + docHash({ ...page, cells: (data.cells || []).map(strip) })
+}
+/** The stored hash still matches this note (also accepts hashes saved before syncHash). */
+const unchanged = (kind, data, st) => Boolean(st?.hash) && (syncHash(kind, data) === st.hash || docHash(data) === st.hash)
 const keyOf = (kind, id) => `${kind}:${id || ''}`
 const parseKey = (key) => {
   const i = key.indexOf(':')
@@ -234,7 +250,7 @@ export class CloudSync {
         return
       }
       const local = await this.vault.current(kind, id)
-      if (!local || st?.pendingDelete || docHash(local) === st?.hash) {
+      if (!local || st?.pendingDelete || unchanged(kind, local, st)) {
         // Nothing here that the cloud has not seen: delete it here too.
         if (local) await this.vault.removeRemote(id)
         this.state.docs[key] = { rev, hash: null, deleted: true }
@@ -249,9 +265,9 @@ export class CloudSync {
 
     // Edited elsewhere after we deleted it: it comes back (shown as an orphan).
     const merged = await this.vault.applyRemote(kind, id, row.data)
-    const h = docHash(row.data)
+    const h = syncHash(kind, row.data)
     this.state.docs[key] = { rev, hash: h }
-    if (docHash(merged) !== h) this.dirty.add(key)
+    if (syncHash(kind, merged) !== h) this.dirty.add(key)
     else this.dirty.delete(key)
   }
 
@@ -289,8 +305,9 @@ export class CloudSync {
           this.dirty.delete(key)
           break
         }
-        const h = docHash(cur)
-        if (h === st.hash) {
+        const h = syncHash(kind, cur)
+        if (unchanged(kind, cur, st)) {
+          if (st.hash !== h) this.state.docs[key] = { ...st, hash: h }
           this.dirty.delete(key)
           break
         }

@@ -15,7 +15,12 @@ const s = (p: P) => ({
 })
 
 export const Chevron = (p: P) => (<svg {...s(p)}><path d="M9 6l6 6-6 6" /></svg>)
-export const ArrowLeft = (p: P) => (<svg {...s(p)}><path d="M19 12H5M11 6l-6 6 6 6" /></svg>)
+export const Eye = (p: P) => (<svg {...s(p)}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>)
+export const Bolt = (p: P) => (<svg {...s(p)}><path d="M13 2L4 14h7l-1 8 9-12h-7z" /></svg>)
+export const QueueI = (p: P) => (<svg {...s(p)}><path d="M4 6h11M4 11h11M4 16h7M17 13v7M14 17l3 3 3-3" /></svg>)
+export const Play = (p: P) => (<svg {...s(p)}><path d="M7 5l12 7-12 7z" /></svg>)
+export const Clock = (p: P) => (<svg {...s(p)}><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></svg>)
+export const ArrowLeft =(p: P) => (<svg {...s(p)}><path d="M19 12H5M11 6l-6 6 6 6" /></svg>)
 export const ArrowRight = (p: P) => (<svg {...s(p)}><path d="M5 12h14M13 6l6 6-6 6" /></svg>)
 export const Plus = (p: P) => (<svg {...s(p)}><path d="M12 5v14M5 12h14" /></svg>)
 export const Book = (p: P) => (<svg {...s(p)}><path d="M4 5.5A2.5 2.5 0 016.5 3H20v16H6.5A2.5 2.5 0 004 21.5z" /></svg>)

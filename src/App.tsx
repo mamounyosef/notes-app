@@ -238,7 +238,6 @@ export default function App() {
         return
       }
       if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'l') { e.preventDefault(); askAboutSelection(); return }
-      if (e.key === 'F1') { e.preventDefault(); setShowKeys(true); return }
       if (e.ctrlKey && e.key === '1') { e.preventDefault(); setSettings({ sidebarVisible: !st.settings.sidebarVisible }); return }
       if (e.ctrlKey && e.key === '2') { e.preventDefault(); setSettings({ pagelistVisible: !st.settings.pagelistVisible }); return }
       if (e.ctrlKey && e.key === '3') {
@@ -577,7 +576,7 @@ export default function App() {
               <span>{page ? `${page.cells.length} cells` : 'No page'}</span>
               <span className={syncError ? 'status-error' : ''}>{syncError ? 'Not saved yet, retrying' : dirty ? 'Saving...' : 'Saved'}</span>
               <div className="spacer" />
-              <button title="Keyboard shortcuts (F1)" onClick={() => setShowKeys(true)}>Shortcuts</button>
+              <button title="Keyboard shortcuts" onClick={() => setShowKeys(true)}>Shortcuts</button>
             </div>
           )}
         </div>

@@ -9,8 +9,9 @@ import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
 import Composer from './Composer'
 import { ContextRing, ContextInspector } from './ContextMeter'
 import {
-  AssistantMark, Plus, History, Dock, Float, X, Brain, Chevron, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon,
+  AssistantMark, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock,
 } from '../Icons'
+import { waitText } from './QueueDeck'
 
 /* ------------------------------------------------------------------ *
  * Grouping: a "turn" is one user message and everything after it.
@@ -112,6 +113,13 @@ function Markdown({ text, live }: { text: string; live?: boolean }) {
 function Thinking({ text, ms, live }: { text: string; ms?: number; live?: boolean }) {
   const show = useAgent((s) => s.prefs.showThinking)
   const [open, setOpen] = useState(false)
+  const body = useRef<HTMLDivElement>(null)
+  // Follows the reasoning as it streams, unless the user scrolled up to read.
+  const follow = useRef(true)
+  useEffect(() => {
+    const el = body.current
+    if (open && live && el && follow.current) el.scrollTop = el.scrollHeight
+  }, [text, open, live])
   if (!show || !text) return null
   const secs = ms ? Math.max(1, Math.round(ms / 1000)) : 0
   return (
@@ -121,7 +129,18 @@ function Thinking({ text, ms, live }: { text: string; ms?: number; live?: boolea
         <span className={live ? 'shimmer' : ''}>{live ? 'Thinking' : `Thought for ${secs}s`}</span>
         <Chevron size={12} className="ag-chev" />
       </button>
-      {open && <div className="ag-think-body">{text}</div>}
+      {open && (
+        <div
+          ref={body}
+          className="ag-think-body"
+          onScroll={(e) => {
+            const el = e.currentTarget
+            follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+          }}
+        >
+          {text}
+        </div>
+      )}
     </div>
   )
 }
@@ -130,7 +149,9 @@ function ToolChip({ m }: { m: ChatMessage }) {
   const meta = m.meta as any
   const ok = meta?.ok !== false
   const target = meta?.target
-  return (
+  const helper = meta?.helper as { model: string; ms: number; text: string } | undefined
+  const [open, setOpen] = useState(false)
+  const chip = (
     <button
       className={`ag-tool ${ok ? '' : 'failed'} ${target ? 'link' : ''}`}
       title={ok ? (target ? 'Show it' : m.toolName) : m.content.slice(0, 300)}
@@ -139,6 +160,51 @@ function ToolChip({ m }: { m: ChatMessage }) {
       <span className="ag-tool-dot">{ok ? <Check size={11} /> : <X size={11} />}</span>
       <span className="ag-tool-text">{meta?.summary || m.toolName}</span>
     </button>
+  )
+  const pics: string[] = meta?.images || []
+  // The chat model saw the picture itself: say so, and show what it was given.
+  if (!helper && pics.length)
+    return (
+      <div className="ag-tool-row">
+        <div className="ag-tool-line">
+          {chip}
+          <button
+            className={`ag-helper native ${open ? 'open' : ''}`}
+            onClick={() => setOpen(!open)}
+            title={`${meta.eyes || 'The model'} looked at the picture itself, as real image input. Click to see it.`}
+          >
+            <Eye size={11} />
+            <span>{meta.eyes || 'Model'}, own eyes</span>
+            <Chevron size={11} className="ag-chev" />
+          </button>
+        </div>
+        {open && (
+          <div className="ag-helper-pics">
+            {pics.map((r) => (
+              <AttachmentThumb key={r} att={{ sha: r.replace(/^sha:/, ''), mime: 'image/png', name: 'What the model saw' }} big />
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  if (!helper) return chip
+  return (
+    <div className="ag-tool-row">
+      <div className="ag-tool-line">
+        {chip}
+        <button
+          className={`ag-helper ${open ? 'open' : ''}`}
+          onClick={() => setOpen(!open)}
+          title={`${helper.model} looked at it. Click to see what it saw.`}
+        >
+          <Eye size={11} />
+          <span>{helper.model}</span>
+          <span className="ag-helper-ms">{Math.max(1, Math.round(helper.ms / 1000))}s</span>
+          <Chevron size={11} className="ag-chev" />
+        </button>
+      </div>
+      {open && <div className="ag-helper-body">{helper.text}</div>}
+    </div>
   )
 }
 
@@ -299,6 +365,16 @@ function UserBubble({ m, onImage }: { m: ChatMessage; onImage(items: LightboxIte
       {!editing && (
         <div className="ag-user-bar">
           <span className="ag-when" title={new Date(m.at).toLocaleString()}>{relTime(m.at)}</span>
+          {m.meta?.queued && (
+            <span className="ag-sent-tag queued" title="You typed this while the agent was working; it went out when the reply ended.">
+              <Clock size={11} /> from the queue, waited {waitText(m.meta.queued.waitedMs)}
+            </span>
+          )}
+          {m.meta?.sentNow && (
+            <span className="ag-sent-tag now" title="Sent now: the reply that was running was cut short for this.">
+              <Bolt size={11} /> sent now
+            </span>
+          )}
           <button className="ag-icon-btn" disabled={busy} onClick={() => useAgent.getState().regenerate(m.id)} title="New reply (keeps this one as a version)">
             <Retry size={13} />
           </button>

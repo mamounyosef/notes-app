@@ -2066,6 +2066,51 @@ select:focus {
   z-index: 5;
 }
 
+/* Diagrams and themed widgets sit in the note like a figure: no frame, and
+   the bar only floats in on hover. */
+.html-embed-frame.themed {
+  background: transparent;
+  flex: none;
+  display: block;
+}
+.html-embed.html-embed-figure {
+  border-color: transparent;
+  background: transparent;
+  overflow: visible;
+}
+.html-embed.html-embed-figure:hover {
+  border-color: color-mix(in srgb, var(--line) 70%, transparent);
+}
+.html-embed.html-embed-figure.html-embed-selected {
+  border-color: var(--accent);
+}
+.html-embed-figure .html-embed-bar {
+  position: absolute;
+  top: -1px;
+  right: -1px;
+  z-index: 6;
+  border-radius: 0 8px 0 8px;
+  background: var(--cell-bg);
+  border: 1px solid var(--line);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity .12s ease;
+}
+.html-embed-figure:hover .html-embed-bar,
+.html-embed-figure.html-embed-selected .html-embed-bar {
+  opacity: 1;
+  pointer-events: auto;
+}
+.html-embed-figure .html-embed-label {
+  flex: none;
+}
+.html-embed-loading {
+  display: grid;
+  place-items: center;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
 /* ------------------------------------------------------------------ *
  * Modals
  * ------------------------------------------------------------------ */
@@ -3030,3 +3075,35 @@ select:focus {
 /* Archive: rows that only show where archived items came from. */
 .row.arch-path { opacity: 0.55; }
 .row.arch-path:hover { opacity: 0.8; }
+
+/* ---------- Canvas area and page map ---------- */
+.canvas-area { flex: 1; display: flex; position: relative; min-height: 0; min-width: 0; }
+.canvas-area > .canvas-wrap { min-width: 0; }
+::-webkit-scrollbar-corner { background: transparent; }
+
+.minimap {
+  --mm-rest: 0.45;
+  position: absolute;
+  right: 18px;
+  bottom: 18px;
+  z-index: 30;
+  padding: 5px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--bg-2) 82%, transparent);
+  border: 1px solid var(--line);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.28);
+  backdrop-filter: blur(6px);
+  opacity: var(--mm-rest);
+  transition: opacity 0.18s;
+  line-height: 0;
+}
+.minimap:hover { opacity: 1; }
+.minimap svg { display: block; cursor: pointer; touch-action: none; border-radius: 6px; }
+.minimap .mm-page { fill: var(--canvas); }
+.minimap .mm-cell { fill: color-mix(in srgb, var(--text) 38%, var(--canvas)); }
+.minimap .mm-view {
+  fill: color-mix(in srgb, var(--accent) 14%, transparent);
+  stroke: var(--accent);
+  cursor: grab;
+}
+.minimap svg:active .mm-view { cursor: grabbing; fill: color-mix(in srgb, var(--accent) 22%, transparent); }

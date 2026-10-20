@@ -27,6 +27,11 @@ fs.mkdirSync(UD, { recursive: true })
 fs.mkdirSync(VAULT, { recursive: true })
 fs.mkdirSync(OUT, { recursive: true })
 fs.writeFileSync(path.join(UD, 'config.json'), JSON.stringify({ vault: VAULT }))
+// Chat blobs (attachments) the scenario needs, copied from your own app data by sha.
+for (const sha of scenario.blobs || []) {
+  fs.mkdirSync(path.join(UD, 'agent', 'blobs'), { recursive: true })
+  fs.copyFileSync(path.join(process.env.APPDATA, 'notesapp', 'agent', 'blobs', sha), path.join(UD, 'agent', 'blobs', sha))
+}
 
 const PORT = 9333
 const exe = path.join(PROJECT, 'node_modules/electron/dist/electron.exe')
@@ -103,9 +108,17 @@ try {
     // Answer an ask_user card automatically if the scenario gives one.
     await ev(`(window.__sendDone = false, __notesDebug.useAgent.getState().send(${JSON.stringify(p)}).then(() => { window.__sendDone = true }), true)`)
     let shotAsk = false
+    // Timed steps while this prompt runs: { at: ms, eval?, shot? } (only for the first prompt).
+    const during = n === 0 ? [...(scenario.during || [])] : []
     for (let k = 0; k < 1200; k++) {
       await sleep(500)
-      if (await ev('window.__sendDone', 5000)) break
+      while (during.length && Date.now() - t0 >= during[0].at) {
+        const d = during.shift()
+        if (d.eval) console.log('during', d.at, JSON.stringify(await ev(d.eval, 30000)))
+        if (d.shot) await shot(d.shot)
+      }
+      // Waits for queued messages too: done once the send returned, nothing runs and nothing waits.
+      if (await ev(`window.__sendDone && !__notesDebug.useAgent.getState().busy && !__notesDebug.useAgent.getState().queue.some(q => !__notesDebug.useAgent.getState().queueHold[q.chatId])`, 5000) && !during.length) break
       if (answer && (await ev('Boolean(__notesDebug.useAgent.getState().pendingAsk)', 5000))) {
         if (!shotAsk && scenario.shots?.includes(`ask${n + 1}`)) {
           await sleep(500)
@@ -152,4 +165,6 @@ try {
 } finally {
   try { ws?.close() } catch {}
   app.kill()
+  // Leftover handles (the app's pipes) can keep node alive: end here.
+  setTimeout(() => process.exit(0), 1500)
 }

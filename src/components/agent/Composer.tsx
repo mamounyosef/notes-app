@@ -5,7 +5,8 @@ import { fileToAttachment, prettySize } from '../../agent/files'
 import { useStore, walk, pathTo } from '../../store'
 import { AttachmentThumb, type LightboxItem } from './Lightbox'
 import ModelPicker from './ModelPicker'
-import { Send, StopI, Mic, Plus, X, AtI, File as FileIcon, Book, Folder } from '../Icons'
+import QueueDeck from './QueueDeck'
+import { Send, StopI, Mic, Plus, X, AtI, File as FileIcon, Book, Folder, Bolt, QueueI } from '../Icons'
 import type { TreeNode } from '../../types'
 
 interface Pending {
@@ -125,6 +126,7 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: 
         </div>
       )}
 
+      <QueueDeck />
       <div className={`ag-box ${asking ? 'asking' : ''}`}>
         {(quote || mentions.length > 0 || attachments.length > 0 || pending.length > 0) && (
           <div className="ag-chips">
@@ -166,7 +168,7 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: 
           ref={ta}
           className="agent-input"
           rows={1}
-          placeholder={asking ? 'Type your answer...' : busy ? 'Working... you can type the next message' : 'Ask or tell me what to change. @ to point at a page'}
+          placeholder={asking ? 'Type your answer...' : busy ? 'Working... Enter queues your next message, Ctrl+Enter sends it now' : 'Ask or tell me what to change. @ to point at a page'}
           value={draft}
           onChange={(e) => {
             setDraft(e.target.value)
@@ -193,8 +195,24 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: 
             }
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault()
+              // Ctrl+Enter while it works: cut the reply short and send this now.
+              if ((e.ctrlKey || e.metaKey) && busy && !asking) {
+                if (canSend) useAgent.getState().sendNow()
+                return
+              }
               if (canSend || asking) send()
               return
+            }
+            // Up in an empty box takes the last queued message back to edit.
+            if (e.key === 'ArrowUp' && !draft && !attachments.length && !asking) {
+              const s = useAgent.getState()
+              const last = s.queue.filter((q) => q.chatId === s.chat?.id).pop()
+              if (last) {
+                e.preventDefault()
+                s.unqueue(last.id)
+                useAgent.setState({ draft: last.text, attachments: last.attachments, mentions: last.mentions, quote: last.quote })
+                return
+              }
             }
             if (e.key === 'Escape' && busy) {
               e.preventDefault()
@@ -268,7 +286,19 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: 
           )}
           <div className="spacer" />
           {busy && !asking ? (
-            <button className="ag-send stop" title="Stop (Esc)" onClick={() => stop()}><StopI size={14} /></button>
+            <span className="ag-send-group">
+              {canSend && (
+                <>
+                  <button className="ag-send now" title="Send now (Ctrl+Enter): cut the reply short and send this" onClick={() => useAgent.getState().sendNow()}>
+                    <Bolt size={14} />
+                  </button>
+                  <button className="ag-send queue" title="Queue it (Enter): sends when the reply ends" onClick={() => send()}>
+                    <QueueI size={15} />
+                  </button>
+                </>
+              )}
+              <button className="ag-send stop" title="Stop (Esc)" onClick={() => stop()}><StopI size={14} /></button>
+            </span>
           ) : (
             <button className="ag-send" title="Send (Enter)" disabled={!canSend && !asking} onClick={() => send()}><Send size={15} /></button>
           )}

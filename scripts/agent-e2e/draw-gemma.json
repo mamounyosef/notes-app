@@ -1,0 +1,14 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-blank.js",
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b', think: true }); return 'gemma4:31b' })()"
+  ],
+  "prompts": [
+    "Draw the logic circuit of a full adder: inputs A, B, Cin and outputs Sum and Cout.",
+    "Make a state machine diagram for a traffic light controller that also has a pedestrian button.",
+    "Make an interactive widget where I can toggle inputs A and B and see the outputs of AND, OR, XOR and NAND live."
+  ],
+  "shots": ["p1", "p2", "p3"]
+}

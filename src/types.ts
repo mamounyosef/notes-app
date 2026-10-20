@@ -98,6 +98,8 @@ export interface Settings {
   showGrid: boolean
   gridSize: number
   snapToGrid: boolean
+  /** A small map of the whole page in the corner, with the visible part outlined. */
+  showMinimap: boolean
 
   bodyFont: string
   headingFont: string
@@ -161,6 +163,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showGrid: true,
   gridSize: 20,
   snapToGrid: true,
+  showMinimap: true,
 
   bodyFont: 'Segoe UI, Calibri, system-ui, sans-serif',
   headingFont: 'Segoe UI Semibold, Segoe UI, system-ui, sans-serif',
@@ -209,7 +212,7 @@ export const DEFAULT_SETTINGS: Settings = {
   showStatusBar: true,
   showPageDate: true,
   confirmDelete: true,
-  zoomStep: 0.1,
+  zoomStep: 0.05,
   panButton: 'right',
   recentColors: ['#e06c75', '#e5c07b', '#98c379', '#61afef', '#c678dd', '#ffffff'],
 }

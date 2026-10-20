@@ -248,6 +248,22 @@ await test('a restart with no changes pushes nothing', async () => {
   assert.equal(server.seq, seq)
 })
 
+await test('copies that differ only in save time or measured size do not bounce back and forth', async () => {
+  // Seen for real: the same cell version, stamped a few hundred ms apart on each computer.
+  for (const [c, h, at] of [[PC, 111, 5], [LT, 222, 6]]) {
+    const file = path.join(c.dir, 'pages', 'p1.json')
+    const p = JSON.parse(fs.readFileSync(file, 'utf8'))
+    p.cells = p.cells.map((x) => (x.id === 'c1' ? { ...x, h, updatedAt: at } : x))
+    fs.writeFileSync(file, JSON.stringify(p, null, 2))
+    c.cloud.lastFullAt = 0 // the periodic full check looks at every note
+  }
+  await sync(PC, LT, PC, LT)
+  const seq = server.seq
+  for (let i = 0; i < 4; i++) await sync(PC, LT)
+  assert.equal(server.seq, seq, `kept pushing: ${server.seq - seq} more writes`)
+  assert.equal(html(await readPage(PC, 'p1'), 'c1'), html(await readPage(LT, 'p1'), 'c1'))
+})
+
 for (const c of [PC, LT]) {
   c.cloud.stop()
   c.vault.stop()

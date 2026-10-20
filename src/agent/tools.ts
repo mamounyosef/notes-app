@@ -13,7 +13,8 @@ import { DEFAULT_SETTINGS, type Cell, type Page, type Settings, type TreeNode } 
 import { agentInlineToHtml, agentToHtml, htmlToAgent, htmlToText, softenMarks } from './content'
 import { buildContext } from './context'
 import { agentApi, chatApi, type ChatAttachment } from './api'
-import { DEFAULT_MODEL, MODELS } from './models'
+import { DEFAULT_MODEL, VISION_MODEL, modelInfo } from './models'
+import { buildWidgetDoc, currentTheme, FENCE_OF, fromBase64, kindOf, type WidgetKind } from '../widgets/widget'
 
 const now = () => Date.now()
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
@@ -139,6 +140,8 @@ export interface ToolEnv {
   rec: TurnRecorder
   /** Attachments in this chat, by sha, for insert_image. */
   attachments: Map<string, ChatAttachment>
+  /** The chat model running this turn. */
+  model: string
   /** Asks the user and waits for the answer (ask_user). */
   ask(q: { question: string; options?: string[]; multi?: boolean }): Promise<string>
 }
@@ -151,9 +154,23 @@ export interface ToolResult {
   ok: boolean
   /** Ids to jump to from the chat chip. */
   target?: { pageId?: string; cellId?: string }
+  /** When another model did the looking: who, how long, and what it said. */
+  helper?: { model: string; ms: number; text: string }
+  /** Pictures for a model that can see ("sha:<hash>"): sent to it as real image input with this result. */
+  images?: string[]
 }
 
 class ToolError extends Error {}
+
+/** Who looks at a picture: the chat model when it can see, otherwise the vision helper. */
+export const eyesFor = (chatModel: string) => (modelInfo(chatModel).vision ? chatModel : VISION_MODEL)
+
+/** Stores pictures as chat blobs, so the chat keeps a small reference instead of the bytes. */
+async function toRefs(refs: string[]) {
+  const out: string[] = []
+  for (const r of refs) out.push(r.startsWith('sha:') ? r : `sha:${await chatApi.saveBlob(r)}`)
+  return out
+}
 
 const ok = (content: unknown, summary: string, target?: ToolResult['target']): ToolResult => ({
   content: typeof content === 'string' ? content : JSON.stringify(content),
@@ -358,6 +375,102 @@ function transformText(html: string, find: string, opts: { all?: boolean; wrap?:
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+/* ---------------- drawings (HTML blocks) ---------------- */
+
+interface Drawing {
+  index: number
+  kind: WidgetKind
+  src: string
+  width: number | null
+}
+
+/** The HTML blocks in a cell, in order (index starts at 1). */
+function drawingsIn(html: string): Drawing[] {
+  const doc = new DOMParser().parseFromString(`<body>${html || ''}</body>`, 'text/html')
+  return [...doc.querySelectorAll('div[data-html-embed]')].map((el, i) => ({
+    index: i + 1,
+    kind: kindOf(el.getAttribute('data-kind')),
+    src: fromBase64(el.getAttribute('data-html-src') || ''),
+    width: Number(el.getAttribute('data-width')) || null,
+  }))
+}
+
+/** Draws one block off screen, the way the user sees it. */
+async function shootDrawing(d: Drawing, cellWidth: number) {
+  const html = await buildWidgetDoc(d.kind, d.src, currentTheme(document.querySelector('.cell')), { opaque: true })
+  return agentApi.renderWidget({ html, width: Math.max(260, Math.round(d.width || cellWidth - 28)) })
+}
+
+/**
+ * After a cell with drawings is written: draw each one and report errors, so
+ * the agent fixes a broken diagram before it says it is done.
+ */
+async function drawingReport(cells: { id: string; html: string; w: number }[]): Promise<string[] | undefined> {
+  const out: string[] = []
+  for (const c of cells) {
+    for (const d of drawingsIn(c.html)) {
+      const shot = await shootDrawing(d, c.w).catch((e) => ({ ok: false, error: String(e?.message || e) }) as any)
+      const where = `cell ${c.id} drawing ${d.index} (${FENCE_OF[d.kind]})`
+      if (!shot.ok) out.push(`${where}: not checked (${shot.error || 'no renderer'})`)
+      else if (shot.errors?.length) out.push(`${where}: FAILED to draw: ${shot.errors.slice(0, 3).join(' | ').slice(0, 600)}. Fix the source and update the cell.`)
+      else out.push(`${where}: drawn OK, ${shot.width}x${shot.height}px. Call check_drawing to see it.`)
+    }
+  }
+  return out.length ? out : undefined
+}
+
+const DRAWING_CHECK = `You are checking a diagram or widget that an assistant just drew into a note. The picture shows it exactly as the user sees it.
+Answer in two parts:
+WHAT IT SHOWS: describe it precisely: every box, node, gate, signal, bar or element with its exact label, every arrow or wire as "A -> B" with its label, and the overall layout. For charts give axes, series and values. For logic circuits give each gate type and its inputs and output.
+PROBLEMS: list every visible problem: overlapping or cut off text or shapes, labels outside their boxes, unreadable contrast (dark on dark, light on light), lines crossing through labels, tangled or ambiguous wiring, odd empty space, tiny unreadable text, error messages, or anything missing compared with the intended content. If there are none, write "PROBLEMS: none".`
+
+/**
+ * Models often rewrite a whole cell from an older copy and silently drop the
+ * colors, highlights and sizes added since. Put back each style whose text is
+ * still there but now plain, when every occurrence of that text had it before.
+ */
+export function keepDroppedStyles(oldHtml: string, newHtml: string) {
+  const parse = (h: string) => new DOMParser().parseFromString(`<body>${h}</body>`, 'text/html').body
+  const styled = (root: HTMLElement) => [...root.querySelectorAll<HTMLElement>('span[style], mark[data-color]')].filter((el) => {
+    const s = el.style
+    return el.tagName === 'MARK' || s.color || s.fontSize || s.backgroundColor
+  })
+  const keyOf = (el: HTMLElement) => `${el.tagName}|${el.getAttribute('data-color') || ''}|${el.style.color}|${el.style.fontSize}|${el.style.backgroundColor}`
+  const textOf = (root: HTMLElement) => root.textContent || ''
+  const count = (hay: string, t: string) => hay.split(t).length - 1
+  const oldRoot = parse(oldHtml)
+  const runs = new Map<string, { text: string; el: HTMLElement; styledCount: number }>()
+  for (const el of styled(oldRoot)) {
+    const text = (el.textContent || '').trim()
+    if (!text || text.length > 200) continue
+    const id = `${keyOf(el)}\n${text}`
+    const run = runs.get(id)
+    // Nested copies of one style around the same text count once.
+    if (run) { if (!run.el.contains(el)) run.styledCount++ } else runs.set(id, { text, el, styledCount: 1 })
+  }
+  let html = newHtml
+  const kept: string[] = []
+  for (const [id, run] of runs) {
+    const key = id.split('\n')[0]
+    if (run.styledCount < count(textOf(oldRoot), run.text)) continue
+    const newRoot = parse(html)
+    if (!count(textOf(newRoot), run.text)) continue
+    if (styled(newRoot).some((el) => keyOf(el) === key && (el.textContent || '').includes(run.text))) continue
+    const shell = run.el.cloneNode(false) as HTMLElement
+    const outer = shell.outerHTML
+    const close = `</${shell.tagName.toLowerCase()}>`
+    const open = outer.slice(0, outer.length - close.length)
+    const word = (c: string) => /\w/.test(c)
+    const pattern = `${word(run.text[0]) ? '\\b' : ''}${run.text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}${word(run.text.slice(-1)) ? '\\b' : ''}`
+    const r = transformText(html, pattern, { all: true, regex: true, caseSensitive: true, wrap: (t) => `${open}${esc(t)}${close}` })
+    if (r.count) {
+      html = r.html
+      kept.push(`"${run.text}"`)
+    }
+  }
+  return { html, kept }
+}
+
 function nodeLabel(n: TreeNode) {
   return `${n.kind} "${n.title}"`
 }
@@ -433,8 +546,9 @@ export const TOOL_DEFS = [
     cell_id: str('Cell id.'),
     page_id: str('Page id. Omit for the open page.'),
     title: str('New title.'),
-    content: str('New content in Markdown (see create_cells).'),
+    content: str('New content in Markdown (see create_cells). When replacing, start from the cell as it is NOW (read_cell if it changed since you last saw it) and keep its colors, highlights and sizes as inline HTML.'),
     content_mode: { type: 'string', enum: ['replace', 'append', 'prepend'], description: 'How to use content. Default replace.' },
+    drop_styles: { type: 'boolean', description: 'Only when the user asked to remove colors/highlights: lets a replace drop them. By default styled text whose style your content left out keeps it.' },
     x: num('New x.'),
     y: num('New y.'),
     w: num('New width.'),
@@ -493,14 +607,25 @@ export const TOOL_DEFS = [
     to_page_id: str('Copy onto this page instead (placed at its end).'),
     move: bool('Move instead of copy (removes them from the source).'),
   }, ['cell_ids']),
-  fn('view_image', 'Look at an image with a vision model and get back text: a faithful transcription (default: text in Markdown and LaTeX, plus a detailed [Figure] block for every diagram or chart: elements, labeled arrows A -> B, structure, axes and values), a full description (task describe, best for diagrams and charts), or the answer to a question about it. Ask follow-up questions when a detail matters. Works whatever model you are, for images the user attached (source "attachment:<sha>") and images inside cells (cell_id, optionally index). Use it before transcribing, replacing or answering about any image you cannot see yourself.', {
+  fn('view_image', 'Look at an image with a vision model and get back text: a faithful transcription (default: text in Markdown and LaTeX, plus a detailed [Figure] block for every diagram or chart: elements, labeled arrows A -> B, structure, axes and values), a full description (task describe, best for diagrams and charts), or the answer to a question about it. Ask follow-up questions when a detail matters. Works whatever model you are, for images the user attached (source "attachment:<sha>") and images inside cells (cell_id, optionally index). Use it before transcribing, replacing or answering about any image you cannot see yourself. If you can see images, an image attached to a message is already in front of you: do not call this to look at it again; call it with region to zoom into a small or hard to read part (you get that part enlarged).', {
     source: str('"attachment:<sha>", an "asset://local/..." image, or a URL.'),
     cell_id: str('Read the images inside this cell instead.'),
     page_id: str('Page of cell_id. Omit for the open page.'),
     index: { type: 'number', description: 'Which image in the cell, from 1. Default: all (up to 4).' },
     task: { type: 'string', enum: ['transcribe', 'describe'], description: 'Default transcribe.' },
     question: str('A specific question about the image, instead of task.'),
+    region: {
+      type: 'object',
+      description: 'Zoom: only this part of the image, enlarged. Fractions of the width and height from 0 to 1, x and y at the top left. Example {"x":0,"y":0.5,"w":0.5,"h":0.5} is the bottom left quarter.',
+      properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } },
+    },
   }),
+  fn('check_drawing', 'See a drawing (mermaid, wavedrom, chart or widget block) exactly as the user sees it: it is rendered and a vision model describes what it shows and lists visible problems (overlaps, cut off or unreadable text, tangled lines, drawing errors). Use it once after making or changing a non-trivial drawing, then fix real problems.', {
+    cell_id: str('Cell with the drawing.'),
+    page_id: str('Page of the cell. Omit for the open page.'),
+    index: { type: 'number', description: 'Which drawing in the cell, from 1. Default 1.' },
+    intended: str('What the drawing should show, in a sentence or two, so missing parts are noticed.'),
+  }, ['cell_id']),
   fn('insert_image','Put an image into a cell or a new cell: an image the user attached in this chat (source "attachment:<sha>"), a rendered PDF page ("attachment:<sha>" of the page image), an image already in the notes ("asset://local/..."), or a web URL.', {
     source: str('attachment:<sha>, asset://local/<name> or https URL.'),
     page_id: str('Page id. Omit for the open page.'),
@@ -754,8 +879,9 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     }, [])
     if (isOpen && made.length) useStore.getState().setSelection(made.map((c) => c.id))
     const names = made.map((c) => c.title || htmlToText(c.html).slice(0, 30) || 'cell')
+    const drawings = await drawingReport(made)
     return ok(
-      { created: made.map((c) => ({ id: c.id, title: c.title, x: c.x, y: c.y, w: c.w })) },
+      { created: made.map((c) => ({ id: c.id, title: c.title, x: c.x, y: c.y, w: c.w })), ...(drawings ? { drawings } : {}) },
       made.length === 1 ? `Added cell "${names[0]}"` : `Added ${made.length} cells`,
       { pageId: id, cellId: made[0]?.id },
     )
@@ -766,6 +892,8 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     let title = ''
     let cid = ''
     const changes: string[] = []
+    let kept: string[] = []
+    let after = null as { id: string; html: string; w: number } | null
     const s = settingsNow()
     await editPage(env, pid, (p) => {
       const c = findCell(p, a.cell_id)
@@ -773,8 +901,13 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       const patch: Partial<Cell> = applyStyle(c, a)
       if (a.title !== undefined) { patch.title = String(a.title); changes.push('title') }
       if (a.content !== undefined) {
-        const html = agentToHtml(String(a.content))
+        let html = agentToHtml(String(a.content))
         const mode = a.content_mode || 'replace'
+        if (mode === 'replace' && !a.drop_styles) {
+          const r = keepDroppedStyles(c.html || '', html)
+          html = r.html
+          kept = r.kept
+        }
         patch.html = mode === 'append' ? (c.html || '') + html : mode === 'prepend' ? html + (c.html || '') : html
         changes.push(mode === 'replace' ? 'content' : `${mode}ed text`)
       }
@@ -788,9 +921,14 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       if (['x', 'y'].some((k) => k in patch)) changes.push('position')
       if (['w', 'h'].some((k) => k in patch)) changes.push('size')
       title = patch.title ?? c.title
+      if (patch.html !== undefined) after = { id: c.id, html: patch.html, w: patch.w ?? c.w }
       return { ...p, cells: p.cells.map((x) => (x.id === c.id ? { ...x, ...patch, updatedAt: now() } : x)) }
     }, [String(a.cell_id)])
-    return ok({ updated: cid, changed: changes }, `Updated "${title || 'cell'}"${changes.length ? ` (${changes.join(', ')})` : ''}`, { pageId: pid, cellId: cid })
+    const note = kept.length
+      ? `Your content dropped the color/highlight/size on ${kept.join(', ')}; it was kept. To really remove it, call again with drop_styles: true.`
+      : undefined
+    const drawings = after ? await drawingReport([after]) : undefined
+    return ok({ updated: cid, changed: changes, ...(note ? { note } : {}), ...(drawings ? { drawings } : {}) }, `Updated "${title || 'cell'}"${changes.length ? ` (${changes.join(', ')})` : ''}`, { pageId: pid, cellId: cid })
   },
 
   async edit_cell_text(a, env) {
@@ -999,10 +1137,10 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     return ok({ cell: made[0]?.id }, 'Added an image', { pageId: pid, cellId: made[0]?.id })
   },
 
-  async view_image(a) {
+  async view_image(a, env) {
     const refs: string[] = []
     const source = String(a.source || '')
-    if (source.startsWith('attachment:')) refs.push(`sha:${source.slice('attachment:'.length)}`)
+    if (source.startsWith('attachment:')) refs.push(`sha:${attachmentSha(source.slice('attachment:'.length), env)}`)
     else if (source) refs.push(await imageAsBase64(source))
     if (a.cell_id) {
       const pid = await pageOfCell(a.cell_id, a.page_id)
@@ -1014,12 +1152,27 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       for (const s of pick) refs.push(await imageAsBase64(s))
     }
     if (!refs.length) throw new ToolError('Give source (attachment:<sha>, asset://..., or a URL) or cell_id.')
+    const region = a.region && typeof a.region === 'object' ? a.region : null
+    if (region) for (let i = 0; i < refs.length; i++) refs[i] = await cropImage(refs[i], region)
+    const zoomed = region ? ` (zoomed: x ${pct(region.x)}, y ${pct(region.y)}, ${pct(region.w)} wide, ${pct(region.h)} high)` : ''
     const task = a.question
       ? `Answer from the image(s) only: ${a.question}\nBe specific (exact labels, values, positions, arrow directions). If the image does not show the answer, say so.\n\n${FIGURE_RULES}`
       : a.task === 'describe'
         ? `Describe the image(s) completely and precisely, for someone who cannot see it and must rebuild it from your words.\nStart with one line: what kind of image it is and what it is about. Then give every visible text exactly, and describe every figure as below.\n\n${FIGURE_RULES}`
         : `Transcribe everything in the image(s) exactly as written, in reading order, as Markdown: headings, bullet and numbered lists, tables as Markdown tables, every formula as LaTeX ($...$ inline, $$...$$ for display). Keep the original wording, symbols and order. Do not add, explain, summarize or correct text.\nWhere the image has a diagram, chart, drawing or other figure, do not skip it: at that point in the reading order write a block starting with "[Figure]" that describes it as below.\nOutput only the transcription.\n\n${FIGURE_RULES}`
-    const model = MODELS.find((m) => m.vision)?.id || DEFAULT_MODEL
+    const what = a.question ? 'Looked at the image' : a.task === 'describe' ? 'Described the image' : 'Read the image'
+    // A model that can see gets the picture itself, in this same conversation.
+    if (modelInfo(env.model).vision) {
+      const images = await toRefs(refs)
+      const many = images.length > 1
+      const job = a.question ? `Answer from ${many ? 'them' : 'it'}: ${a.question}` : a.task === 'describe' ? `Describe ${many ? 'them' : 'it'} as needed.` : `Read ${many ? 'them' : 'it'} as needed.`
+      return {
+        ...ok(`${many ? `${images.length} images are` : 'The image is'} attached right after this result as real image input${zoomed}. Look at ${many ? 'them' : 'it'} yourself. ${job}`, `${region ? 'Zoomed into the image' : what}${many ? ` (${images.length})` : ''}`),
+        images,
+      }
+    }
+    const model = eyesFor(env.model)
+    const started = Date.now()
     const res = await agentApi.complete({
       model,
       // No thinking: it is much faster, and the figure rules above keep the reading careful.
@@ -1030,8 +1183,52 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       messages: [{ role: 'user', content: task, images: refs }],
     })
     if (!res.ok || !res.content?.trim()) throw new ToolError(`Could not read the image (${res.error || 'empty answer'}).`)
-    const what = a.question ? 'Looked at the image' : a.task === 'describe' ? 'Described the image' : 'Read the image'
-    return ok(`From ${model}, which looked at the image for you:\n${res.content.trim()}`, `${what}${refs.length > 1 ? ` (${refs.length})` : ''}`)
+    return {
+      ...ok(`${model === env.model ? 'What you see in it (your own vision)' : `From ${model}, which looked at the image for you`}:\n${res.content.trim()}`, `${what}${refs.length > 1 ? ` (${refs.length})` : ''}`),
+      helper: { model: modelInfo(model).name, ms: Date.now() - started, text: res.content.trim() },
+    }
+  },
+
+  async check_drawing(a, env) {
+    const pid = await pageOfCell(a.cell_id, a.page_id)
+    const c = findCell(await loadPage(pid), a.cell_id)
+    const all = drawingsIn(c.html)
+    if (!all.length) throw new ToolError(`Cell [${c.id}] has no drawing (no mermaid, wavedrom, chart or widget block).`)
+    const d = all[(Number(a.index) || 1) - 1]
+    if (!d) throw new ToolError(`Cell [${c.id}] has ${all.length} drawing(s); index starts at 1.`)
+    const shot = await shootDrawing(d, c.w)
+    if (!shot.ok || !shot.png) throw new ToolError(`Could not draw it (${shot.error || 'no picture'}).`)
+    const errors = shot.errors?.length ? `\nERRORS while drawing: ${shot.errors.join(' | ')}` : ''
+    const intent = a.intended ? `\nIntended content: ${String(a.intended).slice(0, 1500)}` : ''
+    // A model that can see looks at the rendered picture itself.
+    if (modelInfo(env.model).vision) {
+      return {
+        ...ok(
+          `Drawing ${d.index} (${FENCE_OF[d.kind]}) in cell [${c.id}] is rendered (${shot.width}x${shot.height}px) and attached right after this result, exactly as the user sees it. Look at it yourself: check that it shows what you meant${intent ? ' (below)' : ''}, and look for overlapping or cut off text, labels outside their boxes, unreadable contrast, lines through labels, tangled wiring, tiny text or error messages.${errors}${intent}\nFix real problems by updating the source (at most two rounds); ignore nitpicks.`,
+          `Checked the drawing`,
+          { pageId: pid, cellId: c.id },
+        ),
+        images: await toRefs([shot.png]),
+      }
+    }
+    const model = eyesFor(env.model)
+    const started = Date.now()
+    const res = await agentApi.complete({
+      model,
+      think: false,
+      options: { temperature: 0.1, num_predict: 1800, repeat_penalty: 1.1 },
+      timeout_ms: 120_000,
+      messages: [{ role: 'user', content: `${DRAWING_CHECK}${intent}`, images: [shot.png] }],
+    })
+    if (!res.ok || !res.content?.trim()) throw new ToolError(`Could not look at it (${res.error || 'empty answer'}).${errors}`)
+    return {
+      ...ok(
+        `Drawing ${d.index} (${FENCE_OF[d.kind]}) in cell [${c.id}], ${shot.width}x${shot.height}px, as seen by ${model}:${errors}\n${res.content.trim()}\nFix real problems by updating the source (at most two rounds); ignore nitpicks.`,
+        `Checked the drawing`,
+        { pageId: pid, cellId: c.id },
+      ),
+      helper: { model: modelInfo(model).name, ms: Date.now() - started, text: res.content.trim() },
+    }
   },
 
   async focus(a) {
@@ -1224,6 +1421,53 @@ const FIGURE_RULES = `How to describe a figure:
 - Only what is visible: no outside knowledge, no interpretation presented as content. Mark unreadable text as [unclear] and anything you are unsure of as (uncertain).`
 
 /** An image src from the notes (data:, asset://, or a web URL) as plain base64 for the model. */
+/** A chat attachment id; models sometimes garble the long hash, so one that starts and ends the same is taken. */
+function attachmentSha(id: string, env: ToolEnv) {
+  if (env.attachments.has(id)) return id
+  const near = [...env.attachments.keys()].filter((k) => k.slice(0, 12) === id.slice(0, 12) && k.slice(-12) === id.slice(-12))
+  return near.length === 1 ? near[0] : id
+}
+
+const pct = (v: unknown) => `${Math.round((Number(v) || 0) * 100)}%`
+
+/** Bytes of an image reference ("sha:<hash>" or base64). */
+async function refBytes(ref: string) {
+  if (!ref.startsWith('sha:')) return ref
+  const b64 = await chatApi.getBlob(ref.slice(4))
+  if (!b64) throw new ToolError('That image is not on this computer.')
+  return b64
+}
+
+/** One part of an image (fractions of its size), enlarged so small writing becomes readable. */
+async function cropImage(ref: string, r: { x?: number; y?: number; w?: number; h?: number }) {
+  const b64 = await refBytes(ref)
+  const img = new Image()
+  img.src = `data:image/${b64.startsWith('/9j/') ? 'jpeg' : 'png'};base64,${b64}`
+  try {
+    await img.decode()
+  } catch {
+    throw new ToolError('Could not open the image to zoom in.')
+  }
+  const W = img.naturalWidth
+  const H = img.naturalHeight
+  const f = (v: unknown, d: number) => Math.min(1, Math.max(0, Number.isFinite(Number(v)) ? Number(v) : d))
+  const x = f(r.x, 0)
+  const y = f(r.y, 0)
+  const sw = Math.max(8, Math.round(f(r.w, 1 - x) * W))
+  const sh = Math.max(8, Math.round(f(r.h, 1 - y) * H))
+  const sx = Math.min(W - sw, Math.round(x * W))
+  const sy = Math.min(H - sh, Math.round(y * H))
+  // Up to 3x, at most 1600 px on the long side.
+  const k = Math.min(3, 1600 / Math.max(sw, sh))
+  const c = document.createElement('canvas')
+  c.width = Math.round(sw * k)
+  c.height = Math.round(sh * k)
+  const g = c.getContext('2d')!
+  g.imageSmoothingQuality = 'high'
+  g.drawImage(img, Math.max(0, sx), Math.max(0, sy), sw, sh, 0, 0, c.width, c.height)
+  return c.toDataURL('image/jpeg', 0.92).split(',')[1]
+}
+
 async function imageAsBase64(src: string): Promise<string> {
   const data = /^data:image\/[\w.+-]+;base64,(.+)$/i.exec(src)
   if (data) return data[1]
@@ -1283,4 +1527,4 @@ export async function runTool(name: string, args: Args, env: ToolEnv): Promise<T
 }
 
 /** Tools that only read: they never need an undo point. */
-export const READ_ONLY = new Set(['view_image', 'web_search', 'web_fetch', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'recent_notes', 'get_settings', 'ask_user', 'focus'])
+export const READ_ONLY = new Set(['view_image', 'check_drawing', 'web_search', 'web_fetch', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'recent_notes', 'get_settings', 'ask_user', 'focus'])

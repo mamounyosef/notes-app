@@ -1,0 +1,18 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-blank.js",
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'beam', think: false }); return 'beam' })()"
+  ],
+  "prompts": [
+    "Make a flowchart of how a microcontroller boots, from reset to main(). Then check the drawing."
+  ],
+  "shots": ["p1"],
+  "eval": [
+    "(() => [...document.querySelectorAll('.ag-helper')].map(b => b.textContent))()"
+  ],
+  "finalShots": [
+    { "name": "badge-open", "eval": "(() => { const b = document.querySelector('.ag-helper'); b && b.click(); return !!b })()" }
+  ]
+}

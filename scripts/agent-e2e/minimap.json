@@ -1,0 +1,11 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-minimap.js",
+  "eval": [
+    "(() => { const m = document.querySelector('.minimap svg'); const v = document.querySelector('.mm-view'); return m && { map: [m.getAttribute('width'), m.getAttribute('height')], view: v && [v.getAttribute('x'), v.getAttribute('y'), v.getAttribute('width'), v.getAttribute('height')], cells: document.querySelectorAll('.mm-cell').length } })()",
+    "(() => { const s = document.querySelector('.minimap svg'); const r = s.getBoundingClientRect(); const o = { bubbles: true, button: 0, pointerId: 1, clientX: r.right - 8, clientY: r.bottom - 8 }; s.dispatchEvent(new PointerEvent('pointerdown', o)); s.dispatchEvent(new PointerEvent('pointerup', o)); return true })()",
+    "new Promise(r => setTimeout(() => { const w = document.querySelector('.canvas-wrap'); r({ left: w.scrollLeft, top: w.scrollTop, maxLeft: w.scrollWidth - w.clientWidth, maxTop: w.scrollHeight - w.clientHeight }) }, 900))"
+  ],
+  "shots": ["start", "end"]
+}

@@ -1,18 +1,21 @@
 import React, { useEffect, useState } from 'react'
 import { agentApi } from '../../agent/api'
 import { useAgent } from '../../agent/store'
-import { MODELS, DEFAULT_MODEL, modelInfo, fmtCtx, paramsLabel } from '../../agent/models'
+import { MODELS, DEFAULT_MODEL, PROVIDER_LABEL, modelInfo, fmtCtx, paramsLabel, type Provider } from '../../agent/models'
 
-/** Settings, AI: the Ollama key (this computer only), model and thinking. */
-export default function AiSettings() {
-  const prefs = useAgent((s) => s.prefs)
-  const setPrefs = useAgent((s) => s.setPrefs)
+/** One service's API key, kept on this computer only. */
+function KeyRow({ provider, hint }: { provider: Provider; hint: string }) {
   const [status, setStatus] = useState<{ hasKey: boolean; masked: string } | null>(null)
   const [key, setKey] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const refresh = () => agentApi.keyStatus().then(setStatus)
+  const [limits, setLimits] = useState('')
+  const refresh = () => {
+    agentApi.keyStatus(provider).then(setStatus)
+    if (provider === 'openrouter')
+      agentApi.openrouterLimits().then((l) => setLimits(l.ok && l.freeLimit ? ` Free requests today: ${l.freeUsed ?? 0} of ${l.freeLimit} used.` : ''))
+  }
   useEffect(() => {
     refresh()
   }, [])
@@ -20,7 +23,7 @@ export default function AiSettings() {
   const save = async (value: string) => {
     setBusy(true)
     setMsg('')
-    const r = await agentApi.setKey(value)
+    const r = await agentApi.setKey(value, provider)
     setBusy(false)
     if (!r.ok) setMsg(r.error || 'Could not save the key.')
     else {
@@ -32,13 +35,12 @@ export default function AiSettings() {
   }
 
   return (
-    <div className="set-group ai-settings">
-      <h3>Assistant</h3>
+    <>
       <div className="set-row">
         <label>
-          Ollama API key
+          {PROVIDER_LABEL[provider]} API key
           <span className="sub">
-            {status?.hasKey ? `Saved on this computer (${status.masked}), encrypted by Windows.` : 'Not set. Create one at ollama.com, Settings, Keys.'}
+            {status?.hasKey ? `Saved on this computer (${status.masked}), encrypted by Windows.${limits}` : `Not set. ${hint}`}
           </span>
         </label>
         <div className="row-inline">
@@ -48,6 +50,19 @@ export default function AiSettings() {
         </div>
       </div>
       {msg && <div className="empty-hint" style={{ padding: '2px 0 8px' }}>{msg}</div>}
+    </>
+  )
+}
+
+/** Settings, AI: the service keys (this computer only), model and thinking. */
+export default function AiSettings() {
+  const prefs = useAgent((s) => s.prefs)
+  const setPrefs = useAgent((s) => s.setPrefs)
+  return (
+    <div className="set-group ai-settings">
+      <h3>Assistant</h3>
+      <KeyRow provider="ollama" hint="Create one at ollama.com, Settings, Keys." />
+      <KeyRow provider="openrouter" hint="For the free OpenRouter models. Create one at openrouter.ai, Keys." />
       <div className="set-row">
         <label>
           Model
@@ -55,7 +70,7 @@ export default function AiSettings() {
         </label>
         <select value={prefs.model} onChange={(e) => setPrefs({ model: e.target.value })} style={{ width: 200 }}>
           {MODELS.map((m) => (
-            <option key={m.id} value={m.id}>{m.name}</option>
+            <option key={m.id} value={m.id}>{m.name} ({PROVIDER_LABEL[m.provider]})</option>
           ))}
         </select>
       </div>
@@ -75,7 +90,7 @@ export default function AiSettings() {
       </div>
       <div className="empty-hint" style={{ padding: '6px 0' }}>
         Ctrl+J opens the assistant, Ctrl+L sends the selection to it. Chats sync between your computers through cloud sync.
-        The key stays on each computer, so enter it on the laptop too.
+        Keys stay on each computer, so enter them on the laptop too.
       </div>
     </div>
   )

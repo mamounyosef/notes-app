@@ -450,7 +450,15 @@ export const useStore = create<State>((set, get) => ({
 
     const workspace = ws && ws.tree?.length ? withLocal(ws) : emptyWorkspace()
     const settings = { ...DEFAULT_SETTINGS, ...(settingsBase || {}) }
-    set({ workspace, settings, vaultPath: vault, ready: true })
+    const zoom = typeof local?.zoom === 'number' ? local.zoom : 1
+    set({ workspace, settings, vaultPath: vault, ready: true, zoom })
+    // The zoom step default went from 10% to 5%: move the old default over, once.
+    try {
+      if (!localStorage.getItem('zoomStep5')) {
+        localStorage.setItem('zoomStep5', '1')
+        if (settings.zoomStep === 0.1) get().setSettings({ zoomStep: 0.05 })
+      }
+    } catch {}
     // An empty folder shows the starter tree without writing it: if cloud
     // sync is about to fill the folder, the real tree simply replaces it.
     starterOnly = !ws || !ws.tree?.length
@@ -1171,7 +1179,10 @@ export const useStore = create<State>((set, get) => ({
   },
 
   setZoom(z) {
-    set({ zoom: Math.min(3, Math.max(0.3, Number(z.toFixed(2)))) })
+    const zoom = Math.min(3, Math.max(0.3, Number(z.toFixed(2))))
+    local = { ...local, zoom }
+    saveLocalSoon()
+    set({ zoom })
   },
 
   setTool(t) {

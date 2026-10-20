@@ -1,0 +1,14 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-blank.js",
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'beam', think: true }); return 'beam' })()"
+  ],
+  "prompts": [
+    "Draw a timing diagram of one SPI transfer: CS goes low, SCLK runs 8 cycles, MOSI sends 0xA5 bit by bit, then CS goes high.",
+    "Make a flowchart of how a microcontroller handles an interrupt, from the interrupt request to returning to the main program.",
+    "Make a chart comparing the clock speed and the RAM of Arduino Uno, ESP32, STM32F4 and Raspberry Pi Pico."
+  ],
+  "shots": ["p1", "p2", "p3"]
+}

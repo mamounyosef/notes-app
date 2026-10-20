@@ -1,0 +1,17 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-blank.js",
+  "prompts": [],
+  "eval": [
+    "(async () => { const D = __notesDebug; const env = { rec: new D.TurnRecorder(), attachments: new Map(), ask: async () => '' }; const r = await D.runTool('create_cells', { cells: [ { title: 'Flow', x: 40, y: 120, w: 520, content: '```mermaid\\nflowchart TD\\n  A([Start]) --> B[Read sensor]\\n  B --> C{\"Value > 50?\"}\\n  C -->|yes| D[Turn on fan]\\n  C -->|no| B\\n```' }, { title: 'Logic', x: 600, y: 120, w: 520, content: '```wavedrom\\n{ assign: [ [\"Y\", [\"|\", [\"&\", \"A\", \"B\"], [\"~\", \"C\"]]] ] }\\n```' }, { title: 'Timing', x: 600, y: 420, w: 520, content: '```wavedrom\\n{ signal: [ { name: \"clk\", wave: \"p.....\" }, { name: \"en\", wave: \"01..0.\" }, { name: \"data\", wave: \"x.34x.\", data: [\"A\", \"B\"] } ] }\\n```' }, { title: 'Chart', x: 40, y: 560, w: 520, content: '```chart\\n{ type: \"bar\", data: { labels: [\"Q1\",\"Q2\",\"Q3\"], datasets: [{ label: \"Sales\", data: [12, 19, 7] }] }, height: 220 }\\n```' }, { title: 'Widget', x: 600, y: 760, w: 520, content: '```widget\\n<div class=\"card\"><b>Truth table</b> for $Y = A \\\\land B$<div class=\"row\"><button id=a>A=0</button><button id=b>B=0</button><span id=y>Y=0</span></div></div><script>let A=0,B=0;const u=()=>{a.textContent=\"A=\"+A;b.textContent=\"B=\"+B;y.textContent=\"Y=\"+(A&B)};a.onclick=()=>{A^=1;u()};b.onclick=()=>{B^=1;u()}</script>\\n```' }, { title: 'Broken', x: 40, y: 900, w: 400, content: '```mermaid\\nflowchart TD\\n  A[Start --> \\n```' } ] }, env); return r.content })()",
+    "(async () => { await new Promise(r => setTimeout(r, 4000)); const p = __notesDebug.useStore.getState().page; const md = p.cells.map(c => __notesDebug.htmlToAgent(c.html)).join('\\n----\\n'); return md.slice(0, 1500) })()"
+  ],
+  "shots": [],
+  "finalShots": [
+    {
+      "eval": "(async()=>{const S=__notesDebug.useStore.getState();S.setZoom(0.5);document.querySelector('.agent-panel')&&__notesDebug.useAgent.getState().toggle(false);return 1})()",
+      "name": "all"
+    }
+  ]
+}

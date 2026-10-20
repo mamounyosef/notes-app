@@ -1,0 +1,16 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-blank.js",
+  "blobs": ["68c1cfc323af313e0943b4e33d202d899bd4f4a557b1b95b2f486448546ec56a"],
+  "before": [
+    "(() => { const A = __notesDebug.useAgent.getState(); A.setPrefs({ model: 'minimax/minimax-m3.1-flash:free', think: true }); A.addAttachment({ sha: '68c1cfc323af313e0943b4e33d202d899bd4f4a557b1b95b2f486448546ec56a', name: 'whiteboard.jpg', mime: 'image/jpeg', kind: 'image', size: 882000 }); return 'attached' })()"
+  ],
+  "prompts": [
+    "Read the truth table on this whiteboard (bottom left) exactly, row by row, and tell me which gate it is. Reply in chat only, do not touch my notes."
+  ],
+  "eval": [
+    "(() => { const c = __notesDebug.useAgent.getState().chat; return c.messages.filter(m => m.role === 'tool').map(m => `${m.toolName} ${m.meta.summary} imgs=${(m.meta.images || []).length}`) })()"
+  ],
+  "shots": ["p1"]
+}

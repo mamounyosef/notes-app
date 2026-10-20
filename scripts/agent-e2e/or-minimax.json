@@ -1,0 +1,18 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-blank.js",
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'minimax/minimax-m3.1-flash:free', think: true }); return 'minimax' })()"
+  ],
+  "prompts": [
+    "Add a cell with a sequence diagram of the TCP three-way handshake, with one line explaining each step. Then check the drawing."
+  ],
+  "shots": ["p1"],
+  "eval": [
+    "(() => { const c = __notesDebug.useAgent.getState().chat; return c && c.messages.map(m => `${m.role}${m.toolName ? ':' + m.toolName : ''} ${(m.content || '').slice(0, 120)}`) })()"
+  ],
+  "finalShots": [
+    { "name": "picker", "eval": "(() => { const b = document.querySelector('.mp-btn'); b && b.click(); return !!b })()" }
+  ]
+}

@@ -439,11 +439,15 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
                 <Toggle k="snapToGrid" label="Snap cells to the grid" />
               </div>
               <div className="set-group">
+                <h3>Map</h3>
+                <Toggle k="showMinimap" label="Show the page map" sub="A small picture of the whole page in the corner. Click or drag in it to move around." />
+              </div>
+              <div className="set-group">
                 <h3>Navigation</h3>
                 <Choice k="panButton" label="Pan the page with" options={[
                   { v: 'right', l: 'Right mouse drag' }, { v: 'middle', l: 'Middle mouse drag' }, { v: 'space', l: 'Space and drag' },
                 ]} />
-                <Num k="zoomStep" label="Zoom step" sub="Ctrl and mouse wheel" min={0.02} max={0.4} step={0.02} />
+                <Num k="zoomStep" label="Zoom step" sub="Ctrl and mouse wheel" min={0.01} max={0.4} step={0.01} />
               </div>
               <div className="set-group">
                 <h3>Pen and highlighter</h3>

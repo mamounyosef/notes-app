@@ -8,14 +8,14 @@ import { nanoid } from 'nanoid'
 import { agentApi, chatApi, type Chat, type ChatAttachment, type ChatMessage, type ChatSummary } from './api'
 import { buildContext } from './context'
 import { SYSTEM_PROMPT } from './prompt'
-import { TOOL_DEFS, READ_ONLY, TurnRecorder, keepSnapshot, runTool, undoTurn, scrollToCell } from './tools'
+import { TOOL_DEFS, READ_ONLY, eyesFor, TurnRecorder, keepSnapshot, runTool, undoTurn, scrollToCell } from './tools'
 import { storage } from '../lib/storage'
 import { useStore, findNode } from '../store'
 import type { LiveSelection } from './selection'
 import { activePath, messageOrder, PENDING, parentKey, ROOT, tipOf, treeOf } from './branches'
 export { messageOrder }
 
-import { DEFAULT_MODEL, modelInfo, thinkValue, costOf } from './models'
+import { DEFAULT_MODEL, MODELS, VISION_MODEL, modelInfo, thinkValue, costOf } from './models'
 export { DEFAULT_MODEL }
 const MAX_STEPS = 30
 const PREFS_KEY = 'agent-prefs-v1'
@@ -41,13 +41,63 @@ const defaultPrefs: Prefs = { open: false, mode: 'pane', width: 400, model: DEFA
 
 function loadPrefs(): Prefs {
   try {
-    return { ...defaultPrefs, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }
+    const p: Prefs = { ...defaultPrefs, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }
+    // A model that was taken off the list falls back to the default.
+    if (!MODELS.some((m) => m.id === p.model)) p.model = DEFAULT_MODEL
+    return p
   } catch {
     return defaultPrefs
   }
 }
 
+/** A message typed while the agent was working, waiting for its turn. */
+export interface Queued {
+  id: string
+  chatId: string
+  text: string
+  attachments: ChatAttachment[]
+  mentions: Mention[]
+  quote: string | null
+  /** The selection when it was queued, so it is not lost while waiting. */
+  selection: LiveSelection | null
+  at: number
+}
+
+const QUEUE_KEY = 'agent-queue-v1'
+
+function loadQueue(): Queued[] {
+  try {
+    const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]')
+    return Array.isArray(q) ? q : []
+  } catch {
+    return []
+  }
+}
+
+function saveQueue(q: Queued[]) {
+  try {
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(q))
+  } catch {
+    /* ignore */
+  }
+}
+
 interface AgentState {
+  /** Messages waiting to be sent, oldest first, for every chat. */
+  queue: Queued[]
+  /** Chats whose queue is on hold, with the reason shown to the user. */
+  queueHold: Record<string, string>
+  /** Puts the composer's message in the queue. */
+  enqueue(): void
+  /** Sends a queued message (or the composer's) right away, cutting the running reply short. */
+  sendNow(id?: string): Promise<void>
+  unqueue(id: string): void
+  editQueued(id: string, text: string): void
+  /** Moves a queued message to a new position (index in this chat's queue). */
+  moveQueued(id: string, to: number): void
+  resumeQueue(): void
+  clearQueue(): void
+
   prefs: Prefs
   setPrefs(p: Partial<Prefs>): void
   toggle(open?: boolean): void
@@ -115,6 +165,10 @@ function stamp() {
 
 let currentReq: string | null = null
 let stopped = false
+/** The agent run in progress, so "send now" can wait for it to wind down. */
+let running: Promise<void> | null = null
+/** Set while "send now" cuts a reply short, so the queue does not pause for it. */
+let jumping = false
 let saveTimer: any = null
 
 function persist(chat: Chat) {
@@ -155,8 +209,26 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL): any[] {
   const withImages = new Set(
     msgs.filter((m) => m.role === 'user' && m.attachments?.some((a) => a.kind === 'image' || a.pages?.length)).slice(-4).map((m) => m.id),
   )
+  // Pictures tools handed over: only the last few go along, to keep requests light.
+  const toolPics = new Set(msgs.filter((m) => m.role === 'tool' && m.meta?.images?.length).slice(-4).map((m) => m.id))
+  // Pictures the model already gets with a message, so a tool never sends one twice.
+  const sentPics = new Set<string>()
+  if (canSee)
+    for (const m of msgs)
+      if (withImages.has(m.id))
+        for (const a of m.attachments || []) {
+          if (a.kind === 'image') sentPics.add(`sha:${a.sha}`)
+          for (const p of (a.pages || []).slice(0, 20)) sentPics.add(`sha:${p}`)
+        }
   const out: any[] = [{ role: 'system', content: SYSTEM_PROMPT }]
+  // They follow the whole run of tool results, since results must come right after their calls.
+  let pics: any[] = []
+  const flushPics = () => {
+    out.push(...pics)
+    pics = []
+  }
   msgs.forEach((m, i) => {
+    if (m.role !== 'tool') flushPics()
     const recent = i > lastUserIdx - 1
     if (m.role === 'user') {
       const parts: string[] = []
@@ -198,9 +270,20 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL): any[] {
       out.push(msg)
     } else if (m.role === 'tool') {
       const body = recent ? m.content : m.content.length > 1500 ? `${m.content.slice(0, 1500)}\n...(older result cut)` : m.content
-      out.push({ role: 'tool', tool_name: m.toolName, content: body })
+      const imgs = m.meta?.images || []
+      // The same picture already went along with a message: say so instead of sending it again.
+      if (imgs.length && canSee && imgs.every((r) => sentPics.has(r))) {
+        out.push({ role: 'tool', tool_name: m.toolName, content: `${body}\n(It is the same picture already attached above, which you can see: look at it there. Use region to zoom into a part.)` })
+      } else if (imgs.length && canSee && toolPics.has(m.id)) {
+        out.push({ role: 'tool', tool_name: m.toolName, content: body })
+        pics.push({ role: 'user', content: `(The picture${imgs.length > 1 ? 's' : ''} from ${m.toolName}, as real image input:)`, images: imgs })
+      } else if (imgs.length) {
+        const why = canSee ? 'no longer attached (older)' : 'not visible to you: call view_image to have it read'
+        out.push({ role: 'tool', tool_name: m.toolName, content: `${body}\n(The picture is ${why}.)` })
+      } else out.push({ role: 'tool', tool_name: m.toolName, content: body })
     }
   })
+  flushPics()
   return out
 }
 
@@ -339,6 +422,97 @@ export const useAgent = create<AgentState>((set, get) => {
   }
 
   async function runLoop() {
+    let finished!: () => void
+    running = new Promise<void>((r) => (finished = r))
+    const runChat = get().chat?.id || ''
+    try {
+      await runTurn()
+    } finally {
+      finished()
+      running = null
+      afterRun(runChat)
+    }
+  }
+
+  /** When a reply ends: send the next queued message, or hold the queue if the run did not end on its own. */
+  function afterRun(chatId: string) {
+    if (jumping || !chatId || !get().queue.some((q) => q.chatId === chatId)) return
+    const why =
+      get().chat?.id !== chatId ? 'Paused while you were in another chat'
+      : stopped ? 'Paused because you stopped the reply'
+      : get().error ? 'Paused after an error'
+      : ''
+    if (why) set({ queueHold: { ...get().queueHold, [chatId]: why } })
+    else setTimeout(pump, 350)
+  }
+
+  /** Sends the next queued message of the open chat, if it is free to go. */
+  function pump() {
+    const s = get()
+    const id = s.chat?.id
+    if (!id || s.busy || s.pendingAsk || s.queueHold[id]) return
+    const next = s.queue.find((q) => q.chatId === id)
+    if (!next) return
+    setQueue(s.queue.filter((q) => q.id !== next.id))
+    sendItem(next, { queued: { waitedMs: Date.now() - next.at } })
+  }
+
+  function setQueue(queue: Queued[]) {
+    set({ queue })
+    saveQueue(queue)
+  }
+
+  /** The live selection, if it still points at cells on the open page and was not dismissed. */
+  function currentSelection() {
+    const live = get().selection
+    const onPage = new Set(useStore.getState().page?.cells.map((c) => c.id) || [])
+    return live && live.key !== get().selectionDismissed && live.cellIds.some((id) => onPage.has(id)) ? live : null
+  }
+
+  /** Takes what is in the composer, and empties it. */
+  function takeComposer(textArg?: string): Omit<Queued, 'id' | 'chatId' | 'at'> | null {
+    const text = (textArg ?? get().draft).trim()
+    const { attachments, mentions, quote } = get()
+    if (!text && !attachments.length) return null
+    set({ draft: '', attachments: [], mentions: [], quote: null })
+    return { text, attachments, mentions, quote, selection: currentSelection() }
+  }
+
+  async function sendItem(item: Omit<Queued, 'id' | 'chatId' | 'at'>, mark: Partial<NonNullable<ChatMessage['meta']>> = {}) {
+    if (!get().chat) get().newChat()
+    const { text, attachments, mentions, quote, selection: sel } = item
+    // Pages pointed at with @ are read now, so the agent sees their content.
+    const mentionPages: Record<string, any> = {}
+    for (const m of mentions) {
+      if (m.kind !== 'page') continue
+      const st = useStore.getState()
+      if (st.page?.id === m.id) mentionPages[m.id] = st.page
+      else mentionPages[m.id] = (await storage.readPage(m.id).catch(() => null))?.data || null
+    }
+    const ctx = buildContext({ mentions, mentionPages, ignoreSelection: true })
+    // Later than anything already in the chat, even if it came from a computer whose clock runs ahead.
+    for (const m of get().chat?.messages || []) lastStamp = Math.max(lastStamp, m.at || 0)
+    const msg: ChatMessage = {
+      id: nanoid(14),
+      at: stamp(),
+      v: 1,
+      role: 'user',
+      content: text,
+      attachments: attachments.length ? attachments : undefined,
+      meta: {
+        context: ctx.full,
+        brief: ctx.brief,
+        mentions: mentions.length ? mentions : undefined,
+        quote: quote || undefined,
+        selection: sel ? { kind: sel.kind, label: sel.label, text: sel.text.slice(0, 12000), cellIds: sel.cellIds, cellTitle: sel.cellTitle } : undefined,
+        ...mark,
+      },
+    }
+    pushMsg(msg)
+    await runLoop()
+  }
+
+  async function runTurn() {
     stopped = false
     const rec = new TurnRecorder()
     const turnId = nanoid(10)
@@ -380,10 +554,11 @@ export const useAgent = create<AgentState>((set, get) => {
         if (!reply.toolCalls?.length) break
         for (const call of reply.toolCalls) {
           if (stopped) break
-          set({ activity: labelFor(call.name) })
+          set({ activity: labelFor(call.name, get().prefs.model || DEFAULT_MODEL) })
           const env = {
             rec,
             attachments: attachmentsOf(),
+            model: get().prefs.model || DEFAULT_MODEL,
             ask: (q: { question: string; options?: string[]; multi?: boolean }) =>
               new Promise<string>((resolve) => {
                 const askMsg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', meta: { ask: { ...q } } }
@@ -403,7 +578,13 @@ export const useAgent = create<AgentState>((set, get) => {
             role: 'tool',
             toolName: call.name,
             content: result.content,
-            meta: { summary: result.summary, ok: result.ok, ...(result.target ? { target: result.target } : {}) } as any,
+            meta: {
+              summary: result.summary,
+              ok: result.ok,
+              ...(result.target ? { target: result.target } : {}),
+              ...(result.helper ? { helper: result.helper } : {}),
+              ...(result.images ? { images: result.images, eyes: modelInfo(get().prefs.model || DEFAULT_MODEL).name } : {}),
+            } as any,
           })
         }
       }
@@ -501,6 +682,9 @@ export const useAgent = create<AgentState>((set, get) => {
       if (get().busy) get().stop()
       const c = await chatApi.get(id)
       if (c) set({ chat: c, error: null, draft: '', attachments: [], mentions: [], quote: null, usage: lastUsage(c) })
+      // Wait for the run being stopped to wind down before the queue may move.
+      await running
+      pump()
     },
     newChat() {
       if (get().busy) get().stop()
@@ -613,43 +797,72 @@ export const useAgent = create<AgentState>((set, get) => {
         }
         return
       }
-      if (get().busy) return
-      const { attachments, mentions, quote } = get()
-      if (!text && !attachments.length) return
-      if (!get().chat) get().newChat()
-      // Pages pointed at with @ are read now, so the agent sees their content.
-      const mentionPages: Record<string, any> = {}
-      for (const m of mentions) {
-        if (m.kind !== 'page') continue
-        const st = useStore.getState()
-        if (st.page?.id === m.id) mentionPages[m.id] = st.page
-        else mentionPages[m.id] = (await storage.readPage(m.id).catch(() => null))?.data || null
+      // While it works, Enter lines the message up instead.
+      if (get().busy) return get().enqueue()
+      const item = takeComposer(textArg)
+      if (item) await sendItem(item)
+    },
+
+    queue: loadQueue(),
+    // Messages left from the last session wait until you say go.
+    queueHold: Object.fromEntries(loadQueue().map((q) => [q.chatId, 'Left over from last time'])),
+    enqueue() {
+      const chatId = get().chat?.id
+      if (!chatId) return
+      const item = takeComposer()
+      if (!item) return
+      setQueue([...get().queue, { ...item, id: nanoid(10), chatId, at: Date.now() }])
+      // Nothing running (it finished as you typed): go now.
+      if (!get().busy) pump()
+    },
+    async sendNow(id) {
+      const s = get()
+      const queued = id ? s.queue.find((q) => q.id === id) : null
+      if (id && !queued) return
+      const item = queued || takeComposer()
+      if (!item) return
+      if (queued) setQueue(get().queue.filter((q) => q.id !== id))
+      const chatId = s.chat?.id
+      const cut = s.busy
+      if (cut) {
+        jumping = true
+        get().stop()
+        await running
+        jumping = false
       }
-      const ctx = buildContext({ mentions, mentionPages, ignoreSelection: true })
-      // Later than anything already in the chat, even if it came from a computer whose clock runs ahead.
-      for (const m of get().chat?.messages || []) lastStamp = Math.max(lastStamp, m.at || 0)
-      const live = get().selection
-      // A selection only counts while its cells are on the open page (not one left behind on another page).
-      const onPage = new Set(useStore.getState().page?.cells.map((c) => c.id) || [])
-      const sel = live && live.key !== get().selectionDismissed && live.cellIds.some((id) => onPage.has(id)) ? live : null
-      const msg: ChatMessage = {
-        id: nanoid(14),
-        at: stamp(),
-        v: 1,
-        role: 'user',
-        content: text,
-        attachments: attachments.length ? attachments : undefined,
-        meta: {
-          context: ctx.full,
-          brief: ctx.brief,
-          mentions: mentions.length ? mentions : undefined,
-          quote: quote || undefined,
-          selection: sel ? { kind: sel.kind, label: sel.label, text: sel.text.slice(0, 12000), cellIds: sel.cellIds, cellTitle: sel.cellTitle } : undefined,
-        },
+      if (chatId && get().queueHold[chatId]) {
+        const { [chatId]: _, ...rest } = get().queueHold
+        set({ queueHold: rest })
       }
-      set({ draft: '', attachments: [], mentions: [], quote: null })
-      pushMsg(msg)
-      await runLoop()
+      await sendItem(item, cut ? { sentNow: true } : {})
+    },
+    unqueue(id) {
+      setQueue(get().queue.filter((q) => q.id !== id))
+    },
+    editQueued(id, text) {
+      setQueue(get().queue.map((q) => (q.id === id ? { ...q, text: text.trim() } : q)).filter((q) => q.text || q.attachments.length))
+    },
+    moveQueued(id, to) {
+      const chatId = get().chat?.id
+      const mine = get().queue.filter((q) => q.chatId === chatId)
+      const from = mine.findIndex((q) => q.id === id)
+      if (from < 0) return
+      const [it] = mine.splice(from, 1)
+      mine.splice(Math.max(0, Math.min(mine.length, to)), 0, it)
+      setQueue([...get().queue.filter((q) => q.chatId !== chatId), ...mine])
+    },
+    resumeQueue() {
+      const chatId = get().chat?.id
+      if (!chatId) return
+      const { [chatId]: _, ...rest } = get().queueHold
+      set({ queueHold: rest })
+      pump()
+    },
+    clearQueue() {
+      const chatId = get().chat?.id
+      setQueue(get().queue.filter((q) => q.chatId !== chatId))
+      const { [chatId || '']: _, ...rest } = get().queueHold
+      set({ queueHold: rest })
     },
 
     answerAsk(answer) {
@@ -689,7 +902,11 @@ export const useAgent = create<AgentState>((set, get) => {
   }
 })
 
-function labelFor(name: string) {
+function labelFor(name: string, chatModel: string) {
+  // These hand a picture to the vision model, so say which model is looking.
+  const eyes = modelInfo(eyesFor(chatModel)).name
+  if (eyes && name === 'view_image') return `${eyes} is reading the image`
+  if (eyes && name === 'check_drawing') return `${eyes} is looking at the drawing`
   const map: Record<string, string> = {
     get_context: 'Looking at your screen',
     list_tree: 'Reading your notebooks',
@@ -698,6 +915,7 @@ function labelFor(name: string) {
     search_notes: 'Searching your notes',
     recent_notes: 'Looking at recent notes',
     view_image: 'Reading the image',
+    check_drawing: 'Looking at the drawing',
     create_cells: 'Adding cells',
     update_cell: 'Updating a cell',
     edit_cell_text: 'Editing text',

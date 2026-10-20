@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import CellView from './CellView'
+import Minimap from './Minimap'
 import { Menu, type MenuItem } from './Menu'
 import { markTouched, useStore } from '../store'
 import type { Cell, Stroke } from '../types'
@@ -33,6 +34,9 @@ export default function Canvas() {
   const store = useStore
 
   const wrapRef = useRef<HTMLDivElement>(null)
+  // The scroll box as state too, for the page map (set after mount, and if it is ever replaced).
+  const [wrapEl, setWrapEl] = useState<HTMLDivElement | null>(null)
+  useEffect(() => setWrapEl(wrapRef.current))
   const canvasRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<Drag>({ mode: 'none' })
   const dragRef = useRef<Drag>({ mode: 'none' })
@@ -437,6 +441,7 @@ export default function Canvas() {
   }
 
   return (
+    <div className="canvas-area">
     <div
       ref={wrapRef}
       className={`canvas-wrap tool-${tool} ${drag.mode === 'pan' ? 'panning' : ''}`}
@@ -673,6 +678,8 @@ export default function Canvas() {
       </div>
 
       {menu && <Menu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
+    </div>
+    {settings.showMinimap !== false && <Minimap wrap={wrapEl} page={page} size={size} zoom={zoom} />}
     </div>
   )
 }

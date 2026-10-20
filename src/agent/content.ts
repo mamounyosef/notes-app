@@ -5,6 +5,7 @@
  */
 import TurndownService from 'turndown'
 import { markdownToHtml, extractMath, escapeAttr } from '../editor/markdown'
+import { FENCE_OF, KIND_OF_FENCE, fromBase64, kindOf, toBase64 } from '../widgets/widget'
 
 const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
 
@@ -97,6 +98,21 @@ td.addRule('columns', {
   replacement: (content, node) =>
     `\n\n[columns${(node as HTMLElement).getAttribute('data-divider') === 'true' ? ' divider' : ''}]\n${content}\n[/columns]\n\n`,
 })
+td.addRule('widget', {
+  filter: (node) => node.nodeType === 1 && (node as HTMLElement).hasAttribute('data-html-embed'),
+  replacement: (_c, node) => {
+    const el = node as HTMLElement
+    const kind = kindOf(el.getAttribute('data-kind'))
+    const opts = [
+      el.getAttribute('data-width') && `width=${el.getAttribute('data-width')}`,
+      el.getAttribute('data-height') && `height=${el.getAttribute('data-height')}`,
+      el.getAttribute('data-align') && `align=${el.getAttribute('data-align')}`,
+    ].filter(Boolean)
+    const body = fromBase64(el.getAttribute('data-html-src') || '')
+    const fence = body.includes('```') ? '~~~~' : '```'
+    return `\n\n${fence}${FENCE_OF[kind]}${opts.length ? ' ' + opts.join(' ') : ''}\n${body}\n${fence}\n\n`
+  },
+})
 td.addRule('column', {
   filter: (node) => node.nodeType === 1 && (node as HTMLElement).getAttribute('data-type') === 'column',
   replacement: (content) => `\n[column]\n${content.trim()}\n[/column]\n`,
@@ -149,9 +165,41 @@ function unescapeNewlines(s: string) {
   return s.replace(/\\n(?![a-z])/g, '\n').replace(/\\t(?![a-z])/g, '\t')
 }
 
+/**
+ * Diagrams and widgets: ```mermaid, ```wavedrom, ```chart and ```widget fences
+ * become HTML blocks. Optional settings after the name: width=600 height=300
+ * align=center (height left out = fit the content).
+ */
+const WIDGET_FENCE = /^([ \t]*)(`{3,}|~{3,})[ \t]*(mermaid|wavedrom|chartjs|chart|html-widget|widget)\b([^\n]*)\n([\s\S]*?)\n[ \t]*\2[ \t]*$/gm
+
+function widgetBlock(lang: string, opts: string, body: string) {
+  const kind = KIND_OF_FENCE[lang] || 'html'
+  const attr = (k: string) => new RegExp(`\\b${k}\\s*=\\s*["']?([\\w.%-]+)`, 'i').exec(opts)?.[1]
+  const width = parseInt(attr('width') || '', 10)
+  const height = parseInt(attr('height') || '', 10)
+  const align = attr('align')
+  return (
+    `<div data-html-embed=""${kind !== 'html' ? ` data-kind="${kind}"` : ''}` +
+    `${width > 0 ? ` data-width="${width}"` : ''}${height > 0 ? ` data-height="${height}"` : ''}` +
+    `${align && /^(center|right)$/.test(align) ? ` data-align="${align}"` : ''}` +
+    ` data-html-src="${toBase64(body.replace(/\s+$/, ''))}">HTML Widget</div>`
+  )
+}
+
 export function agentToHtml(text: string): string {
-  const src = unescapeNewlines(String(text ?? '').replace(/\r\n/g, '\n'))
-  if (!src.trim()) return ''
+  const raw = unescapeNewlines(String(text ?? '').replace(/\r\n/g, '\n'))
+  if (!raw.trim()) return ''
+  if (!WIDGET_FENCE.test(raw)) return contentToHtml(raw)
+  WIDGET_FENCE.lastIndex = 0
+  const blocks: string[] = []
+  const src = raw.replace(WIDGET_FENCE, (_m, _ind, _fence, lang: string, opts: string, body: string) => {
+    blocks.push(widgetBlock(lang.toLowerCase(), opts, body))
+    return `\n\nxxwidget${blocks.length - 1}xx\n\n`
+  })
+  return contentToHtml(src).replace(/(?:<p>\s*)?xxwidget(\d+)xx(?:\s*<\/p>)?/g, (_m, i: string) => blocks[Number(i)])
+}
+
+function contentToHtml(src: string): string {
   // Side by side columns: [columns][column]...[/column][column]...[/column][/columns];
   // [columns divider] draws the thick vertical line between them.
   if (/\[columns(\s+divider)?\]/.test(src)) {
@@ -159,9 +207,9 @@ export function agentToHtml(text: string): string {
       .split(/(\[columns(?:\s+divider)?\][\s\S]*?\[\/columns\])/)
       .map((part) => {
         const m = /^\[columns(\s+divider)?\]([\s\S]*)\[\/columns\]$/.exec(part)
-        if (!m) return part.trim() ? agentToHtml(part) : ''
+        if (!m) return part.trim() ? contentToHtml(part) : ''
         const cols = [...m[2].matchAll(/\[column\]([\s\S]*?)\[\/column\]/g)].map(
-          (c) => `<div data-type="column">${agentToHtml(c[1]) || '<p></p>'}</div>`,
+          (c) => `<div data-type="column">${contentToHtml(c[1]) || '<p></p>'}</div>`,
         )
         return cols.length ? `<div data-type="columns"${m[1] ? ' data-divider="true"' : ''}>${cols.join('')}</div>` : ''
       })

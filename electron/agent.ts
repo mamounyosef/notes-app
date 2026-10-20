@@ -11,24 +11,27 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { ChatStore } from '../shared/chat-store.mjs'
+import { OPENROUTER, errorText, postWithFallback, relayStream, toOpenRouter } from './openrouter'
 
 const OLLAMA = 'https://ollama.com/api'
 
-const keyFile = () => path.join(app.getPath('userData'), 'ollama-key.bin')
+type Provider = 'ollama' | 'openrouter'
+const providerOf = (p: unknown): Provider => (p === 'openrouter' ? 'openrouter' : 'ollama')
+const keyFile = (p: Provider = 'ollama') => path.join(app.getPath('userData'), `${p}-key.bin`)
 
-function readKey(): string {
+function readKey(p: Provider = 'ollama'): string {
   try {
-    const raw = fs.readFileSync(keyFile())
+    const raw = fs.readFileSync(keyFile(p))
     return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8')
   } catch {
-    return process.env.OLLAMA_API_KEY || ''
+    return (p === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OLLAMA_API_KEY) || ''
   }
 }
 
-function writeKey(key: string) {
+function writeKey(key: string, p: Provider = 'ollama') {
   const data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key, 'utf8')
-  fs.mkdirSync(path.dirname(keyFile()), { recursive: true })
-  fs.writeFileSync(keyFile(), data)
+  fs.mkdirSync(path.dirname(keyFile(p)), { recursive: true })
+  fs.writeFileSync(keyFile(p), data)
 }
 
 const mask = (k: string) => (k ? `${k.slice(0, 4)}...${k.slice(-4)}` : '')
@@ -54,26 +57,40 @@ export function setupAgent(opts: {
 
   /* ---------------- API key ---------------- */
 
-  ipcMain.handle('agent:keyStatus', () => {
-    const k = readKey()
+  ipcMain.handle('agent:keyStatus', (_e, provider?: Provider) => {
+    const k = readKey(providerOf(provider))
     return { hasKey: Boolean(k), masked: mask(k) }
   })
 
-  ipcMain.handle('agent:setKey', async (_e, key: string) => {
+  ipcMain.handle('agent:setKey', async (_e, key: string, provider?: Provider) => {
+    const p = providerOf(provider)
     const k = String(key || '').trim()
     if (!k) {
-      try { fs.unlinkSync(keyFile()) } catch { /* none */ }
+      try { fs.unlinkSync(keyFile(p)) } catch { /* none */ }
       return { ok: true }
     }
     // Check it before keeping it, so a typo shows up here and not mid chat.
     try {
-      const res = await fetch(`${OLLAMA}/tags`, { headers: { Authorization: `Bearer ${k}` } })
-      if (res.status === 401 || res.status === 403) return { ok: false, error: 'Ollama rejected this key.' }
+      const res = await fetch(p === 'openrouter' ? `${OPENROUTER}/key` : `${OLLAMA}/tags`, { headers: { Authorization: `Bearer ${k}` } })
+      if (res.status === 401 || res.status === 403) return { ok: false, error: `${p === 'openrouter' ? 'OpenRouter' : 'Ollama'} rejected this key.` }
     } catch {
       /* offline: keep it anyway */
     }
-    writeKey(k)
+    writeKey(k, p)
     return { ok: true }
+  })
+
+  /** OpenRouter's free allowance for this key: requests left today. */
+  ipcMain.handle('agent:openrouterLimits', async () => {
+    const k = readKey('openrouter')
+    if (!k) return { ok: false }
+    try {
+      const j: any = await (await fetch(`${OPENROUTER}/key`, { headers: { Authorization: `Bearer ${k}` } })).json()
+      const f = j?.data?.free_model_daily_requests
+      return { ok: true, freeUsed: f?.used ?? null, freeLimit: f?.limit ?? null, freeTier: Boolean(j?.data?.is_free_tier) }
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) }
+    }
   })
 
   /* ---------------- streaming chat ---------------- */
@@ -118,7 +135,23 @@ export function setupAgent(opts: {
     const ctrl = new AbortController()
     running.set(reqId, ctrl)
     try {
-      const req = { ...body, stream: true, messages: await withImages(body.messages || []) }
+      const { provider, ...rest } = body || {}
+      const req = { ...rest, stream: true, messages: await withImages(rest.messages || []) }
+      if (providerOf(provider) === 'openrouter') {
+        const key = readKey('openrouter')
+        if (!key) throw new Error('No OpenRouter API key. Add it in Settings, Assistant.')
+        const orReq = toOpenRouter(req, true)
+        let res = await postWithFallback(key, orReq, ctrl.signal)
+        // Free models are busy at times (429/5xx): try twice more before giving up.
+        for (let attempt = 1; attempt <= 2 && (res.status === 429 || res.status >= 500) && !ctrl.signal.aborted; attempt++) {
+          await res.text().catch(() => '')
+          await new Promise((r) => setTimeout(r, 2500 * attempt))
+          res = await postWithFallback(key, orReq, ctrl.signal)
+        }
+        if (!res.ok || !res.body) throw new Error(`OpenRouter: ${await errorText(res)}`)
+        await relayStream(res, (chunk) => send('agent:chunk', reqId, chunk))
+        return { ok: true }
+      }
       let res = await post(req, ctrl.signal)
       if (res.status === 400 && req.think !== undefined) {
         // Some models refuse the think switch: ask again without it.
@@ -204,9 +237,17 @@ export function setupAgent(opts: {
   ipcMain.handle('agent:complete', async (_e, body: any) => {
     const ctrl = new AbortController()
     // timeout_ms is ours, not Ollama's: reading a dense image can take a while.
-    const { timeout_ms, ...req } = body || {}
+    const { timeout_ms, provider, ...req } = body || {}
     const t = setTimeout(() => ctrl.abort(), Math.min(180_000, Number(timeout_ms) || 30_000))
     try {
+      if (providerOf(provider) === 'openrouter') {
+        const key = readKey('openrouter')
+        if (!key) return { ok: false, error: 'No OpenRouter API key.' }
+        const res = await postWithFallback(key, toOpenRouter({ ...req, messages: await withImages(req.messages || []) }, false), ctrl.signal)
+        if (!res.ok) return { ok: false, error: await errorText(res) }
+        const j: any = await res.json()
+        return { ok: true, content: j?.choices?.[0]?.message?.content || '' }
+      }
       const res = await post({ ...req, messages: await withImages(req.messages || []), stream: false }, ctrl.signal)
       if (!res.ok) return { ok: false, error: `${res.status}` }
       const j: any = await res.json()
@@ -215,6 +256,43 @@ export function setupAgent(opts: {
       return { ok: false, error: e?.message || String(e) }
     } finally {
       clearTimeout(t)
+    }
+  })
+
+  /**
+   * Draws an HTML block off screen and returns a picture of it, its size and
+   * any errors it reported, so the agent can check a diagram it just made.
+   */
+  ipcMain.handle('agent:renderWidget', async (_e, body: { html: string; width?: number }) => {
+    const width = Math.max(240, Math.min(1600, Math.round(Number(body?.width) || 760)))
+    const file = path.join(app.getPath('temp'), `notes-widget-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.html`)
+    const win = new BrowserWindow({
+      show: false,
+      width,
+      height: 600,
+      useContentSize: true,
+      webPreferences: { offscreen: true, sandbox: true, contextIsolation: true, nodeIntegration: false, javascript: true },
+    })
+    win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    win.webContents.on('will-navigate', (ev) => ev.preventDefault())
+    try {
+      await fsp.writeFile(file, String(body?.html || ''), 'utf8')
+      await win.loadFile(file)
+      let info: any = null
+      for (let i = 0; i < 80 && !info?.done; i++) {
+        await new Promise((r) => setTimeout(r, 150))
+        info = await win.webContents.executeJavaScript('window.__widget || null', true).catch(() => null)
+      }
+      const height = Math.max(40, Math.min(3000, Math.ceil(info?.h || 400) + 4))
+      win.setContentSize(width, height)
+      await new Promise((r) => setTimeout(r, 350))
+      const img = await win.webContents.capturePage()
+      return { ok: true, png: img.toPNG().toString('base64'), width, height, errors: info?.errors || [], done: Boolean(info?.done) }
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) }
+    } finally {
+      win.destroy()
+      fsp.rm(file, { force: true }).catch(() => {})
     }
   })
 

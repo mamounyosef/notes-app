@@ -1,4 +1,5 @@
 /** The desktop bridge for the agent (see electron/agent.ts). */
+import { modelInfo, type Provider } from './models'
 
 export interface ChatAttachment {
   sha: string
@@ -59,6 +60,11 @@ export interface ChatMessage {
     undone?: boolean
     error?: string
     stopped?: boolean
+    /** Sent from the queue (waited ms), or sent now over a running reply. */
+    queued?: { waitedMs: number }
+    /** Pictures a tool handed to a model that can see ("sha:<hash>"). */
+    images?: string[]
+    sentNow?: boolean
     device?: string
   }
 }
@@ -90,19 +96,28 @@ export interface ChatSummary {
 
 const desk = (window as any).notes
 
+/** Tells the main process which service runs the request's model. */
+const withProvider = (body: any) => ({ ...body, provider: modelInfo(body?.model).provider })
+
 export const agentAvailable = Boolean(desk?.agent)
 
 export const agentApi = {
-  keyStatus: (): Promise<{ hasKey: boolean; masked: string }> =>
-    desk?.agent ? desk.agent.keyStatus() : Promise.resolve({ hasKey: false, masked: '' }),
-  setKey: (key: string): Promise<{ ok: boolean; error?: string }> =>
-    desk?.agent ? desk.agent.setKey(key) : Promise.resolve({ ok: false, error: 'Desktop app only' }),
+  keyStatus: (provider: Provider = 'ollama'): Promise<{ hasKey: boolean; masked: string }> =>
+    desk?.agent ? desk.agent.keyStatus(provider) : Promise.resolve({ hasKey: false, masked: '' }),
+  setKey: (key: string, provider: Provider = 'ollama'): Promise<{ ok: boolean; error?: string }> =>
+    desk?.agent ? desk.agent.setKey(key, provider) : Promise.resolve({ ok: false, error: 'Desktop app only' }),
+  /** Free model requests used and allowed today on the OpenRouter key. */
+  openrouterLimits: (): Promise<{ ok: boolean; freeUsed?: number | null; freeLimit?: number | null; freeTier?: boolean }> =>
+    desk?.agent?.openrouterLimits ? desk.agent.openrouterLimits() : Promise.resolve({ ok: false }),
   chat: (reqId: string, body: unknown): Promise<{ ok: boolean; error?: string; aborted?: boolean }> =>
-    desk?.agent ? desk.agent.chat(reqId, body) : Promise.resolve({ ok: false, error: 'The agent needs the desktop app.' }),
+    desk?.agent ? desk.agent.chat(reqId, withProvider(body)) : Promise.resolve({ ok: false, error: 'The agent needs the desktop app.' }),
   abort: (reqId: string) => desk?.agent?.abort(reqId),
   /** One reply without streaming. Messages may carry images ("sha:<hash>" or base64); timeout_ms defaults to 30 s. */
   complete: (body: unknown): Promise<{ ok: boolean; content?: string; error?: string }> =>
-    desk?.agent ? desk.agent.complete(body) : Promise.resolve({ ok: false }),
+    desk?.agent ? desk.agent.complete(withProvider(body)) : Promise.resolve({ ok: false }),
+  /** Draws an HTML block off screen: a PNG (base64) of it, its size and the errors it reported. */
+  renderWidget: (body: { html: string; width?: number }): Promise<{ ok: boolean; png?: string; width?: number; height?: number; errors?: string[]; done?: boolean; error?: string }> =>
+    desk?.agent?.renderWidget ? desk.agent.renderWidget(body) : Promise.resolve({ ok: false, error: 'Checking a drawing needs the desktop app.' }),
   onChunk: (cb: (reqId: string, chunk: any) => void): (() => void) => (desk?.agent ? desk.agent.onChunk(cb) : () => {}),
   web: (kind: 'search' | 'fetch', arg: unknown): Promise<{ ok: boolean; data?: any; error?: string }> =>
     desk?.agent?.web ? desk.agent.web(kind, arg) : Promise.resolve({ ok: false, error: 'Desktop app only' }),

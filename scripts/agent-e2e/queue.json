@@ -1,0 +1,22 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-blank.js",
+  "prompts": [
+    "Write a 40 line poem about rain in this chat (do not touch my notes)."
+  ],
+  "during": [
+    { "at": 1500, "eval": "(() => { const a = __notesDebug.useAgent.getState(); a.setDraft('Now translate it to French.'); a.enqueue(); return __notesDebug.useAgent.getState().queue.length })()" },
+    { "at": 1800, "eval": "(() => { const a = __notesDebug.useAgent.getState(); a.setDraft('Give it a short title.'); a.enqueue(); return __notesDebug.useAgent.getState().queue.length })()" },
+    { "at": 2100, "eval": "(() => { const a = __notesDebug.useAgent.getState(); a.setDraft('Say only: queue works.'); a.enqueue(); return __notesDebug.useAgent.getState().queue.length })()" },
+    { "at": 2400, "eval": "(() => { __notesDebug.useAgent.getState().setDraft('typing the next one...'); return true })()" },
+    { "at": 2800, "shot": "queued" },
+    { "at": 3200, "eval": "(() => { const a = __notesDebug.useAgent.getState(); const q = a.queue.find(x => x.text.startsWith('Say only')); if (!q) return { busy: a.busy, queue: a.queue.map(x => x.text) }; a.sendNow(q.id); a.setDraft(''); return q.text })()" },
+    { "at": 4500, "shot": "sentnow" }
+  ],
+  "eval": [
+    "(() => { const c = __notesDebug.useAgent.getState().chat; return c && c.messages.filter(m => m.role === 'user').map(m => `${m.content} | ${JSON.stringify({ queued: m.meta.queued, sentNow: m.meta.sentNow })}`) })()",
+    "(() => { const s = __notesDebug.useAgent.getState(); return { queue: s.queue.length, hold: s.queueHold, busy: s.busy, error: s.error } })()"
+  ],
+  "shots": ["end"]
+}

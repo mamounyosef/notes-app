@@ -34,6 +34,7 @@ export interface LocalState {
   lastOpenPageId?: string
   recent?: string[]
   collapsed?: string[]
+  zoom?: number
 }
 
 export interface ConflictCell {

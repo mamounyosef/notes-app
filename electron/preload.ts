@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+type WidgetShot = { ok: boolean; png?: string; width?: number; height?: number; errors?: string[]; done?: boolean; error?: string }
 
 const api = {
   isDesktop: true,
@@ -82,8 +83,9 @@ const api = {
     close: () => ipcRenderer.invoke('win:close'),
   },
   agent: {
-    keyStatus: () => ipcRenderer.invoke('agent:keyStatus') as Promise<{ hasKey: boolean; masked: string }>,
-    setKey: (key: string) => ipcRenderer.invoke('agent:setKey', key) as Promise<{ ok: boolean; error?: string }>,
+    keyStatus: (provider?: string) => ipcRenderer.invoke('agent:keyStatus', provider) as Promise<{ hasKey: boolean; masked: string }>,
+    setKey: (key: string, provider?: string) => ipcRenderer.invoke('agent:setKey', key, provider) as Promise<{ ok: boolean; error?: string }>,
+    openrouterLimits: () => ipcRenderer.invoke('agent:openrouterLimits') as Promise<{ ok: boolean; freeUsed?: number | null; freeLimit?: number | null; freeTier?: boolean; error?: string }>,
     chat: (reqId: string, body: unknown) =>
       ipcRenderer.invoke('agent:chat', reqId, body) as Promise<{ ok: boolean; error?: string; aborted?: boolean }>,
     abort: (reqId: string) => ipcRenderer.invoke('agent:abort', reqId),
@@ -91,6 +93,7 @@ const api = {
     web: (kind: 'search' | 'fetch', arg: unknown) =>
       ipcRenderer.invoke('agent:web', kind, arg) as Promise<{ ok: boolean; data?: any; error?: string }>,
     complete: (body: unknown) => ipcRenderer.invoke('agent:complete', body) as Promise<{ ok: boolean; content?: string; error?: string }>,
+    renderWidget: (body: { html: string; width?: number }) => ipcRenderer.invoke('agent:renderWidget', body) as Promise<WidgetShot>,
     /** Streamed chunks of a running chat request. Returns an unsubscribe. */
     onChunk: (cb: (reqId: string, chunk: any) => void) => {
       const fn = (_e: unknown, reqId: string, chunk: any) => cb(reqId, chunk)

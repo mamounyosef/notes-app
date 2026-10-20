@@ -1,0 +1,7 @@
+{
+  "fresh": true,
+  "prompts": [],
+  "eval": [
+    "(() => { const k = __notesDebug.keepDroppedStyles; const old = '<p><strong><span style=\"color: #e5c07b\">Example</span>:</strong> 24</p><p><strong><span style=\"color: rgb(229, 192, 123);\"><span style=\"color: #e5c07b\">Example</span></span>:</strong> 11</p><p>An <mark data-color=\"#ffd75e\">idea</mark> here, and another idea.</p>'; const dropped = k(old, '<p><strong>Example:</strong> 24 changed</p><p><strong>Example:</strong> 11</p><p>An idea here.</p><p>Examples are good.</p>'); const keptByModel = k(old, '<p><strong><span style=\"color: #e5c07b\">Example</span>:</strong> 24</p>'); const gone = k(old, '<p>Nothing related</p>'); return { dropped, keptByModel, gone } })()"
+  ]
+}
