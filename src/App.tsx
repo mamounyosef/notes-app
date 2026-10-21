@@ -10,9 +10,11 @@ import SettingsModal from './components/SettingsModal'
 import LinkModal from './components/LinkModal'
 import ArtifactModal from './components/ArtifactModal'
 import SyncPanel from './components/SyncPanel'
+import { useCloudProblem } from './components/CloudSync'
 import AgentPanel from './components/agent/AgentPanel'
 import VoiceEngineChip from './components/voice/VoiceEngineChip'
 import { useAgent } from './agent/store'
+import { chatApi } from './agent/api'
 import { trackPointer } from './agent/context'
 import { askAboutSelection, trackSelection } from './agent/selection'
 import { findNode, pathTo, useStore, walk } from './store'
@@ -37,6 +39,14 @@ export default function App() {
   const canGoBack = useStore((s) => s.navBack.length > 0)
   const canGoForward = useStore((s) => s.navForward.length > 0)
   const syncCount = useStore((s) => s.conflicts.cells.length + s.conflicts.orphans.length)
+  const cloudProblem = useCloudProblem()
+  const chatSync = useAgent((s) => s.syncStatus)
+  // Chat sync state, kept fresh even while the assistant panel is closed.
+  useEffect(() => {
+    chatApi.status().then((s) => useAgent.setState({ syncStatus: s })).catch(() => {})
+    return chatApi.onStatus((s) => useAgent.setState({ syncStatus: s }))
+  }, [])
+  const syncProblem = syncError || cloudProblem || (chatSync?.phase === 'error' ? `Chat sync: ${chatSync.error}` : null)
   const syncError = useStore((s) => s.syncError)
   const showSyncPanel = useStore((s) => s.showSyncPanel)
   const fatal = useStore((s) => s.fatal)
@@ -514,10 +524,10 @@ export default function App() {
           {page ? pathTo(workspace.tree, page.id).map((n) => n.title).join('  /  ') : ''}
         </span>
         <div className="spacer" />
-        {(syncCount > 0 || syncError) && (
+        {(syncCount > 0 || syncProblem) && (
           <button
-            className={`tb-btn sync-alert ${syncError ? 'error' : ''}`}
-            title={syncError || `${syncCount} sync ${syncCount === 1 ? 'item needs' : 'items need'} your attention`}
+            className={`tb-btn sync-alert ${syncProblem ? 'error' : ''}`}
+            title={syncProblem || `${syncCount} sync ${syncCount === 1 ? 'item needs' : 'items need'} your attention`}
             onClick={() => useStore.getState().setShowSyncPanel(true)}
           >
             <SyncI />

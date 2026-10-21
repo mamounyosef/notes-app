@@ -16,6 +16,31 @@ export function useCloudStatus() {
   return [status, setStatus] as const
 }
 
+/** No successful cloud sync for this long counts as a problem, whatever the cause. */
+const STALE_MS = 15 * 60_000
+
+/**
+ * A cloud problem worth showing in the main window, or null. Covers errors,
+ * loops paused by the guard and sync that silently keeps failing (timeouts,
+ * offline for long), so it never goes unnoticed for days again.
+ */
+export function useCloudProblem(): string | null {
+  const [status] = useCloudStatus()
+  const [since] = useState(() => Date.now())
+  const [, tick] = useState(0)
+  useEffect(() => {
+    const t = setInterval(() => tick((n) => n + 1), 60_000)
+    return () => clearInterval(t)
+  }, [])
+  if (!status?.signedIn) return null
+  if (status.phase === 'error') return cloudLine(status)
+  if (Date.now() - (status.lastSyncAt || since) > STALE_MS) {
+    const when = status.lastSyncAt ? `since ${new Date(status.lastSyncAt).toLocaleString()}` : 'since the app opened'
+    return `Cloud sync has not completed ${when}. ${cloudLine(status)}`
+  }
+  return null
+}
+
 export function cloudLine(s: CloudStatus | null) {
   if (!s || !s.signedIn) return 'Not signed in. Notes stay on this computer only.'
   const last = s.lastSyncAt ? ` Last synced ${new Date(s.lastSyncAt).toLocaleString()}.` : ''

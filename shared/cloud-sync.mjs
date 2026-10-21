@@ -19,6 +19,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import * as core from './sync-core.mjs'
+import { PushGuard, pausedMessage } from './push-guard.mjs'
 
 const PUSH_DELAY_MS = 1000
 const POLL_MS = 60_000
@@ -79,7 +80,8 @@ export class CloudSync {
     this.dirty = new Set()
     this.failures = 0
     this.lastFullAt = 0
-    this.info = { phase: 'off', email: '', lastSyncAt: 0, lastError: '', skipped: [] }
+    this.guard = new PushGuard()
+    this.info = { phase: 'off', email: '', lastSyncAt: 0, lastError: '', skipped: [], paused: [] }
   }
 
   /* ---------------- setup ---------------- */
@@ -205,7 +207,9 @@ export class CloudSync {
 
       if (full) this.lastFullAt = Date.now()
       this.failures = 0
-      this.setInfo({ phase: 'idle', lastSyncAt: Date.now(), lastError: '' })
+      const paused = this.guard.pausedItems()
+      if (paused.length) this.log('cloud: paused by the loop guard', paused)
+      this.setInfo({ phase: paused.length ? 'error' : 'idle', lastSyncAt: Date.now(), lastError: pausedMessage(paused), paused })
     } catch (e) {
       this.failures++
       const offline = offlineError(e)
@@ -282,8 +286,10 @@ export class CloudSync {
           this.dirty.delete(key)
           continue
         }
+        if (this.guard.check(key, 'deleted')) continue
         const res = await remote.pushDoc({ kind, docId, data: null, expectedRev: Number(st.rev), deleted: true, device: this.vault.device })
         if (res?.ok) {
+          this.guard.record(key, 'deleted')
           this.state.docs[key] = { rev: Number(res.rev), hash: null, deleted: true }
           this.dirty.delete(key)
         } else {
@@ -311,6 +317,8 @@ export class CloudSync {
           this.dirty.delete(key)
           break
         }
+        // A loop: leave it saved here and dirty, it goes up after the pause.
+        if (this.guard.check(key, h)) break
         const res = await remote.pushDoc({
           kind,
           docId,
@@ -320,6 +328,7 @@ export class CloudSync {
           device: this.vault.device,
         })
         if (res?.ok) {
+          this.guard.record(key, h)
           this.state.docs[key] = { rev: Number(res.rev), hash: h }
           this.dirty.delete(key)
           this.progress()
@@ -416,6 +425,7 @@ export class CloudSync {
       const loc = local.files.get(p)
       const st = this.state.files[p]
       if (!loc || st?.sha === loc.sha) return
+      if (this.guard.check(`file:${p}`, loc.sha)) return
       if (!(await remote.hasBlob(loc.sha))) {
         const buf = await fsp.readFile(path.join(this.dir, p))
         if (sha1(buf) !== loc.sha) return // changed while we looked; the next run sends it
@@ -430,6 +440,7 @@ export class CloudSync {
         device: this.vault.device,
       })
       if (res?.ok) {
+        this.guard.record(`file:${p}`, loc.sha)
         this.state.files[p] = { rev: Number(res.rev), sha: loc.sha }
         this.progress()
         return

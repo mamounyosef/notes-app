@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from 'react'
 import { useStore } from '../store'
+import { useAgent } from '../agent/store'
 import { storage, cloud, type SyncStatus } from '../lib/storage'
 import { askConfirm } from '../lib/confirm'
 import { X } from './Icons'
-import { cloudLine, useCloudStatus } from './CloudSync'
+import { cloudLine, useCloudProblem, useCloudStatus } from './CloudSync'
 
 /**
  * Everything sync needs a decision on: cells kept in two versions, cells
@@ -18,6 +19,8 @@ export default function SyncPanel({ onClose }: { onClose(): void }) {
   const [status, setStatus] = useState<SyncStatus | null>(null)
   const [checking, setChecking] = useState(false)
   const [cloudStatus] = useCloudStatus()
+  const chatSync = useAgent((s) => s.syncStatus)
+  const cloudProblem = useCloudProblem()
 
   useEffect(() => {
     storage.syncStatus().then(setStatus).catch(() => {})
@@ -131,8 +134,13 @@ export default function SyncPanel({ onClose }: { onClose(): void }) {
 
           {cloud.available && (
             <div className="sync-status">
-              <b>Cloud:</b> {cloudLine(cloudStatus)}
+              <b>Cloud:</b> {cloudProblem || cloudLine(cloudStatus)}
               {cloudStatus?.skipped?.length ? ` Not synced (over 50 MB): ${cloudStatus.skipped.join(', ')}.` : ''}
+            </div>
+          )}
+          {chatSync?.phase === 'error' && (
+            <div className="sync-status">
+              <b>Chats:</b> {chatSync.error}
             </div>
           )}
 

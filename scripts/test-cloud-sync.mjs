@@ -264,6 +264,23 @@ await test('copies that differ only in save time or measured size do not bounce 
   assert.equal(html(await readPage(PC, 'p1'), 'c1'), html(await readPage(LT, 'p1'), 'c1'))
 })
 
+await test('a sync loop is paused, shown, and the note stays saved here', async () => {
+  // Force the loop seen for real: the PC keeps thinking its unchanged copy is new.
+  const key = 'page:p1'
+  const seq = server.seq
+  for (let i = 0; i < 40; i++) {
+    PC.cloud.state.docs[key] = { ...PC.cloud.state.docs[key], hash: 'stale' }
+    PC.cloud.markDirty('page', 'p1')
+    await PC.cloud.syncNow()
+  }
+  assert.ok(server.seq - seq <= 20, `kept pushing: ${server.seq - seq} writes`)
+  const st = PC.cloud.status()
+  assert.equal(st.phase, 'error')
+  assert.match(st.lastError, /sync loop/)
+  assert.ok(st.paused.some((p) => p.key === key))
+  assert.equal(html(await readPage(PC, 'p1'), 'c1'), html(await readPage(LT, 'p1'), 'c1'), 'nothing lost')
+})
+
 for (const c of [PC, LT]) {
   c.cloud.stop()
   c.vault.stop()

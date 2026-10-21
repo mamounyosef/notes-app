@@ -15,6 +15,7 @@ import fsp from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { stable } from './sync-core.mjs'
+import { PushGuard, pausedMessage } from './push-guard.mjs'
 
 const PUSH_DELAY = 800
 const POLL_MS = 60_000
@@ -102,6 +103,7 @@ export class ChatStore {
     this.running = null
     this.again = false
     this.lastFullAt = 0
+    this.guard = new PushGuard()
     this.statusInfo = { phase: 'off', error: null, lastSync: 0 }
     this.state = this.loadState()
     this.uploaded = new Set(this.state.uploaded || [])
@@ -275,7 +277,9 @@ export class ChatStore {
           await this.push()
           if (pullError) throw pullError
         } while (this.again)
-        this.setStatus({ phase: 'idle', error: null, lastSync: Date.now() })
+        const paused = this.guard.pausedItems()
+        if (paused.length) this.log('chat sync paused by the loop guard', paused)
+        this.setStatus({ phase: paused.length ? 'error' : 'idle', error: pausedMessage(paused) || null, lastSync: Date.now() })
       } catch (e) {
         const msg = e?.message || String(e)
         this.log('chat sync failed', msg)
@@ -352,6 +356,8 @@ export class ChatStore {
       const chat = await this.read(id)
       if (!chat) continue
       if (this.state.pushed[id] === hash(chat)) continue
+      // A loop: the chat stays saved here and goes up after the pause.
+      if (this.guard.check(`chat:${id}`, hash(chat))) continue
       // One chat failing must not hold back the others.
       try {
         await this.pushChat(id, chat)
@@ -379,6 +385,7 @@ export class ChatStore {
       const rev = Number(this.state.revs[id] || 0)
       const res = await this.remote.pushChat({ id, data, expectedRev: rev, deleted: Boolean(data.deleted), device: this.device })
       if (res?.ok) {
+        this.guard.record(`chat:${id}`, hash(data))
         this.state.revs[id] = Number(res.rev)
         this.state.pushed[id] = hash(data)
         await this.saveState()

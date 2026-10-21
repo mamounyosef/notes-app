@@ -21,8 +21,9 @@ create table if not exists public.docs (
 );
 create index if not exists docs_user_seq on public.docs (user_id, change_seq);
 
--- Every replaced or deleted version is kept for 30 days, so nothing a sync
--- ever overwrites is gone for good.
+-- Every replaced or deleted version is kept for 30 days (at most the newest
+-- 500 per note), so nothing a sync ever overwrites is gone for good. A write
+-- that changes nothing adds no version, so a sync loop cannot fill the database.
 create table if not exists public.doc_history (
   id bigint generated always as identity primary key,
   user_id uuid not null references auth.users on delete cascade,
@@ -87,11 +88,17 @@ security definer
 set search_path = ''
 as $$
 begin
+  if tg_op = 'UPDATE' and new.data is not distinct from old.data and new.deleted = old.deleted then
+    return null;
+  end if;
   insert into public.doc_history (user_id, kind, doc_id, data, rev, deleted, device)
   values (old.user_id, old.kind, old.doc_id, old.data, old.rev, old.deleted, old.device);
   delete from public.doc_history
   where user_id = old.user_id and kind = old.kind and doc_id = old.doc_id
-    and saved_at < now() - interval '30 days';
+    and (saved_at < now() - interval '30 days'
+      or id in (select id from public.doc_history
+                where user_id = old.user_id and kind = old.kind and doc_id = old.doc_id
+                order by saved_at desc, id desc offset 500));
   return null;
 end;
 $$;

@@ -338,6 +338,7 @@ export interface CloudStatus {
   lastSyncAt: number
   lastError: string
   skipped: string[]
+  paused?: { key: string; reason: string; until: number }[]
   pending: number
   signedIn: boolean
   url?: string

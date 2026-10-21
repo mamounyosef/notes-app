@@ -1,4 +1,5 @@
 import type { VaultSync, SyncKind } from './vault-sync.mjs'
+import type { PausedItem } from './push-guard.mjs'
 
 export interface CloudStatus {
   phase: 'off' | 'signed-out' | 'idle' | 'syncing' | 'offline' | 'error'
@@ -6,6 +7,7 @@ export interface CloudStatus {
   lastSyncAt: number
   lastError: string
   skipped: string[]
+  paused: PausedItem[]
   pending: number
   signedIn: boolean
 }

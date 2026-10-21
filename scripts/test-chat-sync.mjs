@@ -180,6 +180,19 @@ await test('attachments made on one computer open on the other', async () => {
   assert.equal(String(await PC.store.readBlob(sha)), 'image bytes')
 })
 
+await test('a chat sync loop is paused, shown, and the chat stays saved here', async () => {
+  // Force the loop seen for real: the PC keeps thinking its unchanged chat is new.
+  const before = server.pushes
+  for (let i = 0; i < 40; i++) {
+    PC.store.state.pushed.c1 = 'stale'
+    await sync(PC)
+  }
+  assert.ok(server.pushes - before <= 20, `kept pushing: ${server.pushes - before}`)
+  assert.equal(PC.store.status().phase, 'error')
+  assert.match(PC.store.status().error, /sync loop/)
+  assert.deepEqual(await ids(PC, 'c1'), ['m1', 'm2', 'm3'], 'nothing lost')
+})
+
 for (const c of [LT, PC]) c.store.stop()
 fs.rmSync(root, { recursive: true, force: true })
 console.log(`\n${passed} passed`)
