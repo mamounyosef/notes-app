@@ -14,6 +14,7 @@ import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import { stable } from './sync-core.mjs'
 
 const PUSH_DELAY = 800
 const POLL_MS = 60_000
@@ -21,7 +22,7 @@ const MAX_TRIES = 5
 
 const safeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '')
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex')
-const stable = (v) => JSON.stringify(v)
+// Key order independent: Postgres jsonb hands rows back with keys reordered.
 const hash = (v) => crypto.createHash('sha1').update(stable(v)).digest('hex')
 
 async function atomicWrite(file, data) {
