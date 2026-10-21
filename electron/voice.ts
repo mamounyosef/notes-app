@@ -45,7 +45,11 @@ function isEngineDir(dir: string | undefined): dir is string {
   }
 }
 
-/** Where the engine is: the folder picked in Settings, else the planner next to Notes. */
+/**
+ * Where the engine is: the folder picked in Settings, else the planner next to
+ * Notes (the PC, on the GPU), else Notes' own speech-engine folder (a computer
+ * without the planner, on the CPU).
+ */
 function findEngineDir(): string | null {
   const picked = readConfig().engineDir
   if (isEngineDir(picked)) return picked
@@ -65,7 +69,14 @@ function findEngineDir(): string | null {
     }
     return null
   }
-  return near(app.getAppPath()) || near(path.dirname(process.execPath)) || (isEngineDir('D:\\My Projects\\weekly-planner') ? 'D:\\My Projects\\weekly-planner' : null)
+  const planner = near(app.getAppPath()) || near(path.dirname(process.execPath)) || (isEngineDir('D:\\My Projects\\weekly-planner') ? 'D:\\My Projects\\weekly-planner' : null)
+  if (planner) return planner
+  // No planner here (the laptop): Notes' own CPU engine, set up by setup.bat
+  // (speech-engine/setup-speech.ps1).
+  for (const dir of [path.join(app.getAppPath(), 'speech-engine'), path.join(__dirname, '..', 'speech-engine')]) {
+    if (isEngineDir(dir)) return dir
+  }
+  return null
 }
 
 export function setupVoice(opts: { getWin(): BrowserWindow | null; log(...a: unknown[]): void }) {
@@ -133,7 +144,7 @@ export function setupVoice(opts: { getWin(): BrowserWindow | null; log(...a: unk
     ok: false,
     error: findEngineDir()
       ? 'The speech engine did not start. Its log is speech-server.log in the Notes app data folder.'
-      : 'The speech engine was not found. Pick the weekly planner folder in Settings, Voice.',
+      : 'The speech engine is not on this computer. Run setup.bat in the Notes folder to install it (or pick the weekly planner folder in Settings, Voice).',
   })
 
   ipcMain.handle('voice:status', async () => {

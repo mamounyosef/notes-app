@@ -20,6 +20,11 @@
 *.one
 *.onetoc2
 
+# Voice mode's own speech engine (speech-engine/setup-speech.ps1)
+/speech-engine/.venv-speech/
+/speech-engine/speech-models/
+__pycache__/
+
 # Build output
 node_modules/
 /dist/

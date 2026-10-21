@@ -1,0 +1,7 @@
+# The speech engine on a computer WITHOUT the weekly planner (the laptop).
+# CPU only: no CUDA wheels, so it stays around 0.5 GB. On the PC, Notes uses
+# the planner's own engine (GPU) instead and none of this is installed.
+faster-whisper==1.2.1
+kokoro-onnx==0.6.1
+aiohttp>=3.9,<4
+numpy>=2.0.2
