@@ -19,6 +19,8 @@ function Say($m) { Write-Host "         $m" }
 
 # The planner's engine next to Notes (the PC): nothing to do here.
 foreach ($dir in @((Split-Path -Parent $root), (Join-Path (Split-Path -Parent $root) 'weekly-planner'), 'D:\My Projects\weekly-planner')) {
+  # Join-Path throws on a drive that does not exist (D: on the laptop), so test the folder first.
+  if (-not (Test-Path -LiteralPath $dir -PathType Container)) { continue }
   if ((Test-Path (Join-Path $dir 'speech-server.py')) -and (Test-Path (Join-Path $dir '.venv-speech\Scripts\python.exe')) -and (Test-Path (Join-Path $dir 'speech-models\kokoro-v1.0.onnx'))) {
     Say "The weekly planner's speech engine is on this computer ($dir); Notes uses that one."
     exit 0
