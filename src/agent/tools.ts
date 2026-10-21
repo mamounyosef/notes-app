@@ -1519,6 +1519,16 @@ export function scrollToCell(cellId: string, anchor?: string) {
     void target.offsetWidth
     target.classList.add('agent-change-flash')
     setTimeout(() => target.classList.remove('agent-change-flash'), 1000)
+    // A guaranteed-visible spotlight, since cell content can hide in-flow highlights.
+    const spot = document.createElement('div')
+    spot.className = 'agent-spotlight'
+    const r = target.getBoundingClientRect()
+    spot.style.left = `${r.left - 6}px`
+    spot.style.top = `${r.top - 6}px`
+    spot.style.width = `${r.width + 12}px`
+    spot.style.height = `${r.height + 12}px`
+    document.body.appendChild(spot)
+    setTimeout(() => spot.remove(), 1200)
   }
   requestAnimationFrame(() => requestAnimationFrame(run))
 }
