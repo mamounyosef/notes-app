@@ -10,6 +10,7 @@ import { CloudSync } from '../shared/cloud-sync.mjs'
 import { createSupabaseRemote } from '../shared/cloud-remote-supabase.mjs'
 import { pageIndex, searchPages } from '../shared/search-core.mjs'
 import { setupAgent } from './agent'
+import { setupVoice } from './voice'
 
 // Disable hardware acceleration and sandbox to prevent Chromium GPU/D3D11 crash (0xC0000005) on Windows 11
 app.disableHardwareAcceleration()
@@ -590,6 +591,8 @@ const agent = setupAgent({
   log: (...a) => debugLog(...a),
   saveAsset: saveAssetBytes,
 })
+
+setupVoice({ getWin: () => win, log: (...a) => debugLog(...a) })
 
 ipcMain.handle('asset:save', async (_e, dataUrl: string) => {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl)

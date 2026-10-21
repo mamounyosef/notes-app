@@ -7,7 +7,7 @@ import { create } from 'zustand'
 import { nanoid } from 'nanoid'
 import { agentApi, chatApi, type Chat, type ChatAttachment, type ChatMessage, type ChatSummary } from './api'
 import { buildContext } from './context'
-import { SYSTEM_PROMPT } from './prompt'
+import { SYSTEM_PROMPT, voicePrompt } from './prompt'
 import { TOOL_DEFS, READ_ONLY, eyesFor, TurnRecorder, keepSnapshot, runTool, undoTurn, scrollToCell } from './tools'
 import { storage } from '../lib/storage'
 import { useStore, findNode } from '../store'
@@ -16,6 +16,7 @@ import { activePath, messageOrder, PENDING, parentKey, ROOT, tipOf, treeOf } fro
 export { messageOrder }
 
 import { DEFAULT_MODEL, MODELS, VISION_MODEL, modelInfo, thinkValue, costOf } from './models'
+import { readVoicePrefs, recordSpeed } from '../voice/voicePrefs'
 export { DEFAULT_MODEL }
 const MAX_STEPS = 30
 const PREFS_KEY = 'agent-prefs-v1'
@@ -154,6 +155,22 @@ interface AgentState {
   regenerate(userMessageId: string): Promise<void>
   /** Shows another version at a fork (parent key from versionsOf). */
   showVersion(parent: string, id: string): void
+
+  /** Voice mode is on: replies are spoken, with the voice model and the voice prompt. */
+  voiceOn: boolean
+  setVoiceOn(on: boolean): void
+  /** Bumped to ask the panel to start voice mode (the shortcut works from anywhere). */
+  voiceRequest: number
+  requestVoice(): void
+  /** Something said in voice mode: answers a question card, or goes out as a message (cutting a running reply short). Resolves when it is sent. */
+  sendVoice(text: string): Promise<void>
+}
+
+/** The model and thinking a reply uses right now: voice mode has its own pick. */
+export function activeModel(s: { prefs: Prefs; voiceOn: boolean }): { model: string; think: boolean } {
+  if (!s.voiceOn) return { model: s.prefs.model || DEFAULT_MODEL, think: s.prefs.think }
+  const v = readVoicePrefs()
+  return { model: v.model || s.prefs.model || DEFAULT_MODEL, think: v.think }
 }
 
 let lastStamp = 0
@@ -183,10 +200,14 @@ function flushPersist(chat: Chat) {
   return chatApi.put(chat).catch(() => chat)
 }
 
-function emptyChat(): Chat {
+function emptyChat(voice = false): Chat {
   const t = Date.now()
-  return { id: nanoid(14), title: 'New chat', titleAt: 0, createdAt: t, updatedAt: t, messages: [] }
+  return { id: nanoid(14), title: 'New chat', titleAt: 0, createdAt: t, updatedAt: t, messages: [], ...(voice ? { voice: true } : {}) }
 }
+
+/** Voice timing: when the running turn was sent, and whether its first word was timed yet. */
+let turnStart = 0
+let turnTimed = true
 
 /* ---------------- building the request ---------------- */
 
@@ -200,7 +221,7 @@ function attachmentText(a: ChatAttachment) {
   return `<attachment name="${a.name}" type="${a.kind}" id="${id}">\n${(a.text || '').slice(0, 120_000)}\n</attachment>`
 }
 
-function toRequestMessages(chat: Chat, model = DEFAULT_MODEL): any[] {
+function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): any[] {
   const canSee = modelInfo(model).vision
   // Only the branch being shown: other versions are not part of this conversation.
   const msgs = activePath(chat)
@@ -220,7 +241,7 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL): any[] {
           if (a.kind === 'image') sentPics.add(`sha:${a.sha}`)
           for (const p of (a.pages || []).slice(0, 20)) sentPics.add(`sha:${p}`)
         }
-  const out: any[] = [{ role: 'system', content: SYSTEM_PROMPT }]
+  const out: any[] = [{ role: 'system', content: voice ? SYSTEM_PROMPT + voicePrompt() : SYSTEM_PROMPT }]
   // They follow the whole run of tool results, since results must come right after their calls.
   let pics: any[] = []
   const flushPics = () => {
@@ -338,7 +359,8 @@ export const useAgent = create<AgentState>((set, get) => {
 
   /** Streams one model reply. Returns it, or null if stopped or failed. */
   async function streamOnce(chat: Chat, noThink = false): Promise<ChatMessage | null> {
-    const prefs = get().prefs
+    const voice = get().voiceOn
+    const { model, think } = activeModel(get())
     const reqId = nanoid()
     currentReq = reqId
     let looping = false
@@ -371,6 +393,11 @@ export const useAgent = create<AgentState>((set, get) => {
       if (m.content) {
         if (thinkStart && !thinkEnd) thinkEnd = Date.now()
         msg.content += m.content
+        // Voice mode: how long until the first word could be spoken, kept per model.
+        if (voice && !turnTimed && /\w/.test(msg.content)) {
+          turnTimed = true
+          recordSpeed(model, think, Date.now() - turnStart)
+        }
       }
       if (m.tool_calls?.length) {
         if (thinkStart && !thinkEnd) thinkEnd = Date.now()
@@ -382,12 +409,12 @@ export const useAgent = create<AgentState>((set, get) => {
       if (!frame) frame = requestAnimationFrame(flush) as any
     })
     const body: any = {
-      model: prefs.model || DEFAULT_MODEL,
-      messages: toRequestMessages(chat, prefs.model || DEFAULT_MODEL),
+      model,
+      messages: toRequestMessages(chat, model, voice),
       tools: TOOL_DEFS,
       options: { temperature: 0.4 },
     }
-    body.think = noThink ? thinkValue(prefs.model || DEFAULT_MODEL, false) : thinkValue(prefs.model || DEFAULT_MODEL, prefs.think)
+    body.think = noThink ? thinkValue(model, false) : thinkValue(model, think)
     const res = await agentApi.chat(reqId, body)
     off()
     if (frame) cancelAnimationFrame(frame)
@@ -413,7 +440,6 @@ export const useAgent = create<AgentState>((set, get) => {
     if (!msg.toolCalls?.length) delete msg.toolCalls
     const u = usage as { prompt: number; output: number; cached: number; ms: number } | null
     if (u) {
-      const model = prefs.model || DEFAULT_MODEL
       msg.meta = { ...(msg.meta || {}), usage: { ...u, model } } as any
       set({ usage: { ...u, model, at: Date.now() } })
     }
@@ -480,6 +506,8 @@ export const useAgent = create<AgentState>((set, get) => {
 
   async function sendItem(item: Omit<Queued, 'id' | 'chatId' | 'at'>, mark: Partial<NonNullable<ChatMessage['meta']>> = {}) {
     if (!get().chat) get().newChat()
+    // The first spoken message makes the chat a voice chat (a mark in the history).
+    if (mark.voice && !get().chat?.voice) update((c) => ({ ...c, voice: true }), false)
     const { text, attachments, mentions, quote, selection: sel } = item
     // Pages pointed at with @ are read now, so the agent sees their content.
     const mentionPages: Record<string, any> = {}
@@ -514,6 +542,8 @@ export const useAgent = create<AgentState>((set, get) => {
 
   async function runTurn() {
     stopped = false
+    turnStart = Date.now()
+    turnTimed = !get().voiceOn
     const rec = new TurnRecorder()
     const turnId = nanoid(10)
     let firstAssistantId: string | null = null
@@ -547,18 +577,18 @@ export const useAgent = create<AgentState>((set, get) => {
             set({ activity: 'Empty answer, asking again' })
             continue
           }
-          set({ error: `${modelInfo(get().prefs.model || DEFAULT_MODEL).name} sent back an empty answer three times. Send again, or try another model.` })
+          set({ error: `${modelInfo(activeModel(get()).model).name} sent back an empty answer three times. Send again, or try another model.` })
           break
         }
         if (!firstAssistantId) firstAssistantId = reply.id
         if (!reply.toolCalls?.length) break
         for (const call of reply.toolCalls) {
           if (stopped) break
-          set({ activity: labelFor(call.name, get().prefs.model || DEFAULT_MODEL) })
+          set({ activity: labelFor(call.name, activeModel(get()).model) })
           const env = {
             rec,
             attachments: attachmentsOf(),
-            model: get().prefs.model || DEFAULT_MODEL,
+            model: activeModel(get()).model,
             ask: (q: { question: string; options?: string[]; multi?: boolean }) =>
               new Promise<string>((resolve) => {
                 const askMsg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', meta: { ask: { ...q } } }
@@ -583,7 +613,7 @@ export const useAgent = create<AgentState>((set, get) => {
               ok: result.ok,
               ...(result.target ? { target: result.target } : {}),
               ...(result.helper ? { helper: result.helper } : {}),
-              ...(result.images ? { images: result.images, eyes: modelInfo(get().prefs.model || DEFAULT_MODEL).name } : {}),
+              ...(result.images ? { images: result.images, eyes: modelInfo(activeModel(get()).model).name } : {}),
             } as any,
           })
         }
@@ -618,7 +648,7 @@ export const useAgent = create<AgentState>((set, get) => {
     const first = activePath(c).find((m) => m.role === 'user')
     if (!first) return
     const res = await agentApi.complete({
-      model: get().prefs.model || DEFAULT_MODEL,
+      model: activeModel(get()).model,
       think: false,
       messages: [
         {
@@ -688,7 +718,7 @@ export const useAgent = create<AgentState>((set, get) => {
     },
     newChat() {
       if (get().busy) get().stop()
-      set({ chat: emptyChat(), error: null, live: null, attachments: [], mentions: [], quote: null, usage: null })
+      set({ chat: emptyChat(get().voiceOn), error: null, live: null, attachments: [], mentions: [], quote: null, usage: null })
     },
     async deleteChat(id) {
       await chatApi.remove(id)
@@ -871,6 +901,8 @@ export const useAgent = create<AgentState>((set, get) => {
       const m = get().chat?.messages.find((x) => x.id === p.messageId)
       if (m?.meta?.ask) patchMsg(m.id, { meta: { ...m.meta, ask: { ...m.meta.ask, answer } } })
       set({ pendingAsk: null, activity: 'Working' })
+      // Voice timing counts from the answer, not from the question before it.
+      turnStart = Date.now()
       p.resolve(answer)
     },
 
@@ -898,6 +930,42 @@ export const useAgent = create<AgentState>((set, get) => {
       set({ error: null })
       // Drop a trailing partial reply, then run again from the last message.
       await runLoop()
+    },
+
+    voiceOn: false,
+    setVoiceOn(on) {
+      set({ voiceOn: on })
+    },
+    voiceRequest: 0,
+    requestVoice() {
+      get().toggle(true)
+      set({ voiceRequest: get().voiceRequest + 1 })
+    },
+    async sendVoice(text) {
+      const t = text.trim()
+      if (!t) return
+      if (get().pendingAsk) {
+        get().answerAsk(t)
+        return
+      }
+      const cut = get().busy
+      if (cut) {
+        jumping = true
+        get().stop()
+        await running
+        jumping = false
+      }
+      const chatId = get().chat?.id
+      if (chatId && get().queueHold[chatId]) {
+        const { [chatId]: _, ...rest } = get().queueHold
+        set({ queueHold: rest })
+      }
+      set({ error: null })
+      // Resolves once the message is in the chat, not when the reply is done:
+      // the next thing said must never wait behind a whole reply.
+      sendItem({ text: t, attachments: [], mentions: [], quote: null, selection: currentSelection() }, { voice: true, ...(cut ? { sentNow: true } : {}) }).catch((e) =>
+        set({ error: e instanceof Error ? e.message : String(e) }),
+      )
     },
   }
 })

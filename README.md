@@ -77,12 +77,57 @@ Gemma 4 31B through Ollama Cloud.
   can be turned into a page.
 - **Point at things:** type @ to name a page, section or notebook. Select text
   or cells and press **Ctrl+L** (or right click a cell) to ask about them.
-- **Voice:** the mic button starts Windows voice typing (Win+H).
+- **Voice typing:** the mic button starts Windows voice typing (Win+H).
+- **Voice mode:** a real spoken conversation (see below).
 - **Context meter:** the ring in the header shows how full the 256K token
   window is. Click it to see the breakdown, the system prompt, the tools and
   exactly what the assistant sees right now.
 - **Chats sync** between computers through cloud sync (table `agent_chats`
   in `supabase/schema.sql`).
+
+## Voice mode
+
+Talk with the assistant out loud and hear it answer. Start it with the
+waveform button in the assistant (or "Talk instead" on an empty chat), or
+**Ctrl+Shift+Space** from anywhere.
+
+- **The orb** shows who is talking: blue while it listens (rippling with your
+  voice), violet while it thinks, orange with sparks while it speaks, grey
+  when muted. A green ring bursts out when a reply changed your notes.
+- **Everything is written down:** what you are saying appears live at the end
+  of the chat, every spoken message stays as a normal message, and the
+  sentence being spoken lights up in the reply.
+- **Talk naturally:** fast, messy, with "um" and corrections ("blue, no,
+  green" means green). It asks one short question out loud when something is
+  unclear, and reads a question card out so you can answer by voice.
+- **Cut in** any time and it stops to listen (a quick "mm-hm" does not stop
+  it). Say **"undo that"** to take the last change back.
+- **Math is read aloud** as words ("x squared over two"), never as LaTeX.
+- **Keys:** Esc ends, M mutes, Space stops it talking, Enter sends now.
+- **Settings, Voice:** 23 English voices with previews, speed, volume, how
+  long a pause ends your turn, talking over it, follow along, soft sounds,
+  and the **voice model**, picked separately from the chat's model and kept
+  per computer. "Think before answering" is a separate switch (off by
+  default: much faster to start). Each model shows how many seconds it takes
+  to start talking, measured by **Test speed** and by every real voice reply.
+
+**Free, local, no API key.** Hearing (Whisper) and speaking (Kokoro) run on
+this computer's GPU through the weekly planner's speech engine
+(`speech-server.py` and its `.venv-speech`): Notes uses it when the planner
+already started it, and starts it otherwise. It finds the planner folder next
+to Notes on its own; if not, pick it in Settings, Voice. Only the words go to
+the model. Engine log: `speech-server.log` in the Notes app data folder.
+
+Code: `electron/voice.ts` (finds and starts the engine), `src/voice/`
+(audio session, conversation, speech text, prefs, speed test),
+`src/components/voice/` (dock, orb, settings). The voice prompt is
+`voicePrompt()` in `src/agent/prompt.ts`.
+
+Test bench without a mic or GPU: `npx vite build`, then
+`node scripts/voice-bench/serve.mjs` and open http://127.0.0.1:5198: a fake
+speech engine, a scripted model and notes in the browser's storage.
+`window.__fakeMic("what is on this page")` makes the mic say something.
+`npm run test:voice` tests the speech text helpers.
 
 ## Bringing OneNote notes across
 

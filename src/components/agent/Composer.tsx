@@ -6,7 +6,8 @@ import { useStore, walk, pathTo } from '../../store'
 import { AttachmentThumb, type LightboxItem } from './Lightbox'
 import ModelPicker from './ModelPicker'
 import QueueDeck from './QueueDeck'
-import { Send, StopI, Mic, Plus, X, AtI, File as FileIcon, Book, Folder, Bolt, QueueI } from '../Icons'
+import { Send, StopI, Mic, Plus, X, AtI, File as FileIcon, Book, Folder, Bolt, QueueI, AudioLines } from '../Icons'
+import { warmVoice } from '../../voice/voiceSession'
 import type { TreeNode } from '../../types'
 
 interface Pending {
@@ -18,7 +19,7 @@ interface Pending {
 
 let pendingSeq = 0
 
-const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: LightboxItem[], i: number): void }>(function Composer({ onImage }, ref) {
+const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: LightboxItem[], i: number): void; onVoice?(): void }>(function Composer({ onImage, onVoice }, ref) {
   const draft = useAgent((s) => s.draft)
   const setDraft = useAgent((s) => s.setDraft)
   const attachments = useAgent((s) => s.attachments)
@@ -264,6 +265,11 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: 
           >
             <Mic size={15} />
           </button>
+          {onVoice && (
+            <button className="ag-icon-btn ag-voice-btn" title="Voice mode: talk with the assistant (Ctrl+Shift+Space)" onMouseEnter={warmVoice} onClick={onVoice}>
+              <AudioLines size={15} />
+            </button>
+          )}
           <button
             className={`ag-think-toggle ${prefs.think ? 'on' : ''}`}
             role="switch"

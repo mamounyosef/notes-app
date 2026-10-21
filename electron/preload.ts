@@ -101,6 +101,15 @@ const api = {
       return () => ipcRenderer.removeListener('agent:chunk', fn)
     },
   },
+  voice: {
+    status: () => ipcRenderer.invoke('voice:status'),
+    ensure: () => ipcRenderer.invoke('voice:ensure') as Promise<{ ok: boolean; port?: number; error?: string }>,
+    voices: () => ipcRenderer.invoke('voice:voices'),
+    warm: () => ipcRenderer.invoke('voice:warm'),
+    preview: (body: { voice: string; speed: number; text?: string }) =>
+      ipcRenderer.invoke('voice:preview', body) as Promise<{ ok: boolean; wav?: string; error?: string }>,
+    chooseEngine: () => ipcRenderer.invoke('voice:chooseEngine') as Promise<{ ok: boolean; engineDir?: string; error?: string; canceled?: boolean }>,
+  },
   chats: {
     list: () => ipcRenderer.invoke('chats:list'),
     get: (id: string) => ipcRenderer.invoke('chats:get', id),

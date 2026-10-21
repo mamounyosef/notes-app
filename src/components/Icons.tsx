@@ -120,3 +120,8 @@ export const Brain = (p: P) => (<svg {...s(p)}><path d="M9 18h6M10 21h4" /><path
 export const AtI = (p: P) => (<svg {...s(p)}><circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-4 8" /></svg>)
 export const Retry = (p: P) => (<svg {...s(p)}><path d="M21 12a9 9 0 11-3-6.7L21 8" /><path d="M21 3v5h-5" /></svg>)
 export const Pencil = (p: P) => (<svg {...s(p)}><path d="M4 20h4L19 9l-4-4L4 16z" /></svg>)
+/* Voice mode */
+export const Gauge = (p: P) => (<svg {...s(p)}><path d="M4 18a8 8 0 1116 0" /><path d="M12 14l4-5" /><circle cx="12" cy="14" r="1.3" fill="currentColor" /></svg>)
+export const AudioLines = (p: P) => (<svg {...s(p)}><path d="M3 10v4M7.5 6v12M12 3v18M16.5 8v8M21 10v4" /></svg>)
+export const MicOff = (p: P) => (<svg {...s(p)}><path d="M9 5a3 3 0 016 0v5M15 13.5A3 3 0 019 11v-1M5 11a7 7 0 0011.5 5.4M19 11a7 7 0 01-.6 2.8M12 18v3M3 3l18 18" /></svg>)
+export const PhoneOff = (p: P) => (<svg {...s(p)}><path d="M3.5 13.5c4.7-4 12.3-4 17 0l-1.6 2.8a1 1 0 01-1.2.4l-3-1.1a1 1 0 01-.6-.9v-2a12.5 12.5 0 00-4.2 0v2a1 1 0 01-.6.9l-3 1.1a1 1 0 01-1.2-.4z" /></svg>)

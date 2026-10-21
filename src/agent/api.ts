@@ -65,6 +65,8 @@ export interface ChatMessage {
     /** Pictures a tool handed to a model that can see ("sha:<hash>"). */
     images?: string[]
     sentNow?: boolean
+    /** Said out loud in voice mode, not typed. */
+    voice?: boolean
     device?: string
   }
 }
@@ -83,6 +85,8 @@ export interface Chat {
    * message) to the chosen child. "pending" waits for a reply being made.
    */
   chosen?: Record<string, { id: string; at: number }>
+  /** A spoken conversation (voice mode). */
+  voice?: boolean
 }
 
 export interface ChatSummary {
@@ -92,6 +96,7 @@ export interface ChatSummary {
   updatedAt: number
   count: number
   preview: string
+  voice?: boolean
 }
 
 const desk = (window as any).notes
