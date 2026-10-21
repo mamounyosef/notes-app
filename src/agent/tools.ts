@@ -1410,7 +1410,6 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
   },
 }
 
-/** Scrolls the canvas so a cell is in view and flashes it. */
 /**
  * How the vision model must describe figures, so a model that cannot see the
  * image gets everything it would need to redraw it.
@@ -1489,48 +1488,184 @@ async function imageAsBase64(src: string): Promise<string> {
   return btoa(bin)
 }
 
-export function scrollToCell(cellId: string, anchor?: string) {
-  const run = () => {
-    const wrap = document.querySelector('.canvas-wrap') as HTMLElement | null
-    const st = useStore.getState()
-    const cell = st.page?.cells.find((c) => c.id === cellId)
-    if (!wrap || !cell) return
-    const el = wrap.querySelector(`[data-cell-id="${CSS.escape(cellId)}"]`) as HTMLElement | null
-    if (!el) return
-    let target: HTMLElement = el
-    if (anchor && anchor.trim()) {
-      const needle = anchor.trim().replace(/\s+/g, ' ').toLowerCase().slice(0, 120)
-      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
-      let node = walker.nextNode() as Text | null
-      while (node) {
-        if ((node.nodeValue || '').replace(/\s+/g, ' ').toLowerCase().includes(needle.slice(0, Math.min(needle.length, 60)))) {
-          target = (node.parentElement as HTMLElement) || el
-          break
-        }
-        node = walker.nextNode() as Text | null
+/** Whitespace-collapsed, lowercased text of an element with each character mapped back to its text node. */
+function indexText(root: HTMLElement) {
+  const nodes: Text[] = []
+  const map: { n: number; o: number }[] = []
+  let text = ''
+  let lastSpace = true
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (n) => ((n.parentElement as HTMLElement | null)?.closest('.katex-mathml, script, style') ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  })
+  for (let node = walker.nextNode() as Text | null; node; node = walker.nextNode() as Text | null) {
+    const ni = nodes.push(node) - 1
+    const v = node.nodeValue || ''
+    for (let o = 0; o < v.length; o++) {
+      const ch = v[o]
+      if (/\s/.test(ch)) {
+        if (lastSpace) continue
+        text += ' '
+        lastSpace = true
+      } else {
+        text += ch.toLowerCase()
+        lastSpace = false
       }
+      map.push({ n: ni, o })
     }
-    const wrapRect = wrap.getBoundingClientRect()
-    const targetRect = target.getBoundingClientRect()
-    const desiredTop = wrap.scrollTop + (targetRect.top - wrapRect.top) - (wrap.clientHeight - targetRect.height) / 2
-    const desiredLeft = wrap.scrollLeft + (targetRect.left - wrapRect.left) - (wrap.clientWidth - targetRect.width) / 2
-    wrap.scrollTo({ top: Math.max(0, desiredTop), left: Math.max(0, desiredLeft), behavior: 'smooth' })
-    target.classList.remove('agent-change-flash')
-    void target.offsetWidth
-    target.classList.add('agent-change-flash')
-    setTimeout(() => target.classList.remove('agent-change-flash'), 1000)
-    // A guaranteed-visible spotlight, since cell content can hide in-flow highlights.
-    const spot = document.createElement('div')
-    spot.className = 'agent-spotlight'
-    const r = target.getBoundingClientRect()
-    spot.style.left = `${r.left - 6}px`
-    spot.style.top = `${r.top - 6}px`
-    spot.style.width = `${r.width + 12}px`
-    spot.style.height = `${r.height + 12}px`
-    document.body.appendChild(spot)
-    setTimeout(() => spot.remove(), 1200)
   }
-  requestAnimationFrame(() => requestAnimationFrame(run))
+  return { nodes, map, text }
+}
+
+/** The exact text the agent wrote, as a DOM range (it may span several formatted runs). */
+function findAnchorRange(root: HTMLElement, anchor: string): Range | null {
+  const needleFull = anchor.replace(/\s+/g, ' ').trim().toLowerCase()
+  if (!needleFull) return null
+  const { nodes, map, text } = indexText(root)
+  for (const len of [400, 200, 100, 50, 25, 12]) {
+    const needle = needleFull.slice(0, len).trim()
+    if (!needle) continue
+    const at = text.indexOf(needle)
+    if (at < 0) continue
+    const first = map[at]
+    const last = map[at + needle.length - 1]
+    if (!first || !last) continue
+    const range = document.createRange()
+    range.setStart(nodes[first.n], first.o)
+    range.setEnd(nodes[last.n], last.o + 1)
+    return range
+  }
+  return null
+}
+
+/** Merges a range's client rects into one box per text line. */
+function lineBoxes(range: Range) {
+  const rects = [...range.getClientRects()].filter((r) => r.width > 1 && r.height > 1)
+  rects.sort((a, b) => a.top - b.top || a.left - b.left)
+  const lines: { left: number; top: number; right: number; bottom: number }[] = []
+  for (const r of rects) {
+    const prev = lines[lines.length - 1]
+    const overlap = prev ? Math.min(prev.bottom, r.bottom) - Math.max(prev.top, r.top) : 0
+    if (prev && overlap > Math.min(prev.bottom - prev.top, r.height) * 0.5) {
+      prev.left = Math.min(prev.left, r.left)
+      prev.right = Math.max(prev.right, r.right)
+      prev.top = Math.min(prev.top, r.top)
+      prev.bottom = Math.max(prev.bottom, r.bottom)
+    } else {
+      lines.push({ left: r.left, top: r.top, right: r.right, bottom: r.bottom })
+    }
+  }
+  return lines
+}
+
+let revealToken = 0
+
+/**
+ * Scrolls the canvas so exactly what the agent wrote or changed sits at the
+ * center of the view (smoothly, tracking layout shifts), then marks it with a
+ * short highlight that lives inside the page so it never drifts while moving.
+ */
+export function scrollToCell(cellId: string, anchor?: string) {
+  const token = ++revealToken
+  const wrap = document.querySelector('.canvas-wrap') as HTMLElement | null
+  if (!wrap) return
+  const stale = () => token !== revealToken
+
+  // Where the change is right now: the matched text, or else the whole cell.
+  const locate = () => {
+    const el = wrap.querySelector(`[data-cell-id="${CSS.escape(cellId)}"]`) as HTMLElement | null
+    if (!el) return null
+    const range = anchor && anchor.trim() ? findAnchorRange(el, anchor) : null
+    const lines = range ? lineBoxes(range) : []
+    if (lines.length) {
+      const box = lines.reduce((m, l) => ({ left: Math.min(m.left, l.left), top: Math.min(m.top, l.top), right: Math.max(m.right, l.right), bottom: Math.max(m.bottom, l.bottom) }), { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity })
+      return { lines, box, text: true }
+    }
+    const r = el.getBoundingClientRect()
+    return { lines: [{ left: r.left, top: r.top, right: r.right, bottom: r.bottom }], box: { left: r.left, top: r.top, right: r.right, bottom: r.bottom }, text: false }
+  }
+
+  // Scroll offset that puts the change in the middle (or its start, if taller than the view).
+  const goal = (box: { left: number; top: number; right: number; bottom: number }) => {
+    const w = wrap.getBoundingClientRect()
+    const h = box.bottom - box.top
+    const wd = box.right - box.left
+    const pad = 72
+    const dy = h > wrap.clientHeight - pad * 2 ? box.top - w.top - pad : box.top - w.top - (wrap.clientHeight - h) / 2
+    const dx = wd > wrap.clientWidth - pad * 2 ? box.left - w.left - pad : box.left - w.left - (wrap.clientWidth - wd) / 2
+    return {
+      top: Math.min(Math.max(0, wrap.scrollTop + dy), Math.max(0, wrap.scrollHeight - wrap.clientHeight)),
+      left: Math.min(Math.max(0, wrap.scrollLeft + dx), Math.max(0, wrap.scrollWidth - wrap.clientWidth)),
+    }
+  }
+
+  const mark = () => {
+    const found = locate()
+    const host = wrap.firstElementChild as HTMLElement | null
+    if (!found || !host || stale()) return
+    const hr = host.getBoundingClientRect()
+    const layer = document.createElement('div')
+    layer.className = 'agent-reveal'
+    const lines = found.text ? found.lines.slice(0, 40) : found.lines
+    lines.forEach((l, i) => {
+      const bit = document.createElement('div')
+      bit.className = found.text ? 'agent-reveal-line' : 'agent-reveal-cell'
+      const padX = found.text ? 4 : 6
+      const padY = found.text ? 2 : 6
+      bit.style.left = `${l.left - hr.left - padX}px`
+      bit.style.top = `${l.top - hr.top - padY}px`
+      bit.style.width = `${l.right - l.left + padX * 2}px`
+      bit.style.height = `${l.bottom - l.top + padY * 2}px`
+      bit.style.animationDelay = `${Math.min(i, 12) * 45}ms`
+      layer.appendChild(bit)
+    })
+    host.appendChild(layer)
+    setTimeout(() => layer.remove(), 2200)
+  }
+
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches
+  const frame = (fn: FrameRequestCallback) => requestAnimationFrame(fn)
+
+  const start = () => {
+    if (stale()) return
+    document.querySelectorAll('.agent-reveal').forEach((n) => n.remove())
+    const first = locate()
+    if (!first) return
+    let found = first
+    const from = { top: wrap.scrollTop, left: wrap.scrollLeft }
+    const far = Math.hypot(goal(found.box).top - from.top, goal(found.box).left - from.left)
+    const duration = reduced ? 0 : Math.min(750, 280 + far * 0.35)
+    const t0 = performance.now()
+    let stop = false
+    const cancel = () => { stop = true }
+    // The user taking over the scroll ends the animation.
+    wrap.addEventListener('wheel', cancel, { once: true, passive: true })
+    wrap.addEventListener('pointerdown', cancel, { once: true })
+    const done = () => {
+      wrap.removeEventListener('wheel', cancel)
+      wrap.removeEventListener('pointerdown', cancel)
+    }
+    const tick = (now: number) => {
+      if (stale() || stop) return done()
+      found = locate() || found
+      const to = goal(found.box)
+      const k = duration ? Math.min(1, (now - t0) / duration) : 1
+      const e = 1 - Math.pow(1 - k, 3)
+      wrap.scrollTo({ top: from.top + (to.top - from.top) * e, left: from.left + (to.left - from.left) * e, behavior: 'instant' as ScrollBehavior })
+      if (k < 1) return void frame(tick)
+      done()
+      // Let the layout settle one more frame, then mark the spot.
+      frame(() => frame(() => {
+        if (stale()) return
+        const to2 = goal((locate() || found).box)
+        wrap.scrollTo({ top: to2.top, left: to2.left, behavior: 'instant' as ScrollBehavior })
+        frame(mark)
+      }))
+    }
+    frame(tick)
+  }
+
+  // Wait for the edited cell to render before measuring.
+  frame(() => frame(() => frame(start)))
 }
 
 export async function runTool(name: string, args: Args, env: ToolEnv): Promise<ToolResult> {

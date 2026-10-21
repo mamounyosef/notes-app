@@ -1186,39 +1186,65 @@
   animation: agent-flash 1.5s ease-out;
 }
 
-.agent-change-flash {
-  animation: agent-change-flash 1s ease-out;
-  border-radius: 4px;
-}
-
-@keyframes agent-change-flash {
-  0% {
-    background-color: color-mix(in srgb, var(--accent) 45%, transparent);
-    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent);
-  }
-  100% {
-    background-color: transparent;
-    box-shadow: 0 0 0 0 transparent;
-  }
-}
-
-.agent-spotlight {
-  position: fixed;
-  z-index: 99999;
+/* Marks what the agent just wrote. Lives inside the page, so it scrolls with it. */
+.agent-reveal {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
   pointer-events: none;
-  border-radius: 8px;
-  border: 2px solid color-mix(in srgb, var(--accent) 85%, #ffffff);
-  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 25%, transparent),
-              0 0 18px 2px color-mix(in srgb, var(--accent) 40%, transparent);
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  animation: agent-spotlight 1.1s ease-out forwards;
+  overflow: visible;
 }
 
-@keyframes agent-spotlight {
-  0% { opacity: 0; transform: scale(0.94); }
-  15% { opacity: 1; transform: scale(1.02); }
-  70% { opacity: 1; transform: scale(1); }
-  100% { opacity: 0; transform: scale(1.04); }
+.agent-reveal-line,
+.agent-reveal-cell {
+  position: absolute;
+  pointer-events: none;
+  opacity: 0;
+  transform-origin: left center;
+  animation: agent-reveal-line 1.7s cubic-bezier(0.22, 0.8, 0.3, 1) both;
+}
+
+.agent-reveal-line {
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--accent) 38%, transparent),
+    color-mix(in srgb, var(--accent) 22%, transparent)
+  );
+  box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 70%, transparent),
+              0 0 22px 2px color-mix(in srgb, var(--accent) 45%, transparent);
+  mix-blend-mode: normal;
+}
+
+.agent-reveal-cell {
+  border-radius: 12px;
+  border: 2px solid color-mix(in srgb, var(--accent) 80%, #ffffff);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 22%, transparent),
+              0 0 28px 4px color-mix(in srgb, var(--accent) 40%, transparent);
+  transform-origin: center;
+  animation-name: agent-reveal-cell;
+}
+
+@keyframes agent-reveal-line {
+  0% { opacity: 0; transform: scaleX(0); }
+  18% { opacity: 1; transform: scaleX(1); }
+  62% { opacity: 1; transform: scaleX(1); }
+  100% { opacity: 0; transform: scaleX(1); }
+}
+
+@keyframes agent-reveal-cell {
+  0% { opacity: 0; transform: scale(0.97); }
+  18% { opacity: 1; transform: scale(1.01); }
+  30% { transform: scale(1); }
+  62% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1.015); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-reveal-line,
+  .agent-reveal-cell { animation-name: agent-reveal-fade; }
+  @keyframes agent-reveal-fade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
 }
 
 @keyframes agent-flash {
