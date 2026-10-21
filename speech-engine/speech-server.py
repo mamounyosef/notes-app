@@ -648,6 +648,25 @@ async def ws_handler(request):
 _vram = {"at": 0.0, "mb": None}
 
 
+def _smi(query):
+    import subprocess
+    return subprocess.run(
+        ["nvidia-smi", query, "--format=csv,noheader,nounits"],
+        capture_output=True, text=True, timeout=3,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    ).stdout
+
+
+def _gpu_used_mb():
+    try:
+        return int(_smi("--query-gpu=memory.used").splitlines()[0].strip())
+    except Exception:
+        return None
+
+
+_BASELINE_MB = _gpu_used_mb()  # the card's use before any model is loaded
+
+
 def vram_mb():
     """This process's GPU memory in MB (nvidia-smi), or None. Cached 5 s."""
     if time.monotonic() - _vram["at"] < 5:
@@ -655,16 +674,17 @@ def vram_mb():
     _vram["at"] = time.monotonic()
     _vram["mb"] = None
     try:
-        import subprocess
-        out = subprocess.run(
-            ["nvidia-smi", "--query-compute-apps=pid,used_memory", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=3,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        ).stdout
+        out = _smi("--query-compute-apps=pid,used_memory")
         for line in out.splitlines():
             parts = [x.strip() for x in line.split(",")]
-            if len(parts) == 2 and parts[0] == str(os.getpid()):
+            if len(parts) == 2 and parts[0] == str(os.getpid()) and parts[1].isdigit():
                 _vram["mb"] = int(parts[1])
+        if _vram["mb"] is None and _BASELINE_MB is not None:
+            # Windows (WDDM) reports per-process memory as [N/A]: use the growth of the
+            # whole card since this process started instead.
+            now = _gpu_used_mb()
+            if now is not None:
+                _vram["mb"] = max(0, now - _BASELINE_MB)
     except Exception:
         pass
     return _vram["mb"]
