@@ -9,9 +9,18 @@ import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
 import Composer from './Composer'
 import { ContextRing, ContextInspector } from './ContextMeter'
 import {
-  AssistantMark, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock,
+  AssistantMark, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock, AudioLines, Mic,
 } from '../Icons'
 import { waitText } from './QueueDeck'
+import VoiceDock, { HearingBubble, VoiceEmpty } from '../voice/VoiceDock'
+import { useVoiceConversation } from '../../voice/useVoiceConversation'
+import { useVoicePrefs } from '../../voice/voicePrefs'
+import { voiceApi, warmVoice } from '../../voice/voiceSession'
+import { clearSaying, followSaying } from '../../voice/sayingHighlight'
+
+/** What a spoken message says, without the note for the model that it cut the last reply short. */
+const spoken = (t: string) => t.replace(/^\(You were interrupted\.\)\s*/, '')
+
 
 /* ------------------------------------------------------------------ *
  * Grouping: a "turn" is one user message and everything after it.
@@ -359,11 +368,16 @@ function UserBubble({ m, onImage }: { m: ChatMessage; onImage(items: LightboxIte
           {m.meta?.mentions?.map((x) => (
             <span key={x.id} className="ag-mention" onClick={() => x.kind === 'page' && goToTarget({ pageId: x.id })}>@{x.title}</span>
           ))}
-          {m.content}
+          {m.meta?.voice ? spoken(m.content) : m.content}
         </div>
       )}
       {!editing && (
         <div className="ag-user-bar">
+          {m.meta?.voice && (
+            <span className="ag-sent-tag voice" title={/^\(You were interrupted\.\)/.test(m.content) ? 'Said out loud, cutting the last reply short' : 'Said out loud in voice mode'}>
+              <Mic size={11} /> spoken
+            </span>
+          )}
           <span className="ag-when" title={new Date(m.at).toLocaleString()}>{relTime(m.at)}</span>
           {m.meta?.queued && (
             <span className="ag-sent-tag queued" title="You typed this while the agent was working; it went out when the reply ended.">
@@ -534,7 +548,7 @@ function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(
  * Empty state, key setup, history
  * ------------------------------------------------------------------ */
 
-function Suggestions() {
+function Suggestions({ onVoice }: { onVoice?(): void }) {
   const send = useAgent((s) => s.send)
   const page = useStore((s) => s.page)
   const has = Boolean(page?.cells.length)
@@ -562,6 +576,12 @@ function Suggestions() {
         {list.map((t) => (
           <button key={t} className="ag-sug" onClick={() => send(t)}>{t}</button>
         ))}
+        {onVoice && (
+          <button className="ag-sug vd-talk" onClick={onVoice} onMouseEnter={warmVoice} title="A spoken conversation (Ctrl+Shift+Space)">
+            <span className="vd-talk-icon"><AudioLines size={14} /></span>
+            <span><b>Talk instead</b> · a spoken conversation</span>
+          </button>
+        )}
       </div>
     </div>
   )
@@ -650,6 +670,7 @@ function HistoryView({ onClose }: { onClose(): void }) {
                 ) : (
                   <div className="ag-chat-main">
                     <div className="ag-chat-title">
+                      {c.voice && <AudioLines size={11} className="ag-chat-voice" />}
                       {c.title}
                       <span className="ag-chat-time">{chatTime(c.updatedAt)}</span>
                     </div>
@@ -696,6 +717,10 @@ function HistoryView({ onClose }: { onClose(): void }) {
  * The panel
  * ------------------------------------------------------------------ */
 
+const voiceAvailable = voiceApi.available
+/** The last Ctrl+Shift+Space acted on (module wide: the request may come while the panel is still closed). */
+let handledVoiceRequest = 0
+
 export default function AgentPanel() {
   const prefs = useAgent((s) => s.prefs)
   const setPrefs = useAgent((s) => s.setPrefs)
@@ -709,6 +734,28 @@ export default function AgentPanel() {
   const live = useAgent((s) => s.live)
   const [showHistory, setShowHistory] = useState(false)
   const [showCtx, setShowCtx] = useState(false)
+
+  // Voice mode: the same chat, heard and spoken. The dock takes the composer's place.
+  const [voicePrefs] = useVoicePrefs()
+  const voice = useVoiceConversation(voicePrefs)
+  const voiceOn = useAgent((s) => s.voiceOn)
+  const voiceRequest = useAgent((s) => s.voiceRequest)
+  const startVoice = useCallback(() => {
+    setShowHistory(false)
+    setShowCtx(false)
+    void voice.start()
+  }, [voice])
+  // Ctrl+Shift+Space (from anywhere): voice mode on, or off again.
+  useEffect(() => {
+    if (voiceRequest <= handledVoiceRequest) return
+    handledVoiceRequest = voiceRequest
+    if (voice.active) voice.stop()
+    else startVoice()
+  }, [voiceRequest, voice, startVoice])
+  // The sentence being said lights up in the chat.
+  useEffect(() => (voice.saying && voicePrefs.follow ? followSaying(scrollRef.current, voice.saying) : clearSaying()), [voice.saying, voicePrefs.follow])
+  useEffect(() => () => clearSaying(), [])
+  const hearing = voiceOn && voice.active && !voice.heardFinal && (voice.phase === 'hearing' || Boolean(voice.heard))
   const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -739,7 +786,7 @@ export default function AgentPanel() {
   useEffect(() => {
     const el = scrollRef.current
     if (el && stick.current) el.scrollTop = el.scrollHeight
-  }, [chat?.messages.length, live?.content, live?.thinking, busy])
+  }, [chat?.messages.length, live?.content, live?.thinking, busy, hearing, voice.heard])
 
   const onImage = useCallback((items: LightboxItem[], index: number) => setLightbox({ items, index }), [])
 
@@ -802,6 +849,16 @@ export default function AgentPanel() {
             <Chevron size={12} className={`ag-chev ${showHistory ? 'up' : ''}`} />
           </button>
           <div className="spacer" />
+          {voiceAvailable && hasKey !== false && (
+            <button
+              className={`ag-icon-btn ${voiceOn ? 'on voice-live' : ''}`}
+              title={voiceOn ? 'End voice mode (Esc)' : 'Voice mode: talk with the assistant (Ctrl+Shift+Space)'}
+              onMouseEnter={warmVoice}
+              onClick={() => (voice.active || voiceOn ? voice.stop() : startVoice())}
+            >
+              <AudioLines size={15} />
+            </button>
+          )}
           {hasKey !== false && <ContextRing active={showCtx} onClick={() => setShowCtx(!showCtx)} />}
           <button className="ag-icon-btn" title="New chat (Ctrl+Shift+J)" onClick={() => { newChat(); setShowHistory(false); setShowCtx(false) }}><Plus size={15} /></button>
           <button className={`ag-icon-btn ${showHistory ? 'on' : ''}`} title="Chat history" onClick={() => { setShowHistory(!showHistory); setShowCtx(false) }}><History size={15} /></button>
@@ -830,11 +887,12 @@ export default function AgentPanel() {
                 stick.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
               }}
             >
-              {turns.length === 0 ? (
-                <Suggestions />
+              {turns.length === 0 && !hearing ? (
+                voiceOn ? <VoiceEmpty /> : <Suggestions onVoice={voiceAvailable ? startVoice : undefined} />
               ) : (
                 turns.map((t, i) => <TurnView key={t.user?.id || i} turn={t} last={i === turns.length - 1} onImage={onImage} />)
               )}
+              {hearing && <HearingBubble text={voice.heard} />}
               {error && (
                 <div className="ag-error">
                   <span>{error}</span>
@@ -844,7 +902,11 @@ export default function AgentPanel() {
                 </div>
               )}
             </div>
-            <Composer ref={composerRef} onImage={onImage} />
+            {voiceOn ? (
+              <VoiceDock voice={voice} onSettings={() => window.dispatchEvent(new CustomEvent('notes:open-settings', { detail: { tab: 'voice' } }))} />
+            ) : (
+              <Composer ref={composerRef} onImage={onImage} onVoice={voiceAvailable ? startVoice : undefined} />
+            )}
           </>
         )}
         {dragOver && <div className="ag-drop">Drop images, PDFs or documents</div>}

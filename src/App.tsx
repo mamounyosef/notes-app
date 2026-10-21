@@ -43,6 +43,16 @@ export default function App() {
 
   const [showSearch, setShowSearch] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
+  const [settingsTab, setSettingsTab] = useState<string | undefined>(undefined)
+  // Other parts of the app (the voice dock) open Settings on a given tab.
+  useEffect(() => {
+    const open = (e: Event) => {
+      setSettingsTab((e as CustomEvent).detail?.tab)
+      setShowSettings(true)
+    }
+    window.addEventListener('notes:open-settings', open)
+    return () => window.removeEventListener('notes:open-settings', open)
+  }, [])
   const [showKeys, setShowKeys] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
   const [showArchive, setShowArchive] = useState(false)
@@ -230,7 +240,9 @@ export default function App() {
       if (e.ctrlKey && e.key.toLowerCase() === 'p' && e.shiftKey) { e.preventDefault(); setShowSearch(true); return }
       if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); useActiveEditor.getState().setLinkModalOpen(true); return }
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); useActiveEditor.getState().setArtifactModalOpen(true); return }
-      if (e.ctrlKey && e.key === ',') { e.preventDefault(); setShowSettings(true); return }
+      if (e.ctrlKey && e.key === ',') { e.preventDefault(); setSettingsTab(undefined); setShowSettings(true); return }
+      // Voice mode on or off, from anywhere (opens the assistant).
+      if (e.ctrlKey && e.shiftKey && !e.altKey && (e.code === 'Space' || e.key === ' ')) { e.preventDefault(); useAgent.getState().requestVoice(); return }
       if (e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'j') {
         e.preventDefault()
         if (e.shiftKey) { useAgent.getState().toggle(true); useAgent.getState().newChat() }
@@ -585,7 +597,7 @@ export default function App() {
       </div>
 
       {showSearch && <SearchModal onClose={() => setShowSearch(false)} />}
-      {showSettings && <SettingsModal onClose={() => setShowSettings(false)} />}
+      {showSettings && <SettingsModal initialTab={settingsTab} onClose={() => setShowSettings(false)} />}
       {showSyncPanel && <SyncPanel onClose={() => useStore.getState().setShowSyncPanel(false)} />}
       {showKeys && <ShortcutSheet onClose={() => setShowKeys(false)} />}
       {linkModalOpen && <LinkModal onClose={() => setLinkModalOpen(false)} />}

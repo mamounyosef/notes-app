@@ -1,0 +1,366 @@
+/* ------------------------------------------------------------------ *
+ * Voice mode: the dock, the live transcript, the spoken-sentence highlight,
+ * the voice model picker and Settings, Voice.
+ * Blue is you, orange is the assistant, violet is thinking (as the orb).
+ * ------------------------------------------------------------------ */
+
+.vd {
+  --vd-tint: #60a5fa;
+  flex: none;
+  padding: 4px 10px 10px;
+  animation: ag-in 0.2s ease-out;
+}
+
+.vd-card {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background:
+    radial-gradient(120% 90% at 50% 40%, color-mix(in srgb, var(--vd-tint) 16%, transparent) 0%, transparent 62%),
+    var(--bg-2);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.32);
+  transition: background 0.6s ease;
+  overflow: visible;
+}
+
+.vd-top {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 7px 8px 0;
+  position: relative;
+}
+/* The model menu opens upward over the chat, as from the composer. */
+.vd-card .mp-pop { max-height: min(460px, 60vh); }
+
+.vd-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.vd-chip:hover { color: var(--text); }
+.vd-chip.on { color: #a78bfa; background: rgba(167, 139, 250, 0.14); border-color: rgba(167, 139, 250, 0.35); }
+
+.vd-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding-top: 2px;
+}
+
+.vd-label {
+  height: 20px;
+  display: flex;
+  align-items: center;
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+  color: var(--vd-tint);
+  transition: color 0.4s ease;
+}
+
+.vd-dots { display: inline-flex; margin-left: 2px; }
+.vd-dots > i {
+  width: 4px;
+  height: 4px;
+  margin-left: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: vd-dots 1.2s infinite ease-in-out;
+}
+.vd-dots > i:nth-child(2) { animation-delay: 0.15s; }
+.vd-dots > i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes vd-dots { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+
+.vd-caption-box {
+  width: 100%;
+  min-height: 42px;
+  padding: 4px 18px 2px;
+  display: flex;
+  justify-content: center;
+  text-align: center;
+}
+.vd-caption {
+  font-size: 13px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  animation: vd-caption-in 0.22s ease-out both;
+  opacity: 0.8;
+}
+.vd-caption.live { opacity: 1; }
+.vd-caption b { font-weight: 650; margin-right: 3px; }
+.vd-caption.you b { color: #60a5fa; }
+.vd-caption.you.live { font-style: italic; }
+.vd-caption.ai b { color: #fb923c; }
+.vd-caption.hint { color: var(--text-faint); font-size: 12px; opacity: 1; }
+.vd-caption.err { color: #f87171; font-size: 12px; opacity: 1; -webkit-line-clamp: 3; }
+@keyframes vd-caption-in { from { opacity: 0; transform: translateY(4px); filter: blur(2px); } to { opacity: 0.8; transform: none; filter: none; } }
+
+.vd-buttons {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 6px 0 4px;
+}
+.vd-btn,
+.vd-end {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  height: 42px;
+  border-radius: 999px;
+  transition: transform 0.12s ease, background 0.14s ease, box-shadow 0.16s ease, opacity 0.14s;
+}
+.vd-btn {
+  width: 42px;
+  color: var(--text);
+  background: var(--bg-3);
+  border: 1px solid var(--line);
+}
+.vd-btn.wide { width: auto; padding: 0 16px; font-size: 12.5px; font-weight: 600; }
+.vd-btn.on { background: #64748b; color: #fff; }
+.vd-btn:disabled { opacity: 0.4; }
+.vd-end {
+  padding: 0 16px;
+  font-size: 12.5px;
+  font-weight: 650;
+  color: #fff;
+  background: linear-gradient(135deg, #f43f5e, #e11d48);
+  box-shadow: 0 6px 18px rgba(225, 29, 72, 0.35);
+}
+.vd-btn:not(:disabled):hover,
+.vd-end:hover { transform: translateY(-1px); }
+.vd-btn:not(:disabled):active,
+.vd-end:active { transform: scale(0.95); }
+
+.vd-keys {
+  text-align: center;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  padding: 0 0 8px;
+}
+
+/* What you are saying, taking shape at the end of the chat */
+.vd-hearing .ag-user-text {
+  border: 1px dashed rgba(96, 165, 250, 0.55);
+  background: rgba(96, 165, 250, 0.08);
+  font-style: italic;
+  color: var(--text);
+  animation: vd-breathe 1.6s ease-in-out infinite;
+}
+.vd-hearing-dot {
+  display: inline-block;
+  width: 7px;
+  height: 7px;
+  margin-right: 7px;
+  border-radius: 999px;
+  background: #60a5fa;
+  box-shadow: 0 0 0 0 rgba(96, 165, 250, 0.6);
+  animation: vd-ping 1.2s ease-out infinite;
+  vertical-align: 1px;
+}
+@keyframes vd-breathe { 50% { border-color: rgba(96, 165, 250, 0.9); } }
+@keyframes vd-ping { to { box-shadow: 0 0 0 7px rgba(96, 165, 250, 0); } }
+
+/* The sentence being spoken, lit up in the chat (CSS Custom Highlight API) */
+::highlight(voice-saying) {
+  background-color: rgba(251, 146, 60, 0.24);
+  color: var(--text);
+}
+
+.ag-sent-tag.voice { color: #60a5fa; background: rgba(96, 165, 250, 0.12); }
+.ag-chat-voice { color: #fb923c; flex: none; margin-right: 5px; vertical-align: -1px; }
+
+/* The header button glows while voice mode is on */
+.ag-icon-btn.voice-live {
+  color: #fb923c;
+  background: rgba(251, 146, 60, 0.14);
+  animation: vd-live 2.4s ease-in-out infinite;
+}
+@keyframes vd-live { 50% { box-shadow: 0 0 0 3px rgba(251, 146, 60, 0.18); } }
+.ag-voice-btn:hover { color: #fb923c; }
+
+/* "Talk instead" on the empty chat */
+.ag-sug.vd-talk {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--text);
+  background: linear-gradient(110deg, rgba(59, 130, 246, 0.14), rgba(249, 115, 22, 0.12));
+}
+.vd-talk-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, #3b82f6, #f97316);
+}
+.vd-talk b { font-weight: 650; }
+
+.vd-empty { align-items: flex-start; text-align: left; padding: 28px 6px 10px; }
+.vd-empty .ag-empty-title { font-size: 21px; line-height: 1.25; letter-spacing: -0.01em; }
+.vd-empty .ag-empty-title span { color: var(--text-dim); }
+.vd-empty .ag-empty-sub { max-width: none; line-height: 1.55; }
+.vd-tips { display: flex; flex-direction: column; gap: 6px; width: 100%; margin-top: 8px; }
+.vd-tip {
+  font-size: 12.5px;
+  padding: 7px 11px;
+  border-radius: 10px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-2);
+  color: var(--text);
+}
+.vd-tip span { color: #60a5fa; margin-right: 4px; }
+
+/* ---------- the voice model picker ---------- */
+
+.mp-btn-label { opacity: 0.7; margin-right: 2px; }
+.mp-btn-label::after { content: ':'; }
+.mp-btn-speed { font-variant-numeric: tabular-nums; opacity: 0.7; margin-left: 2px; }
+.mp-head { display: flex; align-items: center; gap: 6px; }
+.mp-test {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.mp-test:disabled { opacity: 0.6; }
+.mp-voice-note { font-size: 11px; color: var(--text-faint); padding: 0 8px 6px; line-height: 1.4; }
+.mp-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-left: auto;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.mp-speed + .mp-check { margin-left: 6px; }
+.mp-speed.fast { color: #98c379; background: rgba(152, 195, 121, 0.13); }
+.mp-speed.mid { color: #e5c07b; background: rgba(229, 192, 123, 0.13); }
+.mp-speed.slow { color: #e06c75; background: rgba(224, 108, 117, 0.13); }
+.mp-speed.warn { color: #e5c07b; font-weight: 500; }
+.mp-speed.dim { color: var(--text-faint); font-weight: 500; }
+
+/* ---------- Settings, Voice ---------- */
+
+.voice-settings h3:not(:first-child) { margin-top: 18px; }
+.vs-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border-radius: 8px;
+  font-size: 12.5px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+.vs-dot { width: 8px; height: 8px; border-radius: 999px; background: var(--text-faint); flex: none; }
+.vs-status.ok .vs-dot { background: #98c379; box-shadow: 0 0 0 3px rgba(152, 195, 121, 0.2); }
+.vs-err { color: #e06c75; font-size: 12px; }
+.voice-settings .btn { display: inline-flex; align-items: center; gap: 6px; justify-self: start; }
+
+.vs-group { margin-bottom: 10px; }
+.vs-group-title { font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); margin-bottom: 6px; }
+.vs-voices { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 6px; }
+.vs-voice {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 7px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--line-soft);
+  cursor: pointer;
+  transition: border-color 0.12s, background 0.12s;
+}
+.vs-voice:hover { border-color: var(--line); }
+.vs-voice.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.vs-play {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  display: grid;
+  place-items: center;
+  color: #fff;
+  background: linear-gradient(135deg, #38bdf8, #6366f1);
+}
+.vs-play.female { background: linear-gradient(135deg, #fb923c, #f43f5e); }
+.vs-voice-text { min-width: 0; flex: 1; }
+.vs-voice-name { font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 5px; }
+.vs-voice-note { font-size: 11px; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vs-best { font-size: 9px; font-weight: 700; padding: 0 5px; border-radius: 999px; color: #3fb68b; background: rgba(63, 182, 139, 0.15); }
+.vs-check { color: var(--accent); flex: none; }
+
+.set-row.column { grid-template-columns: 1fr; }
+.vs-pauses { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.vs-pause {
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line-soft);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.vs-pause b { font-size: 13px; }
+.vs-pause span { font-size: 11px; color: var(--text-faint); line-height: 1.35; }
+.vs-pause.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.vs-pause.sel b { color: var(--accent); }
+
+.vs-test { display: flex; align-items: center; gap: 8px; padding: 6px 0; }
+.vs-test .empty-hint { padding: 0; }
+.vs-free { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-dim); padding: 0 0 6px; }
+
+.vs-models { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; }
+.vs-model {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line-soft);
+  text-align: left;
+}
+.vs-model.head { border: none; padding-top: 0; padding-bottom: 0; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-faint); }
+.vs-model.sel { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.vs-model .grow { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; }
+.vs-model .grow b { font-size: 13px; font-weight: 600; }
+.vs-model .grow em { font-style: normal; }
+.vs-model .grow small { flex-basis: 100%; font-size: 11px; color: var(--text-faint); }
+.vs-col { width: 76px; flex: none; text-align: right; display: flex; flex-direction: column; align-items: flex-end; transition: opacity 0.15s; }
+.vs-col.dim { opacity: 0.5; }
+.vs-col small { font-size: 10px; color: var(--text-faint); }
+.vs-sec { font-size: 13px; font-variant-numeric: tabular-nums; }
+.vs-sec.fast { color: #98c379; }
+.vs-sec.mid { color: #e5c07b; }
+.vs-sec.slow { color: #e06c75; }
+.vs-none { font-size: 11px; color: var(--text-faint); }
+.vs-warn { font-size: 11px; color: #e5c07b; }
+.vs-tick { width: 16px; flex: none; color: var(--accent); }

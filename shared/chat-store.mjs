@@ -64,6 +64,7 @@ export function mergeChats(a, b) {
     deleted: Boolean(a.deleted || b.deleted),
     messages,
     chosen: mergeChosen(a.chosen, b.chosen),
+    ...(a.voice || b.voice ? { voice: true } : {}),
   }
 }
 
@@ -166,6 +167,7 @@ export class ChatStore {
         updatedAt: c.updatedAt || 0,
         count: (c.messages || []).filter((m) => m.role === 'user').length,
         preview: String(last?.content || '').slice(0, 140),
+        ...(c.voice ? { voice: true } : {}),
       })
     }
     return out.sort((a, b) => b.updatedAt - a.updatedAt)

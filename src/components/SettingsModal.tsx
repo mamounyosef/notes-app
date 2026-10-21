@@ -6,6 +6,7 @@ import { askConfirm } from '../lib/confirm'
 import { X, Plus, Min, Undo } from './Icons'
 import { CloudSyncSection } from './CloudSync'
 import AiSettings from './agent/AiSettings'
+import VoiceSettings from './voice/VoiceSettings'
 import { SHORTCUTS, prettyShortcut, shortcutFromEvent, type ShortcutKey } from '../editor/shortcuts'
 
 function getDecimals(step: number): number {
@@ -271,12 +272,15 @@ const FONT_CHOICES = [
   'Cascadia Code, Consolas, monospace',
 ]
 
-export default function SettingsModal({ onClose }: { onClose(): void }) {
+type Tab = 'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'ai' | 'voice' | 'storage'
+const TABS: Tab[] = ['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'ai', 'voice', 'storage']
+
+export default function SettingsModal({ onClose, initialTab }: { onClose(): void; initialTab?: string }) {
   const settings = useStore((s) => s.settings)
   const set = useStore((s) => s.setSettings)
   const vaultPath = useStore((s) => s.vaultPath)
   const syncCount = useStore((s) => s.conflicts.cells.length + s.conflicts.orphans.length)
-  const [tab, setTab] = useState<'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'ai' | 'storage'>('look')
+  const [tab, setTab] = useState<Tab>(() => (TABS.includes(initialTab as Tab) ? (initialTab as Tab) : 'look'))
 
   const Num = ({
     k, label, sub, min, max, step = 1, unit = '',
@@ -355,9 +359,9 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
           <h2>Settings</h2>
           <div className="spacer" />
           <div className="theme-chips">
-            {(['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'ai', 'storage'] as const).map((t) => (
+            {TABS.map((t) => (
               <button key={t} className={`theme-chip ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}>
-                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', shortcuts: 'Shortcuts', ai: 'AI', storage: 'Storage' }[t]}
+                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', shortcuts: 'Shortcuts', ai: 'AI', voice: 'Voice', storage: 'Storage' }[t]}
               </button>
             ))}
           </div>
@@ -505,6 +509,8 @@ export default function SettingsModal({ onClose }: { onClose(): void }) {
           )}
 
           {tab === 'ai' && <AiSettings />}
+
+          {tab === 'voice' && <VoiceSettings />}
 
           {tab === 'storage' && (
             <div className="set-group">

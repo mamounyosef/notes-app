@@ -38,6 +38,8 @@ export interface Chat {
   messages: ChatMessage[]
   /** Chosen branch per fork: parent id ("root" for the first message) to child id. */
   chosen?: Record<string, { id: string; at: number }>
+  /** A spoken conversation (voice mode). */
+  voice?: boolean
 }
 
 export function messageOrder(x: ChatMessage, y: ChatMessage): number
@@ -49,6 +51,7 @@ export interface ChatSummary {
   updatedAt: number
   count: number
   preview: string
+  voice?: boolean
 }
 
 export function mergeChats(a: Chat | null, b: Chat | null): Chat | null
