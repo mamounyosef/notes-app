@@ -5,6 +5,8 @@
 # mode is optional, so on any problem it says what happened and exits 0.
 #
 # On the PC, Notes uses the planner's engine (GPU) and this does nothing.
+# This install is CPU only: Notes starts it with SPEECH_DEVICE=cpu, so it never
+# tries a GPU even on a laptop that has one.
 
 $ErrorActionPreference = 'Stop'
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -54,7 +56,8 @@ try {
   & $py -m pip install --disable-pip-version-check -q -r (Join-Path $here 'requirements.txt')
   if ($LASTEXITCODE -ne 0) { throw 'Installing the speech libraries failed (see above).' }
 
-  # 3. Kokoro, the voice.
+  # 3. Kokoro, the voice. TLS 1.2 for GitHub on older Windows PowerShell.
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
   New-Item -ItemType Directory -Force -Path $models | Out-Null
   $base = 'https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0'
   foreach ($f in @('kokoro-v1.0.onnx', 'voices-v1.0.bin')) {
@@ -64,6 +67,8 @@ try {
       $tmp = "$dest.part"
       $ProgressPreference = 'SilentlyContinue'
       Invoke-WebRequest -Uri "$base/$f" -OutFile $tmp -UseBasicParsing
+      # A cut-off download must not pass for the model on the next run.
+      if ((Get-Item $tmp).Length -lt 10MB) { Remove-Item -Force $tmp; throw "The download of $f was incomplete." }
       Move-Item -Force $tmp $dest
     }
   }

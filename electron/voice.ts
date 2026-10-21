@@ -116,7 +116,10 @@ export function setupVoice(opts: { getWin(): BrowserWindow | null; log(...a: unk
           cwd: dir,
           windowsHide: true,
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+          // Notes' own engine (speech-engine/, set up on a computer without the
+          // planner) is a CPU install: never let it try a GPU. The planner's
+          // engine picks the GPU itself.
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8', ...(path.basename(dir) === 'speech-engine' ? { SPEECH_DEVICE: 'cpu' } : {}) },
         })
         c.stdout?.on('data', appendLog)
         c.stderr?.on('data', appendLog)
