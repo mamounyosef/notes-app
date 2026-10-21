@@ -153,7 +153,7 @@ export interface ToolResult {
   summary: string
   ok: boolean
   /** Ids to jump to from the chat chip. */
-  target?: { pageId?: string; cellId?: string }
+  target?: { pageId?: string; cellId?: string; anchor?: string; loc?: { x?: number; y?: number } }
   /** When another model did the looking: who, how long, and what it said. */
   helper?: { model: string; ms: number; text: string }
   /** Pictures for a model that can see ("sha:<hash>"): sent to it as real image input with this result. */
@@ -894,14 +894,16 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const changes: string[] = []
     let kept: string[] = []
     let after = null as { id: string; html: string; w: number } | null
+    let anchor: string | undefined
     const s = settingsNow()
     await editPage(env, pid, (p) => {
       const c = findCell(p, a.cell_id)
       cid = c.id
       const patch: Partial<Cell> = applyStyle(c, a)
-      if (a.title !== undefined) { patch.title = String(a.title); changes.push('title') }
+      if (a.title !== undefined) { patch.title = String(a.title); changes.push('title'); anchor = anchor || String(a.title) }
       if (a.content !== undefined) {
         let html = agentToHtml(String(a.content))
+        anchor = htmlToText(html)
         const mode = a.content_mode || 'replace'
         if (mode === 'replace' && !a.drop_styles) {
           const r = keepDroppedStyles(c.html || '', html)
@@ -928,7 +930,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       ? `Your content dropped the color/highlight/size on ${kept.join(', ')}; it was kept. To really remove it, call again with drop_styles: true.`
       : undefined
     const drawings = after ? await drawingReport([after]) : undefined
-    return ok({ updated: cid, changed: changes, ...(note ? { note } : {}), ...(drawings ? { drawings } : {}) }, `Updated "${title || 'cell'}"${changes.length ? ` (${changes.join(', ')})` : ''}`, { pageId: pid, cellId: cid })
+    return ok({ updated: cid, changed: changes, ...(note ? { note } : {}), ...(drawings ? { drawings } : {}) }, `Updated "${title || 'cell'}"${changes.length ? ` (${changes.join(', ')})` : ''}`, { pageId: pid, cellId: cid, anchor })
   },
 
   async edit_cell_text(a, env) {
@@ -937,12 +939,15 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const report: string[] = []
     let title = ''
     let cid = ''
+    let anchor: string | undefined
     await editPage(env, pid, (p) => {
       const c = findCell(p, a.cell_id)
       cid = c.id
       title = c.title
       let html = c.html
       for (const e of edits) {
+        if (e.replace !== undefined && String(e.replace).trim()) anchor = anchor || String(e.replace)
+        else if (e.find !== undefined) anchor = anchor || String(e.find)
         let r = transformText(html, String(e.find ?? ''), { all: Boolean(e.all), replace: String(e.replace ?? ''), regex: Boolean(e.regex), caseSensitive: true })
         if (!r.count) r = transformText(html, String(e.find ?? ''), { all: Boolean(e.all), replace: String(e.replace ?? ''), regex: Boolean(e.regex), caseSensitive: false })
         if (!r.count) {
@@ -962,7 +967,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       return { ...p, cells: p.cells.map((x) => (x.id === c.id ? { ...x, html, updatedAt: now() } : x)) }
     }, [String(a.cell_id)])
     const failed = report.filter((r) => r.includes('NOT FOUND')).length
-    return { ...ok(report.join('\n'), `Edited text in "${title || 'cell'}"`, { pageId: pid, cellId: cid }), ok: failed < edits.length }
+    return { ...ok(report.join('\n'), `Edited text in "${title || 'cell'}"`, { pageId: pid, cellId: cid, anchor }), ok: failed < edits.length }
   },
 
   async format_text(a, env) {
@@ -999,7 +1004,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       }
     }, a.cell_id === '*' ? undefined : [String(a.cell_id)])
     if (!total) return { ...ok(`"${a.find}" not found.`, `Could not find "${a.find}"`), ok: false }
-    return ok(`Styled ${total} occurrence(s) in ${touched.length} cell(s).`, a.whole_cell || !a.find ? `Styled ${touched.length === 1 ? "the cell" : `${touched.length} cells`}` : `Styled "${a.find}" (${total}x)`, { pageId: pid, cellId: touched[0] })
+    return ok(`Styled ${total} occurrence(s) in ${touched.length} cell(s).`, a.whole_cell || !a.find ? `Styled ${touched.length === 1 ? "the cell" : `${touched.length} cells`}` : `Styled "${a.find}" (${total}x)`, { pageId: pid, cellId: touched[0], anchor: a.find ? String(a.find) : undefined })
   },
 
   async delete_cells(a, env) {
@@ -1484,35 +1489,38 @@ async function imageAsBase64(src: string): Promise<string> {
   return btoa(bin)
 }
 
-export function scrollToCell(cellId: string) {
-  requestAnimationFrame(() => {
+export function scrollToCell(cellId: string, anchor?: string) {
+  const run = () => {
     const wrap = document.querySelector('.canvas-wrap') as HTMLElement | null
     const st = useStore.getState()
     const cell = st.page?.cells.find((c) => c.id === cellId)
     if (!wrap || !cell) return
-    const z = st.zoom || 1
-    // Move only as far as needed: keep what is already in view where it is.
-    const vTop = wrap.scrollTop
-    const vBottom = vTop + wrap.clientHeight
-    const cTop = cell.y * z
-    const cBottom = (cell.y + Math.min(cell.h, 400)) * z
-    let top = vTop
-    if (cTop < vTop + 20 || cBottom > vBottom - 20) top = Math.max(0, cTop - 80)
-    const vLeft = wrap.scrollLeft
-    const vRight = vLeft + wrap.clientWidth
-    const cLeft = cell.x * z
-    let left = vLeft
-    if (cLeft < vLeft) left = Math.max(0, cLeft - 40)
-    else if (cLeft + 160 * z > vRight) left = Math.max(0, cLeft - wrap.clientWidth / 3)
-    if (top !== vTop || left !== vLeft) wrap.scrollTo({ top, left, behavior: 'smooth' })
     const el = wrap.querySelector(`[data-cell-id="${CSS.escape(cellId)}"]`) as HTMLElement | null
-    if (el) {
-      el.classList.remove('agent-flash')
-      void el.offsetWidth
-      el.classList.add('agent-flash')
-      setTimeout(() => el.classList.remove('agent-flash'), 1600)
+    if (!el) return
+    let target: HTMLElement = el
+    if (anchor && anchor.trim()) {
+      const needle = anchor.trim().replace(/\s+/g, ' ').toLowerCase().slice(0, 120)
+      const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT)
+      let node = walker.nextNode() as Text | null
+      while (node) {
+        if ((node.nodeValue || '').replace(/\s+/g, ' ').toLowerCase().includes(needle.slice(0, Math.min(needle.length, 60)))) {
+          target = (node.parentElement as HTMLElement) || el
+          break
+        }
+        node = walker.nextNode() as Text | null
+      }
     }
-  })
+    const wrapRect = wrap.getBoundingClientRect()
+    const targetRect = target.getBoundingClientRect()
+    const desiredTop = wrap.scrollTop + (targetRect.top - wrapRect.top) - (wrap.clientHeight - targetRect.height) / 2
+    const desiredLeft = wrap.scrollLeft + (targetRect.left - wrapRect.left) - (wrap.clientWidth - targetRect.width) / 2
+    wrap.scrollTo({ top: Math.max(0, desiredTop), left: Math.max(0, desiredLeft), behavior: 'smooth' })
+    target.classList.remove('agent-change-flash')
+    void target.offsetWidth
+    target.classList.add('agent-change-flash')
+    setTimeout(() => target.classList.remove('agent-change-flash'), 1000)
+  }
+  requestAnimationFrame(() => requestAnimationFrame(run))
 }
 
 export async function runTool(name: string, args: Args, env: ToolEnv): Promise<ToolResult> {

@@ -569,7 +569,7 @@ export const useAgent = create<AgentState>((set, get) => {
           const result = await runTool(call.name, call.arguments || {}, env)
           if (!READ_ONLY.has(call.name) && rec.changed && result.ok && result.target?.cellId) {
             const st = useStore.getState()
-            if (st.page?.id === result.target.pageId) scrollToCell(result.target.cellId)
+            if (st.page?.id === result.target.pageId) scrollToCell(result.target.cellId, result.target.anchor)
           }
           pushMsg({
             id: nanoid(14),
@@ -939,14 +939,14 @@ function labelFor(name: string, chatModel: string) {
 }
 
 /** Jumps to what a tool changed. */
-export async function goToTarget(t?: { pageId?: string; cellId?: string }) {
+export async function goToTarget(t?: { pageId?: string; cellId?: string; anchor?: string }) {
   if (!t?.pageId) return
   const st = useStore.getState()
   if (!findNode(st.workspace.tree, t.pageId)) return
   if (st.activePageId !== t.pageId) await st.openPage(t.pageId)
   if (t.cellId) {
     useStore.getState().setSelection([t.cellId])
-    scrollToCell(t.cellId)
+    scrollToCell(t.cellId, t.anchor)
   }
 }
 

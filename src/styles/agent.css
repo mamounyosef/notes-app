@@ -1186,6 +1186,22 @@
   animation: agent-flash 1.5s ease-out;
 }
 
+.agent-change-flash {
+  animation: agent-change-flash 1s ease-out;
+  border-radius: 4px;
+}
+
+@keyframes agent-change-flash {
+  0% {
+    background-color: color-mix(in srgb, var(--accent) 45%, transparent);
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 35%, transparent);
+  }
+  100% {
+    background-color: transparent;
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
 @keyframes agent-flash {
   0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 70%, transparent); }
   30% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--accent) 35%, transparent); }
