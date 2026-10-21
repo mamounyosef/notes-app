@@ -106,6 +106,7 @@ const api = {
     ensure: () => ipcRenderer.invoke('voice:ensure') as Promise<{ ok: boolean; port?: number; error?: string }>,
     voices: () => ipcRenderer.invoke('voice:voices'),
     warm: () => ipcRenderer.invoke('voice:warm'),
+    off: () => ipcRenderer.invoke('voice:off') as Promise<{ ok: boolean }>,
     preview: (body: { voice: string; speed: number; text?: string }) =>
       ipcRenderer.invoke('voice:preview', body) as Promise<{ ok: boolean; wav?: string; error?: string }>,
     chooseEngine: () => ipcRenderer.invoke('voice:chooseEngine') as Promise<{ ok: boolean; engineDir?: string; error?: string; canceled?: boolean }>,

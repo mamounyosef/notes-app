@@ -364,3 +364,10 @@
 .vs-none { font-size: 11px; color: var(--text-faint); }
 .vs-warn { font-size: 11px; color: #e5c07b; }
 .vs-tick { width: 16px; flex: none; color: var(--accent); }
+
+/* ---------- Title bar: the speech engine is on ---------- */
+
+.voice-engine-chip { gap: 6px; font-size: 12px; }
+.voice-engine-chip:disabled { opacity: 0.6; }
+.vec-dot { width: 7px; height: 7px; border-radius: 999px; background: #e5c07b; flex: none; }
+.voice-engine-chip.ready .vec-dot { background: #98c379; box-shadow: 0 0 0 3px rgba(152, 195, 121, 0.2); }

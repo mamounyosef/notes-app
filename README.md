@@ -117,6 +117,11 @@ this computer's GPU through the weekly planner's speech engine
 already started it, and starts it otherwise. It finds the planner folder next
 to Notes on its own; if not, pick it in Settings, Voice. Only the words go to
 the model. Engine log: `speech-server.log` in the Notes app data folder.
+While the engine runs, the title bar shows it with its graphics memory; click
+it (or Settings, Voice, Turn off) to free the GPU, e.g. before gaming. On a
+computer without a GPU it runs on the processor with a smaller Whisper:
+slower, still free and local (that computer needs the planner folder with
+`.venv-speech` and `speech-models` too).
 
 Code: `electron/voice.ts` (finds and starts the engine), `src/voice/`
 (audio session, conversation, speech text, prefs, speed test),

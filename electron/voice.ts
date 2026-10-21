@@ -45,7 +45,11 @@ function isEngineDir(dir: string | undefined): dir is string {
   }
 }
 
-/** Where the engine is: the folder picked in Settings, else the planner next to Notes. */
+/**
+ * Where the engine is: the folder picked in Settings, else the planner next to
+ * Notes (the PC, on the GPU), else Notes' own speech-engine folder (a computer
+ * without the planner, on the CPU).
+ */
 function findEngineDir(): string | null {
   const picked = readConfig().engineDir
   if (isEngineDir(picked)) return picked
@@ -65,7 +69,14 @@ function findEngineDir(): string | null {
     }
     return null
   }
-  return near(app.getAppPath()) || near(path.dirname(process.execPath)) || (isEngineDir('D:\\My Projects\\weekly-planner') ? 'D:\\My Projects\\weekly-planner' : null)
+  const planner = near(app.getAppPath()) || near(path.dirname(process.execPath)) || (isEngineDir('D:\\My Projects\\weekly-planner') ? 'D:\\My Projects\\weekly-planner' : null)
+  if (planner) return planner
+  // No planner here (the laptop): Notes' own CPU engine, set up by setup.bat
+  // (speech-engine/setup-speech.ps1).
+  for (const dir of [path.join(app.getAppPath(), 'speech-engine'), path.join(__dirname, '..', 'speech-engine')]) {
+    if (isEngineDir(dir)) return dir
+  }
+  return null
 }
 
 export function setupVoice(opts: { getWin(): BrowserWindow | null; log(...a: unknown[]): void }) {
@@ -105,7 +116,10 @@ export function setupVoice(opts: { getWin(): BrowserWindow | null; log(...a: unk
           cwd: dir,
           windowsHide: true,
           stdio: ['ignore', 'pipe', 'pipe'],
-          env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+          // Notes' own engine (speech-engine/, set up on a computer without the
+          // planner) is a CPU install: never let it try a GPU. The planner's
+          // engine picks the GPU itself.
+          env: { ...process.env, PYTHONIOENCODING: 'utf-8', ...(path.basename(dir) === 'speech-engine' ? { SPEECH_DEVICE: 'cpu' } : {}) },
         })
         c.stdout?.on('data', appendLog)
         c.stderr?.on('data', appendLog)
@@ -133,7 +147,7 @@ export function setupVoice(opts: { getWin(): BrowserWindow | null; log(...a: unk
     ok: false,
     error: findEngineDir()
       ? 'The speech engine did not start. Its log is speech-server.log in the Notes app data folder.'
-      : 'The speech engine was not found. Pick the weekly planner folder in Settings, Voice.',
+      : 'The speech engine is not on this computer. Run setup.bat in the Notes folder to install it (or pick the weekly planner folder in Settings, Voice).',
   })
 
   ipcMain.handle('voice:status', async () => {
@@ -146,9 +160,28 @@ export function setupVoice(opts: { getWin(): BrowserWindow | null; log(...a: unk
       ready: Boolean(h?.ready),
       loading: Boolean(h?.loading),
       device: h?.device ?? null,
+      vramMb: typeof h?.vramMb === 'number' ? h.vramMb : null,
       error: h?.error ?? null,
       port: PORT,
     }
+  })
+
+  /**
+   * Turn the engine off (before gaming, say): it tells its sessions, exits and
+   * frees all graphics memory, whichever app started it. The next voice
+   * session starts it again. Never starts it just to stop it.
+   */
+  ipcMain.handle('voice:off', async () => {
+    if (!(await health(800))) return { ok: true }
+    try {
+      const res = await fetch(`http://${HOST}:${PORT}/shutdown`, { method: 'POST', signal: AbortSignal.timeout(2000) })
+      // An older engine without /shutdown: stop it if it is ours.
+      if (!res.ok) child?.kill()
+    } catch {
+      /* it is exiting */
+    }
+    opts.log('voice: speech engine turned off')
+    return { ok: true }
   })
 
   ipcMain.handle('voice:ensure', async () => ((await ensureEngine()) ? { ok: true, port: PORT } : notReady()))

@@ -30,24 +30,28 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo   [1/4] Installing packages. The first run takes a few minutes.
+echo   [1/5] Installing packages. The first run takes a few minutes.
 call npm install --no-audit --no-fund
 if errorlevel 1 goto failed
 
 echo.
-echo   [2/4] Drawing the app icon.
+echo   [2/5] Drawing the app icon.
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\make-icon.ps1"
 if errorlevel 1 goto failed
 
 echo.
-echo   [3/4] Building the app.
+echo   [3/5] Building the app.
 call npm run build
 if errorlevel 1 goto failed
 
 echo.
-echo   [4/4] Creating the desktop and start menu shortcuts.
+echo   [4/5] Creating the desktop and start menu shortcuts.
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\make-shortcut.ps1"
 if errorlevel 1 goto failed
+
+echo.
+echo   [5/5] Voice mode's speech engine (skipped where the weekly planner has one).
+powershell -NoProfile -ExecutionPolicy Bypass -File "speech-engine\setup-speech.ps1"
 
 echo.
 echo   Done.

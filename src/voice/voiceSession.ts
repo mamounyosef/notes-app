@@ -246,6 +246,12 @@ export class VoiceSession {
       case 'error':
         this.h.onError?.(String(m.message ?? 'The speech engine reported an error.'))
         break
+      case 'shutdown':
+        // Turned off on purpose (here, or in the planner): reconnecting would
+        // only start it again.
+        this.closedByUs = true
+        this.fail('Voice mode ended: the speech engine was turned off.')
+        break
     }
   }
 
@@ -480,6 +486,8 @@ export interface VoiceStatus {
   ready: boolean
   loading: boolean
   device: string | null
+  /** This engine's graphics memory in MB, while it runs on the GPU. */
+  vramMb?: number | null
   error: string | null
 }
 
@@ -492,6 +500,8 @@ export const voiceApi = {
   ensure: (): Promise<{ ok: boolean; port?: number; error?: string }> => (desk?.voice ? desk.voice.ensure() : Promise.resolve(noDesk)),
   status: (): Promise<VoiceStatus | null> => (desk?.voice ? desk.voice.status() : Promise.resolve(null)),
   warm: (): Promise<{ ok: boolean }> => (desk?.voice ? desk.voice.warm() : Promise.resolve(noDesk)),
+  /** Turn the engine off: it exits and frees all graphics memory. */
+  off: (): Promise<{ ok: boolean }> => (desk?.voice?.off ? desk.voice.off() : Promise.resolve(noDesk)),
   chooseEngine: (): Promise<{ ok: boolean; engineDir?: string; error?: string; canceled?: boolean }> =>
     desk?.voice ? desk.voice.chooseEngine() : Promise.resolve(noDesk),
 }
