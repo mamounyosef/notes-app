@@ -12,7 +12,8 @@ import { fmtSec, useSpeeds, useVoicePrefs, type ModelSpeed } from '../../voice/v
 import { fetchVoices, previewVoice, stopPreview, voiceApi, type VoiceInfo, type VoiceStatus } from '../../voice/voiceSession'
 import { cancelSpeedTest, runSpeedTest, useSpeedTest } from '../../voice/speedTest'
 import type { PauseLength } from '../../voice/speechText'
-import { Check, Play, StopI, Gauge, Folder } from '../Icons'
+import { Check, Play, StopI, Gauge, Folder, Power } from '../Icons'
+import { formatVram } from './VoiceEngineChip'
 
 const PAUSES: Array<{ id: PauseLength; label: string; desc: string }> = [
   { id: 'quick', label: 'Quick', desc: 'Answers half a second after you stop. Snappy, may cut in.' },
@@ -101,7 +102,7 @@ export default function VoiceSettings() {
       <h3>Voice mode</h3>
       <div className="empty-hint" style={{ padding: '0 0 10px' }}>
         Talk with the assistant out loud: the waveform button in the assistant, or Ctrl+Shift+Space from anywhere. Hearing and speaking run on this computer's graphics
-        card, free, with the same speech engine as the weekly planner. Nothing you say leaves the computer except the words sent to the model.
+        card (or its processor, more slowly, on a computer without one), free, with the same speech engine as the weekly planner. Nothing you say leaves the computer except the words sent to the model.
       </div>
       <div className={`vs-status ${status?.ready ? 'ok' : ''}`}>
         <span className="vs-dot" />
@@ -118,9 +119,23 @@ export default function VoiceSettings() {
                     ? 'Loading the voice models...'
                     : status.running
                       ? 'Speech engine running; the models load on first use (a few seconds).'
-                      : 'Speech engine asleep; it starts when you use voice mode.'}
+                      : 'Speech engine off; it starts when you use voice mode.'}
           {status?.error && <span className="vs-err"> {status.error}</span>}
+          {status?.running && formatVram(status.vramMb) && <span className="sub"> Using {formatVram(status.vramMb)} of graphics memory.</span>}
         </span>
+        {status?.running && (
+          <button
+            className="btn"
+            style={{ marginLeft: 'auto' }}
+            title="The engine exits and frees all graphics memory (before gaming, say). Voice mode starts it again."
+            onClick={async () => {
+              await voiceApi.off().catch(() => {})
+              setTimeout(() => voiceApi.status().then(setStatus), 900)
+            }}
+          >
+            <Power size={13} /> Turn off
+          </button>
+        )}
       </div>
       <div className="set-row">
         <label>

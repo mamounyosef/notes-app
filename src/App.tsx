@@ -11,6 +11,7 @@ import LinkModal from './components/LinkModal'
 import ArtifactModal from './components/ArtifactModal'
 import SyncPanel from './components/SyncPanel'
 import AgentPanel from './components/agent/AgentPanel'
+import VoiceEngineChip from './components/voice/VoiceEngineChip'
 import { useAgent } from './agent/store'
 import { trackPointer } from './agent/context'
 import { askAboutSelection, trackSelection } from './agent/selection'
@@ -528,6 +529,7 @@ export default function App() {
           <button className={`zoom-pct ${Math.abs(zoom - 1) < 0.001 ? '' : 'changed'}`} title="Reset to 100% (Ctrl+0)" onClick={() => useStore.getState().setZoom(1)}>{Math.round(zoom * 100)}%</button>
           <button title="Zoom in (Ctrl and plus)" onClick={() => useStore.getState().setZoom(zoom + settings.zoomStep)}><ZoomIn size={15} /></button>
         </div>
+        <VoiceEngineChip />
         <button
           className={`tb-btn agent-toggle ${agentOpen ? 'on' : ''}`}
           title="Assistant (Ctrl+J). Ctrl+L asks about the selection."

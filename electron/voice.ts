@@ -146,9 +146,28 @@ export function setupVoice(opts: { getWin(): BrowserWindow | null; log(...a: unk
       ready: Boolean(h?.ready),
       loading: Boolean(h?.loading),
       device: h?.device ?? null,
+      vramMb: typeof h?.vramMb === 'number' ? h.vramMb : null,
       error: h?.error ?? null,
       port: PORT,
     }
+  })
+
+  /**
+   * Turn the engine off (before gaming, say): it tells its sessions, exits and
+   * frees all graphics memory, whichever app started it. The next voice
+   * session starts it again. Never starts it just to stop it.
+   */
+  ipcMain.handle('voice:off', async () => {
+    if (!(await health(800))) return { ok: true }
+    try {
+      const res = await fetch(`http://${HOST}:${PORT}/shutdown`, { method: 'POST', signal: AbortSignal.timeout(2000) })
+      // An older engine without /shutdown: stop it if it is ours.
+      if (!res.ok) child?.kill()
+    } catch {
+      /* it is exiting */
+    }
+    opts.log('voice: speech engine turned off')
+    return { ok: true }
   })
 
   ipcMain.handle('voice:ensure', async () => ((await ensureEngine()) ? { ok: true, port: PORT } : notReady()))

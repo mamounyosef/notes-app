@@ -61,6 +61,7 @@ export const SpaceI = (p: P) => (<svg {...s(p)}><path d="M12 3v7M12 14v7M8 6l4-4
 export const Star = (p: P) => (<svg {...s(p)}><path d="M12 3.5l2.6 5.4 5.9.8-4.3 4.1 1.1 5.9L12 17l-5.3 2.7 1.1-5.9L3.5 9.7l5.9-.8z" /></svg>)
 export const PanelLeft = (p: P) => (<svg {...s(p)}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M9 4v16" /></svg>)
 export const PanelMid = (p: P) => (<svg {...s(p)}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M14 4v16" /></svg>)
+export const Power = (p: P) => (<svg {...s(p)}><path d="M12 3v9" /><path d="M6.3 7.3a8 8 0 1011.4 0" /></svg>)
 export const X = (p: P) => (<svg {...s(p)}><path d="M6 6l12 12M18 6L6 18" /></svg>)
 export const Min = (p: P) => (<svg {...s(p)}><path d="M5 12h14" /></svg>)
 export const Max = (p: P) => (<svg {...s(p)}><rect x="5" y="5" width="14" height="14" rx="2" /></svg>)
