@@ -154,6 +154,10 @@ export function createSupabaseRemote({ url, key, storage }) {
       )
     },
 
+    async chatRevs() {
+      return pageAll(() => sb.from('agent_chats').select('id, rev, change_seq').order('change_seq'))
+    },
+
     async getChat(id) {
       const rows = check(await sb.from('agent_chats').select('id, data, rev, change_seq, deleted').eq('id', id).limit(1))
       return rows[0] || null

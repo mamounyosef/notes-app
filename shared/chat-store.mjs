@@ -19,6 +19,8 @@ import { stable } from './sync-core.mjs'
 const PUSH_DELAY = 800
 const POLL_MS = 60_000
 const MAX_TRIES = 5
+// How often to check every chat's rev, not just the ones past the cursor.
+const FULL_MS = 10 * 60_000
 
 const safeId = (id) => String(id).replace(/[^a-zA-Z0-9_-]/g, '')
 const sha256 = (buf) => crypto.createHash('sha256').update(buf).digest('hex')
@@ -99,6 +101,7 @@ export class ChatStore {
     this.unsub = null
     this.running = null
     this.again = false
+    this.lastFullAt = 0
     this.statusInfo = { phase: 'off', error: null, lastSync: 0 }
     this.state = this.loadState()
     this.uploaded = new Set(this.state.uploaded || [])
@@ -238,6 +241,7 @@ export class ChatStore {
       this.uploaded = new Set()
       await this.saveState()
     }
+    this.lastFullAt = 0
     try {
       this.unsub = remote.subscribeChats?.(() => this.schedule(300)) || null
     } catch (e) {
@@ -265,8 +269,11 @@ export class ChatStore {
         do {
           this.again = false
           this.setStatus({ phase: 'syncing' })
-          await this.pull()
+          // Local chats still go up when pulling fails part way.
+          let pullError = null
+          await this.pull().catch((e) => (pullError = e))
           await this.push()
+          if (pullError) throw pullError
         } while (this.again)
         this.setStatus({ phase: 'idle', error: null, lastSync: Date.now() })
       } catch (e) {
@@ -284,12 +291,37 @@ export class ChatStore {
   }
 
   async pull() {
+    let failed = null
     const rows = await this.remote.chatsSince(this.state.cursor || 0)
     for (const row of rows) {
-      await this.applyRow(row)
+      // A chat that cannot be saved here must not hold back the others. Its
+      // rev stays old, so the full check below tries it again.
+      try {
+        await this.applyRow(row)
+      } catch (e) {
+        failed ||= e
+      }
       this.state.cursor = Math.max(this.state.cursor || 0, Number(row.change_seq))
     }
     if (rows.length) await this.saveState()
+    if (failed) this.lastFullAt = 0
+    if (Date.now() - this.lastFullAt >= FULL_MS && this.remote.chatRevs) {
+      // Catches anything the cursor missed (writes that committed out of order).
+      let ok = true
+      for (const r of await this.remote.chatRevs()) {
+        if (Number(this.state.revs[r.id] || 0) >= Number(r.rev)) continue
+        try {
+          const row = await this.remote.getChat(r.id)
+          if (row) await this.applyRow(row)
+        } catch (e) {
+          failed ||= e
+          ok = false
+        }
+      }
+      if (ok) this.lastFullAt = Date.now()
+      await this.saveState()
+    }
+    if (failed) throw failed
   }
 
   async applyRow(row) {
@@ -297,16 +329,17 @@ export class ChatStore {
     const remote = row.data ? { ...row.data, id: row.id, deleted: Boolean(row.deleted || row.data.deleted) } : null
     const merged = mergeChats(local, remote)
     if (!merged) return
+    const changed = !local || stable(merged) !== stable(local)
+    if (changed) await atomicWrite(this.chatFile(row.id), JSON.stringify(merged))
+    // Only once it is on disk does this rev count as seen.
     this.state.revs[row.id] = Number(row.rev)
     // What the cloud holds now counts as pushed, so only local news goes up.
     if (remote) this.state.pushed[row.id] = hash(remote)
-    if (!local || stable(merged) !== stable(local)) {
-      await atomicWrite(this.chatFile(row.id), JSON.stringify(merged))
-      this.onChange({ type: 'chat-changed', id: row.id })
-    }
+    if (changed) this.onChange({ type: 'chat-changed', id: row.id })
   }
 
   async push() {
+    let failed = null
     let names = []
     try {
       names = await fsp.readdir(path.join(this.dir, 'chats'))
@@ -319,8 +352,14 @@ export class ChatStore {
       const chat = await this.read(id)
       if (!chat) continue
       if (this.state.pushed[id] === hash(chat)) continue
-      await this.pushChat(id, chat)
+      // One chat failing must not hold back the others.
+      try {
+        await this.pushChat(id, chat)
+      } catch (e) {
+        failed ||= e
+      }
     }
+    if (failed) throw failed
   }
 
   async pushChat(id, chat) {
