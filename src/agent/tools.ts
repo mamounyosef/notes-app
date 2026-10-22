@@ -1189,8 +1189,8 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     })
     if (!res.ok || !res.content?.trim()) throw new ToolError(`Could not read the image (${res.error || 'empty answer'}).`)
     return {
-      ...ok(`${(res.model || model) === env.model ? 'What you see in it (your own vision)' : `From ${res.model || model}, which looked at the image for you`}:\n${res.content.trim()}`, `${what}${refs.length > 1 ? ` (${refs.length})` : ''}`),
-      helper: { model: modelInfo(res.model || model).name, ms: Date.now() - started, text: res.content.trim() },
+      ...ok(`${model === env.model ? 'What you see in it (your own vision)' : `From ${model}, which looked at the image for you`}:\n${res.content.trim()}`, `${what}${refs.length > 1 ? ` (${refs.length})` : ''}`),
+      helper: { model: modelInfo(model).name, ms: Date.now() - started, text: res.content.trim() },
     }
   },
 
@@ -1228,11 +1228,11 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     if (!res.ok || !res.content?.trim()) throw new ToolError(`Could not look at it (${res.error || 'empty answer'}).${errors}`)
     return {
       ...ok(
-        `Drawing ${d.index} (${FENCE_OF[d.kind]}) in cell [${c.id}], ${shot.width}x${shot.height}px, as seen by ${res.model || model}:${errors}\n${res.content.trim()}\nFix real problems by updating the source (at most two rounds); ignore nitpicks.`,
+        `Drawing ${d.index} (${FENCE_OF[d.kind]}) in cell [${c.id}], ${shot.width}x${shot.height}px, as seen by ${model}:${errors}\n${res.content.trim()}\nFix real problems by updating the source (at most two rounds); ignore nitpicks.`,
         `Checked the drawing`,
         { pageId: pid, cellId: c.id },
       ),
-      helper: { model: modelInfo(res.model || model).name, ms: Date.now() - started, text: res.content.trim() },
+      helper: { model: modelInfo(model).name, ms: Date.now() - started, text: res.content.trim() },
     }
   },
 

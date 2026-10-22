@@ -2,8 +2,8 @@
  * Main process side of the in-app agent:
  *  - keeps the Ollama and OpenRouter API keys, encrypted by Windows, out of the page,
  *  - streams chat requests to Ollama Cloud or OpenRouter and relays the chunks,
- *  - switches a request to the other service when its own is out of credit
- *    (or has no key), and remembers that for a while,
+ *  - when a key is out of credit, moves the request to the next key of the
+ *    same service (never to another service), and remembers that for a while,
  *  - stores chats and their attachments (shared/chat-store.mjs), synced
  *    through Supabase when this computer is signed in.
  */
@@ -12,6 +12,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { ChatStore } from '../shared/chat-store.mjs'
 import { OPENROUTER, errorText, postWithFallback, relayStream, toOpenRouter } from './openrouter'
 
@@ -19,21 +20,39 @@ const OLLAMA = 'https://ollama.com/api'
 
 type Provider = 'ollama' | 'openrouter'
 const providerOf = (p: unknown): Provider => (p === 'openrouter' ? 'openrouter' : 'ollama')
+/** The single key file from before several keys per service could be saved. */
 const keyFile = (p: Provider = 'ollama') => path.join(app.getPath('userData'), `${p}-key.bin`)
+/** Every key for a service, in the order they are tried, as an encrypted JSON list. */
+const keysFile = (p: Provider) => path.join(app.getPath('userData'), `${p}-keys.bin`)
 
-function readKey(p: Provider = 'ollama'): string {
+const decrypt = (raw: Buffer) => (safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8'))
+const encrypt = (text: string) => (safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(text) : Buffer.from(text, 'utf8'))
+
+/** A service's keys in the order they are tried (the older single key file, or the environment, if no list is saved). */
+function readKeys(p: Provider = 'ollama'): string[] {
   try {
-    const raw = fs.readFileSync(keyFile(p))
-    return safeStorage.isEncryptionAvailable() ? safeStorage.decryptString(raw) : raw.toString('utf8')
+    const list = JSON.parse(decrypt(fs.readFileSync(keysFile(p))))
+    if (Array.isArray(list)) return list.map((k) => String(k || '').trim()).filter(Boolean)
   } catch {
-    return (p === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OLLAMA_API_KEY) || ''
+    /* no list yet */
   }
+  try {
+    const one = decrypt(fs.readFileSync(keyFile(p))).trim()
+    if (one) return [one]
+  } catch {
+    /* no older key either */
+  }
+  const env = (p === 'openrouter' ? process.env.OPENROUTER_API_KEY : process.env.OLLAMA_API_KEY) || ''
+  return env ? [env] : []
 }
 
-function writeKey(key: string, p: Provider = 'ollama') {
-  const data = safeStorage.isEncryptionAvailable() ? safeStorage.encryptString(key) : Buffer.from(key, 'utf8')
-  fs.mkdirSync(path.dirname(keyFile(p)), { recursive: true })
-  fs.writeFileSync(keyFile(p), data)
+function writeKeys(p: Provider, keys: string[]) {
+  const list = [...new Set(keys.map((k) => k.trim()).filter(Boolean))]
+  fs.mkdirSync(path.dirname(keysFile(p)), { recursive: true })
+  if (list.length) fs.writeFileSync(keysFile(p), encrypt(JSON.stringify(list)))
+  else try { fs.unlinkSync(keysFile(p)) } catch { /* none */ }
+  // The list replaces the older single key file.
+  try { fs.unlinkSync(keyFile(p)) } catch { /* none */ }
 }
 
 const mask = (k: string) => (k ? `${k.slice(0, 4)}...${k.slice(-4)}` : '')
@@ -94,11 +113,13 @@ async function failure(p: Provider, res: Response): Promise<Error> {
   return retryAt ? new OutOfCredit(p, `${res.status} ${detail}`, retryAt) : new ServiceError(p, res.status, detail)
 }
 
-/** One model to try: the one asked for, or one on the other service to fall back to. */
-interface Candidate {
-  model: string
+/** Set when a request ran on a later key because the ones before it were out of credit: the page notes it on the reply. */
+interface KeySwitch {
   provider: Provider
-  think?: boolean | string
+  /** Which key answered, counting from 1. */
+  key: number
+  keys: number
+  reason: string
 }
 
 export function setupAgent(opts: {
@@ -122,48 +143,126 @@ export function setupAgent(opts: {
 
   /* ---------------- API key ---------------- */
 
-  /** Services that ran out of credit, so requests go to the other one until retryAt. */
-  const exhausted = new Map<Provider, { retryAt: number; detail: string }>()
-  const isExhausted = (p: Provider) => {
-    const e = exhausted.get(p)
-    if (e && e.retryAt <= Date.now()) exhausted.delete(p)
-    return exhausted.has(p)
+  /**
+   * Keys that ran out of credit, so requests use the service's next key until
+   * retryAt. Saved on this computer (by a hash of the key, never the key
+   * itself), so a restart still skips the keys that are out.
+   */
+  const statusFile = path.join(app.getPath('userData'), 'key-status.json')
+  const idOf = (k: string) => createHash('sha256').update(k).digest('hex').slice(0, 24)
+  const outById: Record<string, { retryAt: number; detail: string }> = (() => {
+    try {
+      return JSON.parse(fs.readFileSync(statusFile, 'utf8')) || {}
+    } catch {
+      return {}
+    }
+  })()
+  const saveStatus = () => {
+    const now = Date.now()
+    for (const [id, v] of Object.entries(outById)) if (!(v?.retryAt > now)) delete outById[id]
+    try {
+      fs.writeFileSync(statusFile, JSON.stringify(outById))
+    } catch (e: any) {
+      opts.log('key status not saved', e?.message)
+    }
   }
+  const exhausted = {
+    get: (k: string) => outById[idOf(k)],
+    set: (k: string, v: { retryAt: number; detail: string }) => {
+      outById[idOf(k)] = v
+      saveStatus()
+    },
+    delete: (k: string) => {
+      if (!(idOf(k) in outById)) return
+      delete outById[idOf(k)]
+      saveStatus()
+    },
+  }
+  const outInfo = (k: string) => {
+    const e = exhausted.get(k)
+    if (e && !(e.retryAt > Date.now())) exhausted.delete(k)
+    return exhausted.get(k) || null
+  }
+  /** "Ollama" with one key, "Ollama key 2" with several. */
+  const keyLabel = (p: Provider, i: number, n: number) => (n > 1 ? `${LABEL[p]} key ${i + 1}` : LABEL[p])
 
   ipcMain.handle('agent:keyStatus', (_e, provider?: Provider) => {
-    const k = readKey(providerOf(provider))
-    return { hasKey: Boolean(k), masked: mask(k) }
+    const keys = readKeys(providerOf(provider))
+    return {
+      hasKey: keys.length > 0,
+      masked: mask(keys[0] || ''),
+      keys: keys.map((k) => {
+        const out = outInfo(k)
+        return { masked: mask(k), outUntil: out?.retryAt ?? null, detail: out?.detail ?? '' }
+      }),
+    }
   })
 
+  /** Asks the service whether it knows the key, so a typo shows up here and not mid chat. */
+  async function checkKey(p: Provider, k: string): Promise<string> {
+    try {
+      const res = await fetch(p === 'openrouter' ? `${OPENROUTER}/key` : `${OLLAMA}/tags`, { headers: { Authorization: `Bearer ${k}` } })
+      if (res.status === 401 || res.status === 403) return `${LABEL[p]} rejected this key.`
+    } catch {
+      /* offline: keep it anyway */
+    }
+    return ''
+  }
+
+  /** Replaces the first key (the one tried first); an empty key removes every key of the service. */
   ipcMain.handle('agent:setKey', async (_e, key: string, provider?: Provider) => {
     const p = providerOf(provider)
     const k = String(key || '').trim()
     if (!k) {
-      try { fs.unlinkSync(keyFile(p)) } catch { /* none */ }
+      writeKeys(p, [])
       return { ok: true }
     }
-    // Check it before keeping it, so a typo shows up here and not mid chat.
-    try {
-      const res = await fetch(p === 'openrouter' ? `${OPENROUTER}/key` : `${OLLAMA}/tags`, { headers: { Authorization: `Bearer ${k}` } })
-      if (res.status === 401 || res.status === 403) return { ok: false, error: `${p === 'openrouter' ? 'OpenRouter' : 'Ollama'} rejected this key.` }
-    } catch {
-      /* offline: keep it anyway */
-    }
-    writeKey(k, p)
-    // A new key may well have credit: stop avoiding this service.
-    exhausted.delete(p)
+    const err = await checkKey(p, k)
+    if (err) return { ok: false, error: err }
+    writeKeys(p, [k, ...readKeys(p).slice(1)])
+    // A new key may well have credit.
+    exhausted.delete(k)
     return { ok: true }
   })
 
-  /** Services being avoided because they ran out of credit, and when they are tried again. */
-  ipcMain.handle('agent:creditStatus', () => {
-    const now = Date.now()
-    return [...exhausted].filter(([, v]) => v.retryAt > now).map(([provider, v]) => ({ provider, retryAt: v.retryAt, detail: v.detail }))
+  /** Adds a key after the others: it is used when the ones before it run out of credit. */
+  ipcMain.handle('agent:addKey', async (_e, key: string, provider?: Provider) => {
+    const p = providerOf(provider)
+    const k = String(key || '').trim()
+    if (!k) return { ok: false, error: 'Paste a key first.' }
+    const keys = readKeys(p)
+    if (keys.includes(k)) return { ok: false, error: 'This key is already saved.' }
+    const err = await checkKey(p, k)
+    if (err) return { ok: false, error: err }
+    writeKeys(p, [...keys, k])
+    exhausted.delete(k)
+    return { ok: true }
   })
 
-  /** OpenRouter's free allowance for this key: requests left today. */
-  ipcMain.handle('agent:openrouterLimits', async () => {
-    const k = readKey('openrouter')
+  ipcMain.handle('agent:removeKey', (_e, provider: Provider, index: number) => {
+    const p = providerOf(provider)
+    const keys = readKeys(p)
+    const i = Number(index)
+    if (!(i >= 0 && i < keys.length)) return { ok: false, error: 'No such key.' }
+    exhausted.delete(keys[i])
+    writeKeys(p, keys.filter((_, j) => j !== i))
+    return { ok: true }
+  })
+
+  /** Moves a key one place earlier, so it is tried before the one above it. */
+  ipcMain.handle('agent:raiseKey', (_e, provider: Provider, index: number) => {
+    const p = providerOf(provider)
+    const keys = readKeys(p)
+    const i = Number(index)
+    if (!(i > 0 && i < keys.length)) return { ok: false }
+    ;[keys[i - 1], keys[i]] = [keys[i], keys[i - 1]]
+    writeKeys(p, keys)
+    return { ok: true }
+  })
+
+  /** OpenRouter's free allowance for one key (the first by default): requests used today. */
+  ipcMain.handle('agent:openrouterLimits', async (_e, index?: number) => {
+    const k = readKeys('openrouter')[Number(index) || 0]
     if (!k) return { ok: false }
     try {
       const j: any = await (await fetch(`${OPENROUTER}/key`, { headers: { Authorization: `Bearer ${k}` } })).json()
@@ -211,64 +310,49 @@ export function setupAgent(opts: {
   }
 
   /**
-   * Runs a request on the model asked for and, if its service is out of
-   * credit or has no key, on the fallbacks the page sent (models on the other
-   * service). A service that ran out is remembered, so later requests go
-   * straight to the other one until it is due to be tried again; if every
-   * service is out, they are all tried anyway, in case one has recovered.
-   * `run` must throw OutOfCredit only before it has sent anything on.
+   * Runs a request with the service's keys in order: when one is out of
+   * credit, the same request goes to the next key of the same service (never
+   * another service or model). A key that ran out is remembered, so later
+   * requests skip it until it is due to be tried again; if every key is out,
+   * they are all tried anyway, in case one has recovered. `run` must throw
+   * OutOfCredit only before it has sent anything on.
    */
-  async function withFallback<T>(
-    body: any,
+  async function withKeys<T>(
+    p: Provider,
     signal: AbortSignal,
-    onSwitch: (to: Candidate, reason: string) => void,
-    run: (c: Candidate, key: string, req: any) => Promise<T>,
-  ): Promise<{ result: T; used: Candidate; switched?: { from: string; to: string; reason: string } }> {
-    const { provider, fallbacks, ...rest } = body || {}
-    const first: Candidate = { model: rest.model, provider: providerOf(provider), think: rest.think }
-    const all: Candidate[] = [first]
-    for (const f of Array.isArray(fallbacks) ? fallbacks : []) {
-      const c: Candidate = { model: String(f?.model || ''), provider: providerOf(f?.provider), think: f?.think }
-      if (c.model && !all.some((x) => x.model === c.model && x.provider === c.provider)) all.push(c)
-    }
-    const order = [...all.filter((c) => !isExhausted(c.provider)), ...all.filter((c) => isExhausted(c.provider))]
+    onSwitch: (sw: KeySwitch) => void,
+    run: (key: string) => Promise<T>,
+  ): Promise<{ result: T; switched?: KeySwitch }> {
+    const keys = readKeys(p)
+    if (!keys.length) throw new Error('NO_KEY')
+    const n = keys.length
+    // Keys still in credit, in order; only if none is left, all of them again.
+    let tries = keys.map((k, i) => ({ k, i })).filter(({ k }) => !outInfo(k))
+    if (!tries.length) tries = keys.map((k, i) => ({ k, i }))
     const why: string[] = []
-    // Skipped ahead of time because its service ran out earlier: say so.
-    if (order[0] !== first) {
-      const at = new Date(exhausted.get(first.provider)!.retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-      why.push(`${LABEL[first.provider]} ran out of credit earlier (tried again after ${at})`)
-    }
-    let lastError: Error | null = null
-    for (const c of order) {
+    // Skipped ahead of time because they ran out earlier: say so.
+    keys.forEach((k, i) => {
+      if (tries.some((t) => t.k === k)) return
+      const at = new Date(outInfo(k)!.retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      why.push(`${keyLabel(p, i, n)} ran out of credit earlier (tried again after ${at})`)
+    })
+    for (const { k, i } of tries) {
       if (signal.aborted) throw new Error('aborted')
-      const key = readKey(c.provider)
-      if (!key) {
-        why.push(`no ${LABEL[c.provider]} key`)
-        continue
-      }
-      if (c !== first) {
-        const reason = why.length ? why.join(', ') : `${LABEL[first.provider]} is out of credit`
-        onSwitch(c, reason)
-      }
-      const req: any = { ...rest, model: c.model }
-      if (c.think === undefined) delete req.think
-      else req.think = c.think
+      const sw: KeySwitch | undefined = i > 0 ? { provider: p, key: i + 1, keys: n, reason: why.join(', ') } : undefined
+      if (sw) onSwitch(sw)
       try {
-        const result = await run(c, key, req)
-        exhausted.delete(c.provider)
-        const switched = c === first ? undefined : { from: first.model, to: c.model, reason: why.join(', ') || `${LABEL[first.provider]} is out of credit` }
-        return { result, used: c, switched }
+        const result = await run(k)
+        exhausted.delete(k)
+        return { result, switched: sw }
       } catch (e: any) {
         if (signal.aborted || !(e instanceof OutOfCredit)) throw e
-        exhausted.set(c.provider, { retryAt: e.retryAt, detail: e.detail })
-        opts.log('agent: out of credit', c.provider, e.detail)
-        why.push(`${LABEL[c.provider]} is out of credit (${e.detail.slice(0, 160)})`)
-        lastError = e
+        exhausted.set(k, { retryAt: e.retryAt, detail: e.detail })
+        const who = keyLabel(p, i, n)
+        opts.log('agent: out of credit', who, e.detail)
+        why.push(`${who} is out of credit (${e.detail.slice(0, 160)})`)
       }
     }
-    if (lastError) throw new Error(why.join('; '))
-    // No service that could run this had a key.
-    throw new Error('NO_KEY')
+    throw new Error(n > 1 ? `Every ${LABEL[p]} key is out of credit: ${why.join('; ')}` : why.join('; '))
   }
 
   /** Streams one reply from OpenRouter, relayed as Ollama chunks. */
@@ -359,15 +443,18 @@ export function setupAgent(opts: {
     running.set(reqId, ctrl)
     try {
       const emit = (chunk: any) => send('agent:chunk', reqId, chunk)
-      const messages = await withImages(body?.messages || [])
-      const { used, switched } = await withFallback(
-        { ...body, messages, stream: true },
+      const { provider, ...rest } = body || {}
+      const p = providerOf(provider)
+      const req = { ...rest, stream: true, messages: await withImages(rest.messages || []) }
+      const { switched } = await withKeys(
+        p,
         ctrl.signal,
-        // Lets the page show the switch while the other model starts.
-        (to, reason) => emit({ switched: { from: body?.model, to: to.model, reason } }),
-        (c, key, req) => (c.provider === 'openrouter' ? streamOpenRouter(key, req, ctrl.signal, emit) : streamOllama(key, req, ctrl.signal, emit)),
+        // Lets the page show the switch while the next key starts.
+        (sw) => emit({ switched: sw }),
+        // A copy per key: the Ollama path may drop the think switch from it.
+        (key) => (p === 'openrouter' ? streamOpenRouter(key, { ...req }, ctrl.signal, emit) : streamOllama(key, { ...req }, ctrl.signal, emit)),
       )
-      return { ok: true, model: used.model, switched }
+      return { ok: true, switched }
     } catch (e: any) {
       if (ctrl.signal.aborted) return { ok: false, aborted: true }
       const msg = e?.message === 'NO_KEY' ? 'NO_KEY' : e?.message || String(e)
@@ -383,22 +470,34 @@ export function setupAgent(opts: {
     return true
   })
 
-  /** Ollama's web search and page fetch, with the same key. */
+  /** Ollama's web search and page fetch, with the Ollama keys (the next one when a key is out of credit). */
   ipcMain.handle('agent:web', async (_e, kind: 'search' | 'fetch', arg: any) => {
-    const key = readKey()
-    if (!key) return { ok: false, error: 'No Ollama API key.' }
+    const keys = readKeys('ollama')
+    if (!keys.length) return { ok: false, error: 'No Ollama API key.' }
+    const live = keys.filter((k) => !outInfo(k))
     const ctrl = new AbortController()
     const t = setTimeout(() => ctrl.abort(), 30_000)
     try {
       const body = kind === 'search' ? { query: String(arg.query || ''), max_results: Math.min(10, Math.max(1, Number(arg.max_results) || 5)) } : { url: String(arg.url || '') }
-      const res = await fetch(`${OLLAMA}/web_${kind}`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify(body),
-        signal: ctrl.signal,
-      })
-      if (!res.ok) return { ok: false, error: `${res.status} ${(await res.text().catch(() => '')).slice(0, 200)}` }
-      return { ok: true, data: await res.json() }
+      let error = ''
+      for (const key of live.length ? live : keys) {
+        const res = await fetch(`${OLLAMA}/web_${kind}`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+          signal: ctrl.signal,
+        })
+        if (res.ok) {
+          exhausted.delete(key)
+          return { ok: true, data: await res.json() }
+        }
+        const text = (await res.text().catch(() => '')).slice(0, 200)
+        error = `${res.status} ${text}`
+        const retryAt = creditRetryAt('ollama', res.status, text)
+        if (!retryAt) break
+        exhausted.set(key, { retryAt, detail: error })
+      }
+      return { ok: false, error }
     } catch (e: any) {
       return { ok: false, error: e?.name === 'AbortError' ? 'The web request timed out.' : e?.message || String(e) }
     } finally {
@@ -413,9 +512,11 @@ export function setupAgent(opts: {
     const { timeout_ms, ...rest } = body || {}
     const t = setTimeout(() => ctrl.abort(), Math.min(180_000, Number(timeout_ms) || 30_000))
     try {
-      const messages = await withImages(rest.messages || [])
-      const { result, used, switched } = await withFallback({ ...rest, messages }, ctrl.signal, () => {}, async (c, key, req) => {
-        if (c.provider === 'openrouter') {
+      const { provider, ...req } = rest
+      const p = providerOf(provider)
+      req.messages = await withImages(req.messages || [])
+      const { result, switched } = await withKeys(p, ctrl.signal, () => {}, async (key) => {
+        if (p === 'openrouter') {
           const res = await postWithFallback(key, toOpenRouter(req, false), ctrl.signal)
           if (!res.ok) throw await failure('openrouter', res)
           const j: any = await res.json()
@@ -426,10 +527,10 @@ export function setupAgent(opts: {
         const j: any = await res.json()
         return String(j?.message?.content || '')
       })
-      return { ok: true, content: result, model: used.model, switched }
+      return { ok: true, content: result, switched }
     } catch (e: any) {
       if (ctrl.signal.aborted) return { ok: false, error: 'Timed out.' }
-      return { ok: false, error: e?.message === 'NO_KEY' ? 'No API key for this service.' : e?.message || String(e) }
+      return { ok: false, error: e?.message === 'NO_KEY' ? `No ${LABEL[providerOf(body?.provider)]} API key.` : e?.message || String(e) }
     } finally {
       clearTimeout(t)
     }

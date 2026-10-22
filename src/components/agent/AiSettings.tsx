@@ -1,60 +1,89 @@
 import React, { useEffect, useState } from 'react'
-import { agentApi } from '../../agent/api'
+import { agentApi, type KeyInfo } from '../../agent/api'
 import { useAgent } from '../../agent/store'
 import { MODELS, DEFAULT_MODEL, PROVIDER_LABEL, modelInfo, fmtCtx, paramsLabel, type Provider } from '../../agent/models'
 
-/** One service's API key, kept on this computer only. */
+const timeOf = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+
+/**
+ * One service's API keys, kept on this computer only. They are tried in
+ * order: when one runs out of credit the next key of the same service is used.
+ */
 function KeyRow({ provider, hint }: { provider: Provider; hint: string }) {
-  const [status, setStatus] = useState<{ hasKey: boolean; masked: string } | null>(null)
+  const [keys, setKeys] = useState<KeyInfo[] | null>(null)
+  const [limits, setLimits] = useState<string[]>([])
   const [key, setKey] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
 
-  const [limits, setLimits] = useState('')
-  const [out, setOut] = useState('')
-  const refresh = () => {
-    agentApi.keyStatus(provider).then(setStatus)
-    const other = PROVIDER_LABEL[provider === 'ollama' ? 'openrouter' : 'ollama']
-    agentApi.creditStatus().then((list) => {
-      const e = list.find((x) => x.provider === provider)
-      setOut(e ? ` Out of credit: using ${other} until ${new Date(e.retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : '')
-    })
+  const refresh = async () => {
+    const s = await agentApi.keyStatus(provider)
+    const list = s.keys || (s.hasKey ? [{ masked: s.masked, outUntil: null, detail: '' }] : [])
+    setKeys(list)
     if (provider === 'openrouter')
-      agentApi.openrouterLimits().then((l) => setLimits(l.ok && l.freeLimit ? ` Free requests today: ${l.freeUsed ?? 0} of ${l.freeLimit} used.` : ''))
+      setLimits(
+        await Promise.all(
+          list.map((_, i) => agentApi.openrouterLimits(i).then((l) => (l.ok && l.freeLimit ? ` Free requests today: ${l.freeUsed ?? 0} of ${l.freeLimit} used.` : ''))),
+        ),
+      )
   }
   useEffect(() => {
     refresh()
   }, [])
 
-  const save = async (value: string) => {
+  const act = async (job: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
     setBusy(true)
     setMsg('')
-    const r = await agentApi.setKey(value, provider)
+    const r = await job()
     setBusy(false)
     if (!r.ok) setMsg(r.error || 'Could not save the key.')
     else {
-      setKey('')
-      setMsg(value ? 'Key saved.' : 'Key removed.')
+      setMsg(done)
       refresh()
       useAgent.getState().refreshKey()
     }
   }
+  const add = () => act(() => agentApi.addKey(key.trim(), provider).then((r) => (r.ok && setKey(''), r)), 'Key saved.')
 
+  const list = keys || []
   return (
     <>
       <div className="set-row">
         <label>
-          {PROVIDER_LABEL[provider]} API key
+          {PROVIDER_LABEL[provider]} API keys
           <span className="sub">
-            {status?.hasKey ? `Saved on this computer (${status.masked}), encrypted by Windows.${limits}${out}` : `Not set. ${hint}`}
+            {list.length
+              ? `Saved on this computer, encrypted by Windows. Tried in order: when one runs out of credit, the next ${PROVIDER_LABEL[provider]} key is used.`
+              : `Not set. ${hint}`}
           </span>
         </label>
         <div className="row-inline">
-          <input type="password" placeholder={status?.hasKey ? 'Replace key' : 'Paste key'} value={key} onChange={(e) => setKey(e.target.value)} style={{ width: 200 }} />
-          <button className="btn" disabled={!key.trim() || busy} onClick={() => save(key.trim())}>{busy ? 'Checking...' : 'Save'}</button>
-          {status?.hasKey && <button className="btn danger" disabled={busy} onClick={() => save('')}>Remove</button>}
+          <input
+            type="password"
+            placeholder={list.length ? 'Add another key' : 'Paste key'}
+            value={key}
+            onChange={(e) => setKey(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && key.trim() && !busy && add()}
+            style={{ width: 200 }}
+          />
+          <button className="btn" disabled={!key.trim() || busy} onClick={add}>{busy ? 'Checking...' : 'Add'}</button>
         </div>
       </div>
+      {list.map((k, i) => (
+        <div className="set-row" key={`${k.masked}-${i}`} style={{ paddingLeft: 16 }}>
+          <label>
+            Key {i + 1}: {k.masked}
+            <span className="sub">
+              {k.outUntil ? `Out of credit, skipped until ${timeOf(k.outUntil)}.` : i === 0 ? 'Used first.' : `Used when key${i > 1 ? 's' : ''} ${Array.from({ length: i }, (_, j) => j + 1).join(', ')} run${i > 1 ? '' : 's'} out.`}
+              {limits[i] || ''}
+            </span>
+          </label>
+          <div className="row-inline">
+            {i > 0 && <button className="btn" disabled={busy} title="Try this key earlier" onClick={() => act(() => agentApi.raiseKey(provider, i), 'Order changed.')}>Move up</button>}
+            <button className="btn danger" disabled={busy} onClick={() => act(() => agentApi.removeKey(provider, i), 'Key removed.')}>Remove</button>
+          </div>
+        </div>
+      ))}
       {msg && <div className="empty-hint" style={{ padding: '2px 0 8px' }}>{msg}</div>}
     </>
   )
@@ -96,8 +125,8 @@ export default function AiSettings() {
       </div>
       <div className="empty-hint" style={{ padding: '6px 0' }}>
         Ctrl+J opens the assistant, Ctrl+L sends the selection to it. Chats sync between your computers through cloud sync.
-        Keys stay on each computer, so enter them on the laptop too. With both keys saved, a model whose service runs
-        out of credit switches to the same model (or Gemma 4 31B) on the other service, and switches back once it has credit again.
+        Keys stay on each computer, so enter them on the laptop too. Each service only uses its own keys: a model never
+        moves to the other service.
       </div>
     </div>
   )

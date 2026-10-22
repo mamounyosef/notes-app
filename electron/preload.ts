@@ -83,17 +83,20 @@ const api = {
     close: () => ipcRenderer.invoke('win:close'),
   },
   agent: {
-    keyStatus: (provider?: string) => ipcRenderer.invoke('agent:keyStatus', provider) as Promise<{ hasKey: boolean; masked: string }>,
+    keyStatus: (provider?: string) =>
+      ipcRenderer.invoke('agent:keyStatus', provider) as Promise<{ hasKey: boolean; masked: string; keys: { masked: string; outUntil: number | null; detail: string }[] }>,
     setKey: (key: string, provider?: string) => ipcRenderer.invoke('agent:setKey', key, provider) as Promise<{ ok: boolean; error?: string }>,
-    creditStatus: () => ipcRenderer.invoke('agent:creditStatus') as Promise<{ provider: string; retryAt: number; detail: string }[]>,
-    openrouterLimits: () => ipcRenderer.invoke('agent:openrouterLimits') as Promise<{ ok: boolean; freeUsed?: number | null; freeLimit?: number | null; freeTier?: boolean; error?: string }>,
+    addKey: (key: string, provider: string) => ipcRenderer.invoke('agent:addKey', key, provider) as Promise<{ ok: boolean; error?: string }>,
+    removeKey: (provider: string, index: number) => ipcRenderer.invoke('agent:removeKey', provider, index) as Promise<{ ok: boolean; error?: string }>,
+    raiseKey: (provider: string, index: number) => ipcRenderer.invoke('agent:raiseKey', provider, index) as Promise<{ ok: boolean }>,
+    openrouterLimits: (index?: number) => ipcRenderer.invoke('agent:openrouterLimits', index) as Promise<{ ok: boolean; freeUsed?: number | null; freeLimit?: number | null; freeTier?: boolean; error?: string }>,
     chat: (reqId: string, body: unknown) =>
-      ipcRenderer.invoke('agent:chat', reqId, body) as Promise<{ ok: boolean; error?: string; aborted?: boolean; model?: string; switched?: { from: string; to: string; reason: string } }>,
+      ipcRenderer.invoke('agent:chat', reqId, body) as Promise<{ ok: boolean; error?: string; aborted?: boolean; switched?: { provider: string; key: number; keys: number; reason: string } }>,
     abort: (reqId: string) => ipcRenderer.invoke('agent:abort', reqId),
     dictate: () => ipcRenderer.invoke('agent:dictate') as Promise<boolean>,
     web: (kind: 'search' | 'fetch', arg: unknown) =>
       ipcRenderer.invoke('agent:web', kind, arg) as Promise<{ ok: boolean; data?: any; error?: string }>,
-    complete: (body: unknown) => ipcRenderer.invoke('agent:complete', body) as Promise<{ ok: boolean; content?: string; error?: string; model?: string; switched?: { from: string; to: string; reason: string } }>,
+    complete: (body: unknown) => ipcRenderer.invoke('agent:complete', body) as Promise<{ ok: boolean; content?: string; error?: string; switched?: { provider: string; key: number; keys: number; reason: string } }>,
     renderWidget: (body: { html: string; width?: number }) => ipcRenderer.invoke('agent:renderWidget', body) as Promise<WidgetShot>,
     /** Streamed chunks of a running chat request. Returns an unsubscribe. */
     onChunk: (cb: (reqId: string, chunk: any) => void) => {

@@ -3,7 +3,7 @@ import { useAgent, goToTarget } from '../../agent/store'
 import { activePath, versionsOf } from '../../agent/branches'
 import { agentApi, chatApi, type ChatAttachment, type ChatMessage } from '../../agent/api'
 import { canUndo } from '../../agent/tools'
-import { PROVIDER_LABEL, modelInfo } from '../../agent/models'
+import { PROVIDER_LABEL } from '../../agent/models'
 import { renderMarkdown } from '../../agent/render'
 import { pathTo, useStore } from '../../store'
 import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
@@ -550,14 +550,13 @@ function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(
     if (chips.length) blocks.push(<div key={`c${key}`} className="ag-tools">{chips.map((c) => <ToolChip key={c.id} m={c} />)}</div>)
     chips = []
   }
-  let switchNoted = ''
+  let switchNoted = 0
   for (const m of turn.items) {
-    // Once per turn (and again if it changes): this reply came from the other service.
+    // Once per turn (and again if it changes): this reply came through a later key of the service.
     const sw = m.meta?.switched
-    if (sw && sw.to !== switchNoted) {
-      switchNoted = sw.to
-      const to = modelInfo(sw.to)
-      blocks.push(<div key={`w${m.id}`} className="ag-note" title={sw.reason}>Answered by {to.name} on {PROVIDER_LABEL[to.provider]}: {sw.reason}</div>)
+    if (sw && sw.key !== switchNoted) {
+      switchNoted = sw.key
+      blocks.push(<div key={`w${m.id}`} className="ag-note" title={sw.reason}>Answered with {PROVIDER_LABEL[sw.provider]} key {sw.key} of {sw.keys}{sw.reason ? `: ${sw.reason}` : ''}</div>)
     }
     if (m.role === 'tool') {
       if (m.toolName !== 'ask_user') chips.push(m)

@@ -273,23 +273,6 @@ export const DEFAULT_MODEL = 'gemma4:31b'
 /** Reads images for models that cannot see: Gemma on Ollama (paid, so no daily cap). */
 export const VISION_MODEL = 'gemma4:31b'
 
-/** The model each service falls back to when nothing closer fits: Gemma 4 31B, which sees images. */
-export const FALLBACK_DEFAULT: Record<Provider, string> = { ollama: 'gemma4:31b', openrouter: 'google/gemma-4-31b-it:free' }
-
-/**
- * Models on the other service to switch to when this model's service is out
- * of credit (or has no key): the same model there first, then that service's
- * default. A model that sees images only falls back to one that also does,
- * since the chat may already hold pictures.
- */
-export function fallbacksFor(id: string): ModelInfo[] {
-  const m = modelInfo(id)
-  const other: Provider = m.provider === 'ollama' ? 'openrouter' : 'ollama'
-  const twin = MODELS.find((x) => x.provider === other && x.name === m.name)
-  const out = [twin, modelInfo(FALLBACK_DEFAULT[other])].filter((x): x is ModelInfo => Boolean(x) && (!m.vision || x!.vision))
-  return out.filter((x, i) => out.findIndex((y) => y.id === x.id) === i)
-}
-
 export const PROVIDER_LABEL: Record<Provider, string> = { ollama: 'Ollama', openrouter: 'OpenRouter' }
 
 export function modelInfo(id: string): ModelInfo {

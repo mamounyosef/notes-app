@@ -1,5 +1,5 @@
 /** The desktop bridge for the agent (see electron/agent.ts). */
-import { fallbacksFor, modelInfo, thinkValue, type Provider } from './models'
+import { modelInfo, type Provider } from './models'
 
 export interface ChatAttachment {
   sha: string
@@ -81,8 +81,8 @@ export interface ChatMessage {
     /** Pictures a tool handed to a model that can see ("sha:<hash>"). */
     images?: string[]
     sentNow?: boolean
-    /** The reply came from another service's model because the chosen one's was out of credit. */
-    switched?: Switched
+    /** The reply came through a later key because the ones before it were out of credit. */
+    switched?: KeySwitch
     /** Said out loud in voice mode, not typed. */
     voice?: boolean
     device?: string
@@ -119,47 +119,51 @@ export interface ChatSummary {
 
 const desk = (window as any).notes
 
-/**
- * Tells the main process which service runs the request's model, and which
- * models on the other service to switch to if this one is out of credit
- * (each with the think switch as that model expects it). noFallback: true
- * keeps the request on its own model.
- */
-function withProvider(body: any) {
-  const { noFallback, ...rest } = body || {}
-  const on = rest.think === true || rest.think === 'high' || rest.think === 'medium'
-  const fallbacks = noFallback
-    ? []
-    : fallbacksFor(rest.model).map((m) => ({ model: m.id, provider: m.provider, ...(rest.think !== undefined && { think: thinkValue(m.id, on) }) }))
-  return { ...rest, provider: modelInfo(rest.model).provider, fallbacks }
+/** Tells the main process which service runs the request's model. */
+const withProvider = (body: any) => ({ ...body, provider: modelInfo(body?.model).provider })
+
+/** Set when a request ran on a later key of its service because the ones before it were out of credit. */
+export interface KeySwitch {
+  provider: Provider
+  /** The key that answered, counting from 1. */
+  key: number
+  keys: number
+  reason: string
 }
 
-/** Set when a request ran on another service's model because its own was out of credit or had no key. */
-export interface Switched {
-  from: string
-  to: string
-  reason: string
+/** One saved key, as Settings shows it. */
+export interface KeyInfo {
+  masked: string
+  /** Out of credit: skipped until this time (ms). */
+  outUntil: number | null
+  detail: string
 }
 
 export const agentAvailable = Boolean(desk?.agent)
 
 export const agentApi = {
-  keyStatus: (provider: Provider = 'ollama'): Promise<{ hasKey: boolean; masked: string }> =>
-    desk?.agent ? desk.agent.keyStatus(provider) : Promise.resolve({ hasKey: false, masked: '' }),
+  keyStatus: (provider: Provider = 'ollama'): Promise<{ hasKey: boolean; masked: string; keys?: KeyInfo[] }> =>
+    desk?.agent ? desk.agent.keyStatus(provider) : Promise.resolve({ hasKey: false, masked: '', keys: [] }),
+  /** Replaces the first key; an empty key removes all of the service's keys. */
   setKey: (key: string, provider: Provider = 'ollama'): Promise<{ ok: boolean; error?: string }> =>
     desk?.agent ? desk.agent.setKey(key, provider) : Promise.resolve({ ok: false, error: 'Desktop app only' }),
-  /** Services that ran out of credit, so requests go to the other one until retryAt (ms). */
-  creditStatus: (): Promise<{ provider: Provider; retryAt: number; detail: string }[]> =>
-    desk?.agent?.creditStatus ? desk.agent.creditStatus() : Promise.resolve([]),
-  /** Free model requests used and allowed today on the OpenRouter key. */
-  openrouterLimits: (): Promise<{ ok: boolean; freeUsed?: number | null; freeLimit?: number | null; freeTier?: boolean }> =>
-    desk?.agent?.openrouterLimits ? desk.agent.openrouterLimits() : Promise.resolve({ ok: false }),
-  /** Streams a reply. `model` is the model that answered; `switched` is set if that is not the one asked for. */
-  chat: (reqId: string, body: unknown): Promise<{ ok: boolean; error?: string; aborted?: boolean; model?: string; switched?: Switched }> =>
+  /** Adds a key after the others, used when the ones before it run out of credit. */
+  addKey: (key: string, provider: Provider): Promise<{ ok: boolean; error?: string }> =>
+    desk?.agent?.addKey ? desk.agent.addKey(key, provider) : Promise.resolve({ ok: false, error: 'Desktop app only' }),
+  removeKey: (provider: Provider, index: number): Promise<{ ok: boolean; error?: string }> =>
+    desk?.agent?.removeKey ? desk.agent.removeKey(provider, index) : Promise.resolve({ ok: false }),
+  /** Moves a key one place earlier in the order they are tried. */
+  raiseKey: (provider: Provider, index: number): Promise<{ ok: boolean }> =>
+    desk?.agent?.raiseKey ? desk.agent.raiseKey(provider, index) : Promise.resolve({ ok: false }),
+  /** Free model requests used and allowed today on one OpenRouter key (the first by default). */
+  openrouterLimits: (index = 0): Promise<{ ok: boolean; freeUsed?: number | null; freeLimit?: number | null; freeTier?: boolean }> =>
+    desk?.agent?.openrouterLimits ? desk.agent.openrouterLimits(index) : Promise.resolve({ ok: false }),
+  /** Streams a reply. `switched` is set when a later key answered because earlier ones were out of credit. */
+  chat: (reqId: string, body: unknown): Promise<{ ok: boolean; error?: string; aborted?: boolean; switched?: KeySwitch }> =>
     desk?.agent ? desk.agent.chat(reqId, withProvider(body)) : Promise.resolve({ ok: false, error: 'The agent needs the desktop app.' }),
   abort: (reqId: string) => desk?.agent?.abort(reqId),
   /** One reply without streaming. Messages may carry images ("sha:<hash>" or base64); timeout_ms defaults to 30 s. */
-  complete: (body: unknown): Promise<{ ok: boolean; content?: string; error?: string; model?: string; switched?: Switched }> =>
+  complete: (body: unknown): Promise<{ ok: boolean; content?: string; error?: string; switched?: KeySwitch }> =>
     desk?.agent ? desk.agent.complete(withProvider(body)) : Promise.resolve({ ok: false }),
   /** Draws an HTML block off screen: a PNG (base64) of it, its size and the errors it reported. */
   renderWidget: (body: { html: string; width?: number }): Promise<{ ok: boolean; png?: string; width?: number; height?: number; errors?: string[]; done?: boolean; error?: string }> =>
