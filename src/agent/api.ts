@@ -13,6 +13,22 @@ export interface ChatAttachment {
   pages?: string[]
   /** Page count for PDFs. */
   pageCount?: number
+  /** For images changed in the editor: how, and the untouched original. */
+  edit?: ImageEdit
+}
+
+export interface ImageEdit {
+  orig: { sha: string; mime: string; size: number }
+  /** Quarter turns clockwise, applied after the mirrors. */
+  rot: number
+  flipH: boolean
+  flipV: boolean
+  /** Part kept, as fractions of the turned picture. */
+  crop: { x: number; y: number; w: number; h: number }
+  /** Percent; 100 is unchanged. */
+  bright: number
+  contrast: number
+  gray: boolean
 }
 
 export interface ToolCall {

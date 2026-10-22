@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAgent, goToTarget } from '../../agent/store'
 import { activePath, versionsOf } from '../../agent/branches'
-import { agentApi, chatApi, type ChatMessage } from '../../agent/api'
+import { agentApi, chatApi, type ChatAttachment, type ChatMessage } from '../../agent/api'
 import { canUndo } from '../../agent/tools'
 import { renderMarkdown } from '../../agent/render'
 import { pathTo, useStore } from '../../store'
 import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
 import Composer from './Composer'
+import { AttachmentTray, useAddFiles } from './AttachmentTray'
 import { ContextRing, ContextInspector } from './ContextMeter'
 import {
   AssistantMark, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock, AudioLines, Mic,
@@ -337,14 +338,14 @@ function UserBubble({ m, onImage }: { m: ChatMessage; onImage(items: LightboxIte
           </span>
         </div>
       )}
-      {images.length > 0 && (
+      {!editing && images.length > 0 && (
         <div className={`ag-user-imgs n${Math.min(images.length, 3)}`}>
           {images.map((a, i) => (
             <AttachmentThumb key={a.sha} att={a} big onClick={() => onImage(items, i)} />
           ))}
         </div>
       )}
-      {others.length > 0 && (
+      {!editing && others.length > 0 && (
         <div className="ag-user-files">
           {others.map((a) => (
             <div key={a.sha} className="ag-file-pill" title={a.name}>
@@ -357,10 +358,11 @@ function UserBubble({ m, onImage }: { m: ChatMessage; onImage(items: LightboxIte
       {editing ? (
         <EditBox
           initial={m.content}
+          initialAttachments={m.attachments || []}
           onCancel={() => setEditing(false)}
-          onSend={(text) => {
+          onSend={(text, attachments) => {
             setEditing(false)
-            useAgent.getState().editMessage(m.id, text)
+            useAgent.getState().editMessage(m.id, text, attachments)
           }}
         />
       ) : (m.content || m.meta?.mentions?.length) && (
@@ -403,10 +405,28 @@ function UserBubble({ m, onImage }: { m: ChatMessage; onImage(items: LightboxIte
   )
 }
 
-/** In place editor for one of your messages: Enter sends, Shift+Enter breaks a line, Esc cancels. */
-function EditBox({ initial, onCancel, onSend }: { initial: string; onCancel(): void; onSend(text: string): void }) {
+/**
+ * In place editor for one of your messages: Enter sends, Shift+Enter breaks
+ * a line, Esc cancels. Its pictures and files can be taken out, edited, or
+ * added to (paste, drop, or the + button).
+ */
+function EditBox({
+  initial,
+  initialAttachments,
+  onCancel,
+  onSend,
+}: {
+  initial: string
+  initialAttachments: ChatAttachment[]
+  onCancel(): void
+  onSend(text: string, attachments: ChatAttachment[]): void
+}) {
   const [text, setText] = useState(initial)
+  const [atts, setAtts] = useState(initialAttachments)
+  const [dropping, setDropping] = useState(false)
+  const { pending, addFiles, working } = useAddFiles(setAtts)
   const ta = useRef<HTMLTextAreaElement>(null)
+  const picker = useRef<HTMLInputElement>(null)
   useEffect(() => {
     const el = ta.current
     if (!el) return
@@ -419,28 +439,77 @@ function EditBox({ initial, onCancel, onSend }: { initial: string; onCancel(): v
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, 260)}px`
   }, [text])
-  const changed = text.trim() && text.trim() !== initial.trim()
+  const sameFiles = atts.length === initialAttachments.length && atts.every((a, i) => a.sha === initialAttachments[i].sha)
+  const changed = text.trim() !== initial.trim() || !sameFiles
+  const canSend = Boolean(text.trim() || atts.length) && !working
+  // Same attachment even after an edit: compare by the untouched original.
+  const key = (a: ChatAttachment) => a.edit?.orig.sha || a.sha
+  const removed = initialAttachments.filter((a) => !atts.some((b) => key(b) === key(a)))
   return (
-    <div className="ag-edit">
+    <div
+      className={`ag-edit ${dropping ? 'drop' : ''}`}
+      onDragOver={(e) => {
+        if (!e.dataTransfer.types.includes('Files')) return
+        e.preventDefault()
+        setDropping(true)
+      }}
+      onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node) && setDropping(false)}
+      onDrop={(e) => {
+        e.preventDefault()
+        setDropping(false)
+        const files = [...e.dataTransfer.files]
+        if (files.length) addFiles(files)
+      }}
+    >
+      <AttachmentTray attachments={atts} update={setAtts} pending={pending} />
+      {removed.length > 0 && (
+        <div className="ag-edit-removed">
+          {removed.length === 1 ? `"${removed[0].name}" won't be sent.` : `${removed.length} attachments won't be sent.`}
+          <button onClick={() => setAtts((list) => [...list, ...removed])}>Put back</button>
+        </div>
+      )}
       <textarea
         ref={ta}
         value={text}
+        placeholder={atts.length ? 'Add a message, or send the attachments alone' : 'Your message'}
         onChange={(e) => setText(e.target.value)}
+        onPaste={(e) => {
+          const files = [...e.clipboardData.files]
+          if (files.length) {
+            e.preventDefault()
+            addFiles(files)
+          }
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault()
-            if (text.trim()) onSend(text)
+            if (canSend) onSend(text, atts)
           }
           if (e.key === 'Escape') onCancel()
         }}
       />
       <div className="ag-edit-bar">
-        <span className="ag-edit-hint">Sends as a new version; the original stays one click away.</span>
+        <button className="ag-icon-btn" title="Add pictures or files (or paste, or drop them here)" onClick={() => picker.current?.click()}>
+          <Plus size={14} />
+        </button>
+        <span className="ag-edit-hint" title="The original stays one click away">Sends as a new version.</span>
         <button className="ag-btn sm" onClick={onCancel}>Cancel</button>
-        <button className="ag-btn primary sm" disabled={!text.trim()} onClick={() => onSend(text)}>
+        <button className="ag-btn primary sm" disabled={!canSend} onClick={() => onSend(text, atts)}>
           {changed ? 'Send' : 'Resend'}
         </button>
       </div>
+      <input
+        ref={picker}
+        type="file"
+        multiple
+        hidden
+        accept="image/*,.pdf,.docx,.txt,.md,.csv,.json,.tex,.py,.js,.ts,.html,.xml,.yaml,.yml"
+        onChange={(e) => {
+          const files = [...(e.target.files || [])]
+          e.target.value = ''
+          if (files.length) addFiles(files)
+        }}
+      />
     </div>
   )
 }
@@ -837,6 +906,8 @@ export default function AgentPanel() {
         onDrop={(e) => {
           e.preventDefault()
           setDragOver(false)
+          // A message being edited takes its own drops.
+          if ((e.target as HTMLElement).closest?.('.ag-edit')) return
           const files = [...e.dataTransfer.files]
           if (files.length) composerRef.current?.addFiles(files)
         }}
@@ -905,7 +976,7 @@ export default function AgentPanel() {
             {voiceOn ? (
               <VoiceDock voice={voice} onSettings={() => window.dispatchEvent(new CustomEvent('notes:open-settings', { detail: { tab: 'voice' } }))} />
             ) : (
-              <Composer ref={composerRef} onImage={onImage} onVoice={voiceAvailable ? startVoice : undefined} />
+              <Composer ref={composerRef} onVoice={voiceAvailable ? startVoice : undefined} />
             )}
           </>
         )}

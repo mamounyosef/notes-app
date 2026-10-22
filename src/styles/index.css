@@ -3124,3 +3124,179 @@ select:focus {
 .row .cell-count.pending {
   opacity: 0.45;
 }
+
+/* ---------- page tabs ---------- */
+
+.tabbar {
+  flex: 1 1 auto;
+  min-width: 90px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 30px;
+  margin-left: 4px;
+  padding: 0 3px 0 10px;
+  border-left: 1px solid var(--line-soft);
+}
+
+.tabs {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  height: 28px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  padding-bottom: 2px;
+}
+.tabs::-webkit-scrollbar { display: none; }
+
+.tab {
+  --c: var(--accent);
+  position: relative;
+  flex: 0 1 auto;
+  width: 172px;
+  min-width: 64px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 26px;
+  margin: 0 2px;
+  padding: 0 4px 0 9px;
+  border-radius: 7px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+  background: color-mix(in srgb, var(--c) 6%, transparent);
+  cursor: default;
+  user-select: none;
+  transition: background 0.12s, color 0.12s, opacity 0.12s;
+  animation: tab-in 0.16s ease-out;
+}
+
+@keyframes tab-in {
+  from { opacity: 0; transform: translateY(3px) scale(0.96); }
+}
+
+/* Each tab's notebook color runs underneath it; tabs of one notebook side by side share one line. */
+.tab::after {
+  content: '';
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  bottom: -2px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--c);
+  opacity: 0.38;
+  transition: opacity 0.12s;
+}
+.tab.join-l { margin-left: 0; border-top-left-radius: 3px; border-bottom-left-radius: 3px; }
+.tab.join-r { margin-right: 0; border-top-right-radius: 3px; border-bottom-right-radius: 3px; }
+.tab.join-l::after { left: -1px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.tab.join-r::after { right: -1px; border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.tab.join-r:not(.active) + .tab.join-l:not(.active)::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 7px;
+  bottom: 7px;
+  width: 1px;
+  background: var(--line-soft);
+}
+
+.tab:hover { background: color-mix(in srgb, var(--c) 13%, var(--bg-2)); color: var(--text); }
+.tab:hover::after { opacity: 0.7; }
+
+.tab.active {
+  color: var(--text);
+  background: color-mix(in srgb, var(--c) 20%, var(--bg-2));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--c) 35%, transparent);
+  z-index: 1;
+}
+.tab.active::after { opacity: 1; height: 2.5px; }
+
+/* Opened in the background and not looked at yet. */
+.tab.fresh .tab-title { font-style: italic; }
+.tab.fresh .tab-dot { animation: tab-pulse 1.2s ease-in-out 3; }
+@keyframes tab-pulse { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--c) 30%, transparent); } }
+
+.tab.dragging { opacity: 0.4; }
+.tab.drop-before { box-shadow: inset 2px 0 0 var(--accent); }
+.tab.drop-after { box-shadow: inset -2px 0 0 var(--accent); }
+
+.tab-dot {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--c);
+}
+
+.tab-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent);
+}
+
+.tab-x {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--text-faint);
+  opacity: 0;
+  transition: opacity 0.1s;
+}
+.tab:hover .tab-x, .tab.active .tab-x { opacity: 1; }
+.tab-x:hover { background: var(--bg-4); color: var(--text); }
+
+.tab.pinned {
+  flex: none;
+  min-width: 0;
+  width: 32px;
+  padding: 0;
+  justify-content: center;
+}
+.tab-badge {
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border-radius: 5px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--c);
+}
+
+.tab-new {
+  flex: none;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 7px;
+  color: var(--text-faint);
+}
+.tab-new:hover { background: var(--bg-3); color: var(--text); }
+.tab-all { transform: rotate(90deg); }
+
+.tab-menu-dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; }
+
+.tb-path {
+  flex: 0 1 auto;
+  max-width: 22%;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-faint);
+  font-size: 12px;
+  padding: 0 6px;
+}

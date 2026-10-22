@@ -103,9 +103,12 @@ interface State {
   editingCellId: string | null
   history: Page[]
   future: Page[]
-  /** Browser style page navigation stacks (page ids). */
-  navBack: string[]
-  navForward: string[]
+  /** Browser style page navigation stacks: each page with the spot you were looking at. */
+  navBack: NavEntry[]
+  navForward: NavEntry[]
+  /** Pages open as tabs in the title bar; the active tab is the page on screen. */
+  tabs: PageTab[]
+  activeTab: string
   dirty: boolean
   zoom: number
   tool: 'select' | 'pen' | 'highlighter' | 'eraser' | 'space'
@@ -166,6 +169,22 @@ interface State {
   reflowOverlaps(record?: boolean): void
   clearPageInk(): void
   setZoom(z: number): void
+  /** Opens a page in a new tab next to the current one; in the background when asked. */
+  newTab(pageId: string, opts?: { background?: boolean }): Promise<void>
+  /** The next page opened (say, from search) goes into a new tab instead of this one. */
+  openNextInNewTab(on: boolean): void
+  switchTab(id: string): Promise<void>
+  /** Next (1) or previous (-1) tab, wrapping around, like Ctrl+Tab. */
+  cycleTab(dir: 1 | -1): Promise<void>
+  closeTab(id: string): Promise<void>
+  closeOtherTabs(id: string): Promise<void>
+  closeTabsToRight(id: string): Promise<void>
+  reopenClosedTab(): Promise<void>
+  duplicateTab(id: string): Promise<void>
+  moveTab(id: string, toIndex: number): void
+  pinTab(id: string, pinned: boolean): void
+  /** Remembers where the active tab is scrolled (the canvas calls this as you scroll). */
+  noteScroll(): void
   setTool(t: State['tool']): void
   /** Replaces the open page with an edited copy (agent edits and their undo). Undoable with Ctrl+Z. */
   applyPageEdit(fn: (p: Page) => Page, cells?: string[]): boolean
@@ -196,6 +215,66 @@ let pageSaving: Promise<void> | null = null
 let pageSaveAgain = false
 let pendingPageEvent: { data: Page; seq: number } | null = null
 let openToken = 0
+
+/** A page in the back and forward history, with where its canvas was scrolled (in canvas units, so zoom changes do not move it). */
+export interface NavEntry {
+  id: string
+  left: number
+  top: number
+}
+
+export interface PageTab {
+  id: string
+  pageId: string
+  /** Scroll spot, in canvas units. */
+  left: number
+  top: number
+  back: NavEntry[]
+  forward: NavEntry[]
+  pinned?: boolean
+  /** Just opened in the background and not visited yet. */
+  fresh?: boolean
+}
+
+const tabId = () => nanoid(8)
+/** Tabs closed lately, newest last, for Ctrl+Shift+T. */
+const closedTabs: { tab: PageTab; index: number }[] = []
+/** A tab switch is loading its page: the screen does not show the active tab yet. */
+let tabOpening = 0
+let newTabNext = false
+
+/** Pinned tabs stay at the front, in their order. */
+function pinnedFirst(tabs: PageTab[]) {
+  return [...tabs.filter((t) => t.pinned), ...tabs.filter((t) => !t.pinned)]
+}
+
+/** The page's scroll box, set by the canvas, so navigation can remember and restore the spot. */
+export const canvasView: { el: HTMLElement | null } = { el: null }
+
+function here(id: string, zoom: number): NavEntry {
+  const el = canvasView.el
+  return { id, left: el ? el.scrollLeft / zoom : 0, top: el ? el.scrollTop / zoom : 0 }
+}
+
+/** Scrolls back to a remembered spot, again once cells have settled their heights. */
+function restoreView(e: { left: number; top: number }, zoom: number) {
+  let last: { el: HTMLElement; left: number; top: number } | null = null
+  const apply = () => {
+    const el = canvasView.el
+    if (!el) return
+    // They scrolled since the last try: leave their scroll alone.
+    if (last && (last.el !== el || el.scrollLeft !== last.left || el.scrollTop !== last.top)) return
+    el.scrollLeft = Math.round(e.left * zoom)
+    el.scrollTop = Math.round(e.top * zoom)
+    last = { el, left: el.scrollLeft, top: el.scrollTop }
+  }
+  requestAnimationFrame(() => {
+    apply()
+    requestAnimationFrame(apply)
+  })
+  setTimeout(apply, 150)
+  setTimeout(apply, 400)
+}
 
 /** Cells the person moved or resized on purpose since the last save. */
 let touched = { all: false, cells: new Set<string>(), meta: false }
@@ -393,6 +472,8 @@ export const useStore = create<State>((set, get) => ({
   future: [],
   navBack: [],
   navForward: [],
+  tabs: [],
+  activeTab: '',
   dirty: false,
   zoom: 1,
   tool: 'select',
@@ -477,6 +558,25 @@ export const useStore = create<State>((set, get) => ({
     walk(tree, (n) => {
       if (!firstPage && n.kind === 'page') firstPage = n.id
     })
+    // Tabs from last time, on pages that still exist.
+    const tabs: PageTab[] = (local.tabs || [])
+      .filter((t) => t && isPage(tree, t.pageId))
+      .map((t) => ({
+        id: t.id || tabId(),
+        pageId: t.pageId,
+        left: Number(t.left) || 0,
+        top: Number(t.top) || 0,
+        pinned: Boolean(t.pinned),
+        back: (t.back || []).filter((r) => isPage(tree, r.id)),
+        forward: (t.forward || []).filter((r) => isPage(tree, r.id)),
+      }))
+    const active = tabs.find((t) => t.id === local.activeTab) || tabs[0]
+    if (active) {
+      set({ tabs: pinnedFirst(tabs), activeTab: active.id, navBack: active.back, navForward: active.forward })
+      await get().openPage(active.pageId, true)
+      if (get().activeTab === active.id) restoreView(active, get().zoom)
+      return
+    }
     const target = local.lastOpenPageId && isPage(tree, local.lastOpenPageId) ? local.lastOpenPageId : firstPage
     if (target) await get().openPage(target)
   },
@@ -625,8 +725,15 @@ export const useStore = create<State>((set, get) => ({
   async openPage(id, fromNav = false) {
     const token = ++openToken
     const prevId = get().activePageId
-    if (!fromNav && prevId && prevId !== id && isPage(get().workspace.tree, prevId)) {
-      set({ navBack: [...get().navBack, prevId].slice(-100), navForward: [] })
+    if (!fromNav && newTabNext) {
+      // Opened from "new tab": a fresh tab with its own history.
+      newTabNext = false
+      const tabs = captureTab()
+      const t: PageTab = { id: tabId(), pageId: id, left: 0, top: 0, back: [], forward: [] }
+      const at = tabs.findIndex((x) => x.id === get().activeTab) + 1
+      set({ tabs: pinnedFirst([...tabs.slice(0, at), t, ...tabs.slice(at)]), activeTab: t.id, navBack: [], navForward: [] })
+    } else if (!fromNav && prevId && prevId !== id && isPage(get().workspace.tree, prevId)) {
+      set({ navBack: [...get().navBack, here(prevId, get().zoom)].slice(-100), navForward: [] })
     }
     clearTimeout(gridScaleTimer)
     gridScaleBase = null
@@ -681,7 +788,9 @@ export const useStore = create<State>((set, get) => ({
       history: [],
       future: [],
       dirty: fresh || retitled,
+      ...activeTabShows(id),
     })
+    saveTabsSoon()
     if (fresh && starterOnly && id === SEED_PAGE) set({ dirty: false })
     else if (fresh) await get().save()
     else if (retitled) scheduleSave(get)
@@ -689,24 +798,26 @@ export const useStore = create<State>((set, get) => ({
 
   async goBack() {
     const tree = get().workspace.tree
-    const back = get().navBack.filter((pid) => isPage(tree, pid))
+    const back = get().navBack.filter((e) => isPage(tree, e.id))
     const cur = get().activePageId
     let target = back.pop()
-    while (target && target === cur) target = back.pop()
+    while (target && target.id === cur) target = back.pop()
     if (!target) { set({ navBack: back }); return }
-    set({ navBack: back, navForward: cur ? [cur, ...get().navForward] : get().navForward })
-    await get().openPage(target, true)
+    set({ navBack: back, navForward: cur ? [here(cur, get().zoom), ...get().navForward] : get().navForward })
+    await get().openPage(target.id, true)
+    if (get().activePageId === target.id) restoreView(target, get().zoom)
   },
 
   async goForward() {
     const tree = get().workspace.tree
-    const fwd = get().navForward.filter((pid) => isPage(tree, pid))
+    const fwd = get().navForward.filter((e) => isPage(tree, e.id))
     const cur = get().activePageId
     let target = fwd.shift()
-    while (target && target === cur) target = fwd.shift()
+    while (target && target.id === cur) target = fwd.shift()
     if (!target) { set({ navForward: fwd }); return }
-    set({ navForward: fwd, navBack: cur ? [...get().navBack, cur] : get().navBack })
-    await get().openPage(target, true)
+    set({ navForward: fwd, navBack: cur ? [...get().navBack, here(cur, get().zoom)] : get().navBack })
+    await get().openPage(target.id, true)
+    if (get().activePageId === target.id) restoreView(target, get().zoom)
   },
 
   async addNode(kind, parentId) {
@@ -775,13 +886,21 @@ export const useStore = create<State>((set, get) => ({
     set({
       workspace: ws,
       pageCellCounts: newCounts,
-      navBack: get().navBack.filter((r) => !pageIds.includes(r)),
-      navForward: get().navForward.filter((r) => !pageIds.includes(r)),
+      navBack: get().navBack.filter((r) => !pageIds.includes(r.id)),
+      navForward: get().navForward.filter((r) => !pageIds.includes(r.id)),
+      // Tabs on deleted pages go; the active one is handled below.
+      tabs: get()
+        .tabs.filter((t) => t.id === get().activeTab || !pageIds.includes(t.pageId))
+        .map((t) => ({ ...t, back: t.back.filter((r) => !pageIds.includes(r.id)), forward: t.forward.filter((r) => !pageIds.includes(r.id)) })),
     })
+    saveTabsSoon()
     wsDirty = true
     await get().saveWorkspace()
     for (const pid of pageIds) await storage.deletePage(pid)
-    if (leaving) {
+    if (leaving && get().tabs.length > 1) {
+      // Like closing the tab: show its neighbor.
+      await get().closeTab(get().activeTab)
+    } else if (leaving) {
       let next: string | null = null
       walk(get().workspace.tree, (n) => {
         if (!next && n.kind === 'page') next = n.id
@@ -1194,6 +1313,116 @@ export const useStore = create<State>((set, get) => ({
     set({ zoom })
   },
 
+  async newTab(pageId, opts) {
+    if (!isPage(get().workspace.tree, pageId)) return
+    const tabs = captureTab()
+    const t: PageTab = { id: tabId(), pageId, left: 0, top: 0, back: [], forward: [] }
+    const at = tabs.findIndex((x) => x.id === get().activeTab) + 1
+    // Background tabs opened one after another line up in that order.
+    let i = at
+    if (opts?.background) while (i < tabs.length && tabs[i].fresh) i++
+    set({ tabs: pinnedFirst([...tabs.slice(0, i), opts?.background ? { ...t, fresh: true } : t, ...tabs.slice(i)]) })
+    saveTabsSoon()
+    if (!opts?.background) await activateTab(t.id)
+  },
+
+  openNextInNewTab(on) {
+    newTabNext = on
+  },
+
+  async switchTab(id) {
+    if (id === get().activeTab || !get().tabs.some((t) => t.id === id)) return
+    set({ tabs: captureTab() })
+    await activateTab(id)
+  },
+
+  async cycleTab(dir) {
+    const { tabs, activeTab } = get()
+    if (tabs.length < 2) return
+    const i = tabs.findIndex((t) => t.id === activeTab)
+    await get().switchTab(tabs[(i + dir + tabs.length) % tabs.length].id)
+  },
+
+  async closeTab(id) {
+    const tabs = captureTab()
+    const i = tabs.findIndex((t) => t.id === id)
+    if (i < 0 || tabs.length < 2) return
+    closedTabs.push({ tab: tabs[i], index: i })
+    if (closedTabs.length > 25) closedTabs.shift()
+    const rest = tabs.filter((t) => t.id !== id)
+    set({ tabs: rest })
+    saveTabsSoon()
+    if (id === get().activeTab) await activateTab(rest[Math.min(i, rest.length - 1)].id)
+  },
+
+  async closeOtherTabs(id) {
+    const tabs = captureTab()
+    tabs.forEach((t, i) => t.id !== id && !t.pinned && closedTabs.push({ tab: t, index: i }))
+    set({ tabs: tabs.filter((t) => t.id === id || t.pinned) })
+    saveTabsSoon()
+    if (get().activeTab !== id) await activateTab(id)
+  },
+
+  async closeTabsToRight(id) {
+    const tabs = captureTab()
+    const i = tabs.findIndex((t) => t.id === id)
+    if (i < 0) return
+    tabs.slice(i + 1).forEach((t, k) => closedTabs.push({ tab: t, index: i + 1 + k }))
+    const keep = tabs.slice(0, i + 1)
+    set({ tabs: keep })
+    saveTabsSoon()
+    if (!keep.some((t) => t.id === get().activeTab)) await activateTab(id)
+  },
+
+  async reopenClosedTab() {
+    const tree = get().workspace.tree
+    let last = closedTabs.pop()
+    while (last && !isPage(tree, last.tab.pageId)) last = closedTabs.pop()
+    if (!last) return
+    const tabs = captureTab()
+    const t = { ...last.tab, id: get().tabs.some((x) => x.id === last!.tab.id) ? tabId() : last.tab.id }
+    const at = Math.min(last.index, tabs.length)
+    set({ tabs: pinnedFirst([...tabs.slice(0, at), t, ...tabs.slice(at)]) })
+    await activateTab(t.id)
+  },
+
+  async duplicateTab(id) {
+    const tabs = captureTab()
+    const i = tabs.findIndex((t) => t.id === id)
+    if (i < 0) return
+    const t = { ...tabs[i], id: tabId(), pinned: false }
+    set({ tabs: pinnedFirst([...tabs.slice(0, i + 1), t, ...tabs.slice(i + 1)]) })
+    await activateTab(t.id)
+  },
+
+  moveTab(id, toIndex) {
+    const tabs = [...get().tabs]
+    const i = tabs.findIndex((t) => t.id === id)
+    if (i < 0) return
+    const [t] = tabs.splice(i, 1)
+    // A tab cannot be dragged across the pinned / unpinned line.
+    const pins = tabs.filter((x) => x.pinned).length
+    const to = t.pinned ? Math.min(toIndex, pins) : Math.max(toIndex, pins)
+    tabs.splice(Math.max(0, Math.min(to, tabs.length)), 0, t)
+    set({ tabs })
+    saveTabsSoon()
+  },
+
+  pinTab(id, pinned) {
+    set({ tabs: pinnedFirst(get().tabs.map((t) => (t.id === id ? { ...t, pinned } : t))) })
+    saveTabsSoon()
+  },
+
+  noteScroll() {
+    const { tabs, activeTab, activePageId, zoom } = get()
+    const t = tabs.find((x) => x.id === activeTab)
+    if (!t || tabOpening || t.pageId !== activePageId) return
+    const spot = here(t.pageId, zoom)
+    if (Math.abs(spot.left - t.left) < 0.5 && Math.abs(spot.top - t.top) < 0.5) return
+    set({ tabs: tabs.map((x) => (x.id === activeTab ? { ...x, left: spot.left, top: spot.top } : x)) })
+    saveTabsSoon()
+  },
+
   setTool(t) {
     set({ tool: t, selection: t === 'select' ? get().selection : [] })
   },
@@ -1454,3 +1683,57 @@ window.addEventListener('beforeunload', () => {
 
 // Handy for debugging from the console.
 ;(window as any).__store = useStore
+
+/* ------------------------------------------------------------------ *
+ * Tabs
+ * ------------------------------------------------------------------ */
+
+/** The tabs with the active one brought up to date: its scroll spot and history. */
+function captureTab(): PageTab[] {
+  const { tabs, activeTab, activePageId, navBack, navForward, zoom } = useStore.getState()
+  return tabs.map((t) => {
+    if (t.id !== activeTab) return t.fresh ? { ...t, fresh: false } : t
+    const spot = !tabOpening && t.pageId === activePageId ? here(t.pageId, zoom) : t
+    return { ...t, left: spot.left, top: spot.top, back: navBack, forward: navForward }
+  })
+}
+
+/** After a page opens: the active tab shows it (the first page opened makes the first tab). */
+function activeTabShows(pageId: string): Pick<State, 'tabs' | 'activeTab'> {
+  const { tabs, activeTab } = useStore.getState()
+  const cur = tabs.find((t) => t.id === activeTab)
+  if (!cur) {
+    const t: PageTab = { id: tabId(), pageId, left: 0, top: 0, back: [], forward: [] }
+    return { tabs: [...tabs, t], activeTab: t.id }
+  }
+  if (cur.pageId === pageId) return { tabs, activeTab }
+  return { tabs: tabs.map((t) => (t.id === activeTab ? { ...t, pageId, left: 0, top: 0 } : t)), activeTab }
+}
+
+/** Shows a tab: its page, its history, and the spot it was scrolled to. */
+async function activateTab(id: string) {
+  const st = useStore.getState()
+  const t = st.tabs.find((x) => x.id === id)
+  if (!t) return
+  useStore.setState({ activeTab: id, navBack: t.back, navForward: t.forward })
+  saveTabsSoon()
+  if (st.activePageId !== t.pageId) {
+    tabOpening++
+    try {
+      await st.openPage(t.pageId, true)
+    } finally {
+      tabOpening--
+    }
+  }
+  if (useStore.getState().activeTab === id) restoreView(t, useStore.getState().zoom)
+}
+
+let tabsTimer: any = null
+function saveTabsSoon() {
+  clearTimeout(tabsTimer)
+  tabsTimer = setTimeout(() => {
+    const tabs = captureTab().map(({ fresh: _f, ...t }) => t)
+    local = { ...local, tabs, activeTab: useStore.getState().activeTab }
+    saveLocalSoon()
+  }, 400)
+}

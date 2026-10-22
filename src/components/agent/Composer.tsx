@@ -1,25 +1,18 @@
 import React, { forwardRef, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { useAgent, type Mention } from '../../agent/store'
 import { agentApi } from '../../agent/api'
-import { fileToAttachment, prettySize } from '../../agent/files'
 import { useStore, walk, pathTo } from '../../store'
-import { AttachmentThumb, type LightboxItem } from './Lightbox'
+import { AttachmentTray, useAddFiles } from './AttachmentTray'
 import ModelPicker from './ModelPicker'
 import QueueDeck from './QueueDeck'
 import { Send, StopI, Mic, Plus, X, AtI, File as FileIcon, Book, Folder, Bolt, QueueI, AudioLines } from '../Icons'
 import { warmVoice } from '../../voice/voiceSession'
 import type { TreeNode } from '../../types'
+import type { ChatAttachment } from '../../agent/api'
 
-interface Pending {
-  id: number
-  name: string
-  status: string
-  error?: string
-}
+const updateAttachments = (fn: (list: ChatAttachment[]) => ChatAttachment[]) => useAgent.setState((s) => ({ attachments: fn(s.attachments) }))
 
-let pendingSeq = 0
-
-const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: LightboxItem[], i: number): void; onVoice?(): void }>(function Composer({ onImage, onVoice }, ref) {
+const Composer = forwardRef<{ addFiles(files: File[]): void }, { onVoice?(): void }>(function Composer({ onVoice }, ref) {
   const draft = useAgent((s) => s.draft)
   const setDraft = useAgent((s) => s.setDraft)
   const attachments = useAgent((s) => s.attachments)
@@ -32,26 +25,11 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: 
   const dismissed = useAgent((s) => s.selectionDismissed)
   const send = useAgent((s) => s.send)
   const stop = useAgent((s) => s.stop)
-  const [pending, setPending] = useState<Pending[]>([])
   const [mention, setMention] = useState<{ q: string; start: number; index: number } | null>(null)
   const ta = useRef<HTMLTextAreaElement>(null)
   const fileInput = useRef<HTMLInputElement>(null)
 
-  const addFiles = async (files: File[]) => {
-    for (const f of files) {
-      const id = ++pendingSeq
-      setPending((p) => [...p, { id, name: f.name || 'pasted image', status: 'Adding' }])
-      try {
-        const att = await fileToAttachment(f, (status) => setPending((p) => p.map((x) => (x.id === id ? { ...x, status } : x))))
-        useAgent.getState().addAttachment(att)
-        setPending((p) => p.filter((x) => x.id !== id))
-      } catch (e) {
-        const error = e instanceof Error ? e.message : String(e)
-        setPending((p) => p.map((x) => (x.id === id ? { ...x, error } : x)))
-        setTimeout(() => setPending((p) => p.filter((x) => x.id !== id)), 6000)
-      }
-    }
-  }
+  const { pending, addFiles, working } = useAddFiles(updateAttachments)
   useImperativeHandle(ref, () => ({ addFiles }))
 
   // Grow with the text, up to a limit.
@@ -102,9 +80,7 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: 
     })
   }
 
-  const canSend = Boolean(draft.trim() || attachments.length) && !pending.some((p) => !p.error)
-  const images = attachments.filter((a) => a.kind === 'image')
-  const imgItems: LightboxItem[] = images.map((a) => ({ sha: a.sha, mime: a.mime, name: a.name }))
+  const canSend = Boolean(draft.trim() || attachments.length) && !working
 
   return (
     <div className="ag-composer">
@@ -130,7 +106,7 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: 
       <QueueDeck />
       <div className={`ag-box ${asking ? 'asking' : ''}`}>
         {(quote || mentions.length > 0 || attachments.length > 0 || pending.length > 0) && (
-          <div className="ag-chips">
+          <AttachmentTray attachments={attachments} update={updateAttachments} pending={pending}>
             {quote && (
               <div className="ag-chip quote" title={quote}>
                 <span className="q">"{quote.slice(0, 80)}{quote.length > 80 ? '...' : ''}"</span>
@@ -143,26 +119,7 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onImage(items: 
                 <button onClick={() => useAgent.getState().removeMention(m.id)}><X size={11} /></button>
               </div>
             ))}
-            {images.map((a, i) => (
-              <div key={a.sha} className="ag-chip img">
-                <AttachmentThumb att={a} onClick={() => onImage(imgItems, i)} />
-                <button className="x" onClick={() => useAgent.getState().removeAttachment(a.sha)}><X size={11} /></button>
-              </div>
-            ))}
-            {attachments.filter((a) => a.kind !== 'image').map((a) => (
-              <div key={a.sha} className="ag-chip file" title={a.name}>
-                <FileIcon size={13} />
-                <span className="n">{a.name}</span>
-                <em>{a.pageCount ? `${a.pageCount} pages` : prettySize(a.size)}</em>
-                <button onClick={() => useAgent.getState().removeAttachment(a.sha)}><X size={11} /></button>
-              </div>
-            ))}
-            {pending.map((p) => (
-              <div key={p.id} className={`ag-chip file ${p.error ? 'err' : 'busy'}`} title={p.error || p.status}>
-                <span className="n">{p.error || `${p.name}: ${p.status}`}</span>
-              </div>
-            ))}
-          </div>
+          </AttachmentTray>
         )}
 
         <textarea

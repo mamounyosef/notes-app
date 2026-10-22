@@ -82,7 +82,12 @@ function mergeChosen(a, b) {
 /** Every attachment hash a chat refers to. */
 function blobsOf(chat) {
   const out = new Set()
-  for (const m of chat.messages || []) for (const a of m.attachments || []) if (a.sha) out.add(a.sha)
+  for (const m of chat.messages || [])
+    for (const a of m.attachments || []) {
+      if (a.sha) out.add(a.sha)
+      // The original of an edited picture, so it can be edited again on another computer.
+      if (a.edit?.orig?.sha) out.add(a.edit.orig.sha)
+    }
   return [...out]
 }
 

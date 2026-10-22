@@ -150,7 +150,8 @@ interface AgentState {
   undo(turnId: string): Promise<void>
   retry(): Promise<void>
   /** Sends a changed version of one of your messages as a new branch from the same point. */
-  editMessage(id: string, text: string): Promise<void>
+  /** Sends a new version of one of your messages; `attachments` replaces its pictures and files when given. */
+  editMessage(id: string, text: string, attachments?: ChatAttachment[]): Promise<void>
   /** A new reply to one of your messages, as another version beside the old one. */
   regenerate(userMessageId: string): Promise<void>
   /** Shows another version at a fork (parent key from versionsOf). */
@@ -785,12 +786,13 @@ export const useAgent = create<AgentState>((set, get) => {
       setTimeout(() => (document.querySelector('.agent-input') as HTMLTextAreaElement | null)?.focus(), 50)
     },
 
-    async editMessage(id, text) {
+    async editMessage(id, text, attachments) {
       const c = get().chat
       const old = c?.messages.find((m) => m.id === id)
-      if (!c || !old || get().busy || !text.trim()) return
+      const atts = attachments ?? old?.attachments ?? []
+      if (!c || !old || get().busy || (!text.trim() && !atts.length)) return
       for (const m of c.messages) lastStamp = Math.max(lastStamp, m.at || 0)
-      // Same place, attachments and selection as before; the screen context is fresh.
+      // Same place and selection as before (attachments as edited); the screen context is fresh.
       const ctx = buildContext({ mentions: old.meta?.mentions || [], mentionPages: {}, ignoreSelection: true })
       pushMsg({
         ...old,
@@ -799,6 +801,7 @@ export const useAgent = create<AgentState>((set, get) => {
         v: 1,
         parent: parentKey(c, id) === ROOT ? null : parentKey(c, id),
         content: text.trim(),
+        attachments: atts.length ? atts : undefined,
         meta: { ...old.meta, context: ctx.full, brief: ctx.brief },
       })
       await runLoop()

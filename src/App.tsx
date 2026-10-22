@@ -6,6 +6,7 @@ import Toolbar from './components/Toolbar'
 import { nudgeInkSize } from './components/InkSizeControl'
 import Tree, { CellCount } from './components/Tree'
 import SearchModal from './components/SearchModal'
+import TabStrip from './components/TabStrip'
 import SettingsModal from './components/SettingsModal'
 import LinkModal from './components/LinkModal'
 import ArtifactModal from './components/ArtifactModal'
@@ -237,6 +238,12 @@ export default function App() {
   const activeSection = activeSectionId ? findNode(workspace.tree, activeSectionId) : null
   const pageRoots = useMemo(() => activeSection?.children.filter((c) => c.kind === 'page') ?? [], [activeSection])
 
+
+  /** New tab: pick the page for it in search. */
+  const openNewTab = useCallback(() => {
+    useStore.getState().openNextInNewTab(true)
+    setShowSearch(true)
+  }, [])
 
   /* ---------- keyboard shortcuts ---------- */
   useEffect(() => {
@@ -519,11 +526,10 @@ export default function App() {
           <SidebarPeek />
         </button>
         <button className="tb-btn" title="Search (Ctrl+F)" onClick={() => setShowSearch(true)}><SearchIcon /> Search</button>
-        <div className="spacer" />
-        <span style={{ color: 'var(--text-faint)', fontSize: 12 }}>
-          {page ? pathTo(workspace.tree, page.id).map((n) => n.title).join('  /  ') : ''}
+        <TabStrip onNewTab={openNewTab} />
+        <span className="tb-path" title={page ? pathTo(workspace.tree, page.id).map((n) => n.title).join('  /  ') : ''}>
+          {page ? pathTo(workspace.tree, page.id).slice(0, -1).map((n) => n.title).join('  /  ') : ''}
         </span>
-        <div className="spacer" />
         {(syncCount > 0 || syncProblem) && (
           <button
             className={`tb-btn sync-alert ${syncProblem ? 'error' : ''}`}
@@ -608,7 +614,14 @@ export default function App() {
         {agentOpen && <ErrorBoundary label="the assistant"><AgentPanel /></ErrorBoundary>}
       </div>
 
-      {showSearch && <SearchModal onClose={() => setShowSearch(false)} />}
+      {showSearch && (
+        <SearchModal
+          onClose={() => {
+            setShowSearch(false)
+            useStore.getState().openNextInNewTab(false)
+          }}
+        />
+      )}
       {showSettings && <SettingsModal initialTab={settingsTab} onClose={() => setShowSettings(false)} />}
       {showSyncPanel && <SyncPanel onClose={() => useStore.getState().setShowSyncPanel(false)} />}
       {showKeys && <ShortcutSheet onClose={() => setShowKeys(false)} />}
@@ -675,6 +688,9 @@ function ShortcutSheet({ onClose }: { onClose(): void }) {
   const rows: [string, string][] = [
     ['Alt Left / Alt Right', 'Back and forward between pages (also mouse side buttons)'],
     ['Ctrl F', 'Search everything'],
+    ['Ctrl T', 'New tab (pick a page); Ctrl or middle click a page opens it in a new tab'],
+    ['Ctrl Tab / Ctrl Shift Tab', 'Next or previous tab (each keeps its scroll spot)'],
+    ['Ctrl W / Ctrl Shift T', 'Close the tab / reopen the last closed tab'],
     ['Ctrl K', 'Insert or edit link'],
     ['Ctrl Shift A', 'Insert or edit artifact (folder or file link)'],
     ['Ctrl ,', 'Settings'],

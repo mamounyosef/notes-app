@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import CellView from './CellView'
 import Minimap from './Minimap'
 import { Menu, type MenuItem } from './Menu'
-import { markTouched, useStore } from '../store'
+import { canvasView, markTouched, useStore } from '../store'
 import type { Cell, Stroke } from '../types'
 import { Copy, Layers, Trash, SpaceI, Plus, ArtifactI, AssistantMark } from './Icons'
 import { askAboutSelection } from '../agent/selection'
@@ -36,7 +36,20 @@ export default function Canvas() {
   const wrapRef = useRef<HTMLDivElement>(null)
   // The scroll box as state too, for the page map (set after mount, and if it is ever replaced).
   const [wrapEl, setWrapEl] = useState<HTMLDivElement | null>(null)
-  useEffect(() => setWrapEl(wrapRef.current))
+  useEffect(() => {
+    const el = wrapRef.current
+    setWrapEl(el)
+    canvasView.el = el
+    return () => {
+      if (canvasView.el === el) canvasView.el = null
+    }
+  })
+  // The active tab remembers where it is scrolled, for switching back to it.
+  const scrollTimer = useRef<any>(null)
+  const onScroll = useCallback(() => {
+    clearTimeout(scrollTimer.current)
+    scrollTimer.current = setTimeout(() => useStore.getState().noteScroll(), 200)
+  }, [])
   const canvasRef = useRef<HTMLDivElement>(null)
   const [drag, setDrag] = useState<Drag>({ mode: 'none' })
   const dragRef = useRef<Drag>({ mode: 'none' })
@@ -444,6 +457,7 @@ export default function Canvas() {
     <div className="canvas-area">
     <div
       ref={wrapRef}
+      onScroll={onScroll}
       className={`canvas-wrap tool-${tool} ${drag.mode === 'pan' ? 'panning' : ''}`}
       tabIndex={0}
       onPointerDown={onCanvasPointerDown}

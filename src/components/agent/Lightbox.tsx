@@ -1,7 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { blobUrl, type ChatAttachment } from '../../agent/api'
-import { ArrowLeft, ArrowRight, FitI, RotateI, X, ZoomIn, ZoomOut } from '../Icons'
+import { ArrowLeft, ArrowRight, Copy, Download, FitI, RotateI, X, ZoomIn, ZoomOut } from '../Icons'
+import { Menu, type MenuItem } from '../Menu'
+import { clearHover, copyImage, hoverCopy, saveImage } from './imageCopy'
 
 export interface LightboxItem {
   sha: string
@@ -21,13 +23,37 @@ export function useBlobUrl(sha: string, mime: string) {
   return url
 }
 
-export function AttachmentThumb({ att, big, onClick }: { att: ChatAttachment | LightboxItem; big?: boolean; onClick?(): void }) {
+export function AttachmentThumb({ att, big, onClick, title }: { att: ChatAttachment | LightboxItem; big?: boolean; onClick?(): void; title?: string }) {
   const url = useBlobUrl(att.sha, att.mime)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
+  useEffect(() => () => clearHover(att.sha), [att.sha])
   return (
-    <button className={`ag-thumb ${big ? 'big' : ''}`} onClick={onClick} title={`${att.name}, click to view`}>
-      {url ? <img src={url} alt={att.name} draggable={false} /> : <span className="ag-thumb-wait" />}
-    </button>
+    <>
+      <button
+        className={`ag-thumb ${big ? 'big' : ''}`}
+        onClick={onClick}
+        title={title ?? `${att.name}: click to view, Ctrl+C to copy`}
+        {...hoverCopy(att)}
+        onContextMenu={(e) => {
+          e.preventDefault()
+          e.stopPropagation()
+          setMenu({ x: e.clientX, y: e.clientY })
+        }}
+      >
+        {url ? <img src={url} alt={att.name} draggable={false} /> : <span className="ag-thumb-wait" />}
+      </button>
+      {menu && <Menu x={menu.x} y={menu.y} items={imageMenu(att, onClick)} onClose={() => setMenu(null)} />}
+    </>
   )
+}
+
+/** Right click on a picture. */
+export function imageMenu(img: LightboxItem, open?: () => void, inViewer = false): MenuItem[] {
+  return [
+    ...(open ? [{ label: 'Open', onClick: open }] : []),
+    { label: 'Copy image', hint: 'Ctrl+C', icon: <Copy />, onClick: () => copyImage(img) },
+    { label: 'Save image as...', hint: inViewer ? 'Ctrl+S' : undefined, icon: <Download />, onClick: () => saveImage(img) },
+  ]
 }
 
 const MIN = 0.1
@@ -55,6 +81,7 @@ export function Lightbox({ items, index, onClose }: { items: LightboxItem[]; ind
   const [rot, setRot] = useState(0)
   const [dragging, setDragging] = useState(false)
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null)
   const stage = useRef<HTMLDivElement>(null)
   const img = useRef<HTMLImageElement>(null)
   const moved = useRef(false)
@@ -101,7 +128,12 @@ export function Lightbox({ items, index, onClose }: { items: LightboxItem[]; ind
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose()
+      if (menu) return
+      const mod = e.ctrlKey || e.metaKey
+      if (mod && e.key.toLowerCase() === 'c' && !window.getSelection()?.toString()) copyImage(item)
+      else if (mod && e.key.toLowerCase() === 's') saveImage(item)
+      else if (mod) return
+      else if (e.key === 'Escape') onClose()
       else if (e.key === 'ArrowRight' && items.length > 1) go(1)
       else if (e.key === 'ArrowLeft' && items.length > 1) go(-1)
       else if (e.key === '+' || e.key === '=') zoomTo(zoom * 1.25)
@@ -154,12 +186,19 @@ export function Lightbox({ items, index, onClose }: { items: LightboxItem[]; ind
   const pct = Math.round(zoom * 100)
 
   return createPortal(
-    <div className="lb">
+    <div
+      className="lb"
+      onContextMenu={(e) => {
+        e.preventDefault()
+        setMenu({ x: e.clientX, y: e.clientY })
+      }}
+    >
       <div className="lb-bar">
         <span className="lb-name" title={item.name}>{item.name}</span>
         {items.length > 1 && <span className="lb-count">{i + 1} / {items.length}</span>}
         {natural && <span className="lb-count">{natural.w} x {natural.h}</span>}
         <div className="spacer" />
+        <button className="lb-btn" onClick={() => saveImage(item)} title="Save image as (Ctrl+S)"><Download size={16} /></button>
         <button className="lb-btn" onClick={onClose} title="Close (Esc)"><X /></button>
       </div>
 
@@ -224,9 +263,12 @@ export function Lightbox({ items, index, onClose }: { items: LightboxItem[]; ind
           <span className="lb-sep" />
           <button className={`lb-btn pct ${zoom === 1 ? 'on' : ''}`} onClick={reset} title="Fit to screen (0)"><FitI size={16} /><span>{pct}%</span></button>
           <button className="lb-btn txt" onClick={() => zoomTo(actualZoom())} title="Actual size (1)">1:1</button>
-          <button className="lb-btn" onClick={() => setRot((v) => v + 90)} title="Rotate (R)"><RotateI size={16} /></button>
+          <button className="lb-btn" onClick={() => setRot((v) => v + 90)} title="Turn the view (R). To send a picture turned, edit it before sending."><RotateI size={16} /></button>
+          <span className="lb-sep" />
+          <button className="lb-btn" onClick={() => copyImage(item)} title="Copy image (Ctrl+C)"><Copy size={16} /></button>
         </div>
       </div>
+      {menu && <Menu x={menu.x} y={menu.y} items={imageMenu(item, undefined, true)} onClose={() => setMenu(null)} />}
     </div>,
     document.body,
   )

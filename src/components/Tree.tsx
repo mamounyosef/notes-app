@@ -54,6 +54,7 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
       { label: n.archived ? `Unarchive ${n.kind}` : `Archive ${n.kind}`, icon: <Archive />, onClick: () => s.archiveNode(n.id, !n.archived) },
       ...(n.kind === 'page'
         ? [
+            { label: 'Open in new tab', hint: 'Ctrl+click', onClick: () => s.newTab(n.id) },
             {
               label: s.workspace.favorites.includes(n.id) ? 'Remove from favorites' : 'Add to favorites',
               icon: <Star />,
@@ -126,7 +127,18 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
             pathOnly ? 'arch-path' : '',
           ].join(' ')}
           style={{ paddingLeft: 6 + depth * 13, ['--node-color' as any]: n.color || 'var(--accent)' }}
-          onClick={() => (archive && n.kind !== 'page' ? toggle() : onActivate(n))}
+          onClick={(e) => {
+            // Ctrl click opens a page in a new tab, behind this one.
+            if (n.kind === 'page' && (e.ctrlKey || e.metaKey)) return void useStore.getState().newTab(n.id, { background: !e.shiftKey })
+            if (archive && n.kind !== 'page') toggle()
+            else onActivate(n)
+          }}
+          onMouseDown={(e) => n.kind === 'page' && e.button === 1 && e.preventDefault()}
+          onAuxClick={(e) => {
+            if (n.kind !== 'page' || e.button !== 1) return
+            e.preventDefault()
+            useStore.getState().newTab(n.id, { background: true })
+          }}
           onDoubleClick={() => !pathOnly && setRenaming(n.id)}
           onContextMenu={(e) => {
             e.preventDefault()
