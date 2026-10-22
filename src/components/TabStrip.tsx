@@ -19,6 +19,10 @@ interface TabView {
   tab: PageTab
   title: string
   path: string
+  /** Where the page lives, shown small beside its title: notebook, then the rest. */
+  where: { notebook: string; rest: string }
+  /** Another tab has the same title, so where it lives is what tells them apart. */
+  dup: boolean
   notebookId: string
   color: string
 }
@@ -42,22 +46,27 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
   const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null)
   const strip = useRef<HTMLDivElement>(null)
 
-  const views: TabView[] = useMemo(
-    () =>
-      tabs.map((tab) => {
-        const path = pathTo(tree, tab.pageId)
-        const notebook = path[0]
-        const page = findNode(tree, tab.pageId)
-        return {
-          tab,
-          title: page?.title || 'Untitled',
-          path: path.map((n) => n.title).join('  ›  '),
-          notebookId: notebook?.id || '',
-          color: tab.color || notebook?.color || (notebook ? hashColor(notebook.id) : 'var(--accent)'),
-        }
-      }),
-    [tabs, tree],
-  )
+  const views: TabView[] = useMemo(() => {
+    const out = tabs.map((tab) => {
+      const path = pathTo(tree, tab.pageId)
+      const notebook = path[0]
+      const page = findNode(tree, tab.pageId)
+      const folders = path.slice(0, -1)
+      return {
+        tab,
+        title: page?.title || 'Untitled',
+        path: path.map((n) => n.title).join('  ›  '),
+        where: { notebook: folders[0]?.title || '', rest: folders.slice(1).map((n) => n.title).join(' / ') },
+        dup: false,
+        notebookId: notebook?.id || '',
+        color: tab.color || notebook?.color || (notebook ? hashColor(notebook.id) : 'var(--accent)'),
+      }
+    })
+    const count = new Map<string, number>()
+    for (const v of out) count.set(v.title.trim().toLowerCase(), (count.get(v.title.trim().toLowerCase()) || 0) + 1)
+    for (const v of out) v.dup = (count.get(v.title.trim().toLowerCase()) || 0) > 1
+    return out
+  }, [tabs, tree])
 
   /* ---------- keys ---------- */
   useEffect(() => {
@@ -202,6 +211,8 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
                 active ? 'active' : '',
                 v.tab.pinned ? 'pinned' : '',
                 v.tab.fresh ? 'fresh' : '',
+                v.where.notebook ? 'has-where' : '',
+                v.dup ? 'dup' : '',
                 joinL ? 'join-l' : '',
                 joinR ? 'join-r' : '',
                 dragId === v.tab.id ? 'dragging' : '',
@@ -257,6 +268,12 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
                 <>
                   <span className="tab-dot" />
                   <span className="tab-title">{v.title}</span>
+                  {v.where.notebook && (
+                    <span className="tab-where">
+                      <span className="tab-where-nb">{v.where.notebook}</span>
+                      {v.where.rest && <span className="tab-where-rest">{v.where.rest}</span>}
+                    </span>
+                  )}
                   {tabs.length > 1 && (
                     <button
                       className="tab-x"

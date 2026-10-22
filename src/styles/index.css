@@ -3303,6 +3303,35 @@ select:focus {
   mask-image: linear-gradient(to right, #000 calc(100% - 14px), transparent);
 }
 
+/* Where the page lives, small and faint beside its title; the section stays longest when space runs out. */
+.tab.has-where { width: 240px; container-type: inline-size; }
+.tab.has-where .tab-title { flex: 0 1 auto; min-width: 36px; max-width: 62%; -webkit-mask-image: none; mask-image: none; }
+.tab-where {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  font-size: 10.5px;
+  line-height: 1;
+  color: color-mix(in srgb, var(--c) 40%, var(--text-faint));
+  opacity: 0.75;
+  white-space: nowrap;
+  overflow: hidden;
+  transition: opacity 0.12s;
+}
+.tab-where-nb, .tab-where-rest { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tab-where-nb { flex: 0 1000 auto; min-width: 2.5em; }
+.tab-where-rest { flex: 0 1 auto; }
+.tab-where-rest::before { content: '/'; margin-right: 4px; opacity: 0.55; }
+.tab:hover .tab-where, .tab.active .tab-where, .tab.dup .tab-where { opacity: 1; }
+@container (max-width: 190px) {
+  .tab-where-nb { display: none; }
+  .tab-where-rest::before { display: none; }
+  .tab-where:not(:has(.tab-where-rest)) .tab-where-nb { display: inline; }
+}
+@container (max-width: 120px) { .tab-where { display: none; } }
+
 .tab-x {
   flex: none;
   width: 18px;
