@@ -215,7 +215,7 @@ function contentToHtml(src: string): string {
       })
       .join('')
   }
-  if (looksHtml(src) && !/\n\s*[-*#>]|\$\$/.test(src)) return src
+  if (looksHtml(src) && !/\n\s*[-*#>]|\$\$/.test(src)) return inlineMarkdownInHtml(src)
   // Highlights written as ==text== become <mark>.
   const { text: noMath, math } = extractMath(src)
   let prepared = noMath.replace(/==([^=\n]+)==/g, '<mark data-color="rgba(229,192,123,0.35)" style="background-color: rgba(229,192,123,0.35); color: inherit">$1</mark>')
@@ -229,6 +229,26 @@ function contentToHtml(src: string): string {
     .replace(/(?:<br>\s*)?(<div data-latex="[^"]*"><\/div>)\s*<\/p>/g, '</p>$1')
     .replace(/<p>\s*<\/p>/g, '')
     .replace(/>\s*\n\s*</g, '><')
+}
+
+/**
+ * Models mix the two forms: <span style="color:...">**word**</span>. Markdown
+ * emphasis left in the text of an HTML fragment becomes real tags; tags, code
+ * and pre blocks are left alone.
+ */
+function inlineMarkdownInHtml(html: string): string {
+  return html
+    .split(/(<pre\b[\s\S]*?<\/pre>|<code\b[\s\S]*?<\/code>|<[^>]*>)/i)
+    .map((part, i) =>
+      i % 2
+        ? part
+        : part
+            .replace(/\*\*(?=\S)([^*\n]*?\S)\*\*/g, '<strong>$1</strong>')
+            .replace(/(^|[^\w_])__(?=\S)([^_\n]*?\S)__(?![\w_])/g, '$1<strong>$2</strong>')
+            .replace(/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, '$1<em>$2</em>')
+            .replace(/~~(?=\S)([^~\n]*?\S)~~/g, '<s>$1</s>'),
+    )
+    .join('')
 }
 
 /** Solid highlight colors become translucent, so the text on them stays readable in every theme. */
