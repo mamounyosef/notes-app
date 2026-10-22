@@ -108,6 +108,10 @@ interface AgentState {
 
   chats: ChatSummary[]
   chat: Chat | null
+  /** Chats with something going on (on screen or not): working, asking you something, or a reply you have not seen. */
+  runs: Record<string, RunInfo>
+  /** True when the chat has a live session (open, running, or waiting for you). */
+  hasSession(id: string): boolean
   syncStatus: { phase: string; error: string | null } | null
   loadChats(): Promise<void>
   openChat(id: string): Promise<void>
@@ -146,7 +150,8 @@ interface AgentState {
 
   send(text?: string): Promise<void>
   answerAsk(answer: string): void
-  stop(): void
+  /** Stops a chat's reply (the open chat by default). */
+  stop(chatId?: string): void
   undo(turnId: string): Promise<void>
   retry(): Promise<void>
   /** Sends a changed version of one of your messages as a new branch from the same point. */
@@ -167,6 +172,15 @@ interface AgentState {
   sendVoice(text: string): Promise<void>
 }
 
+export interface RunInfo {
+  state: 'working' | 'asking' | 'unread' | 'error'
+  title: string
+  /** What it is doing right now (working) or the question being asked. */
+  activity: string
+  /** When the run started. */
+  since: number
+}
+
 /** The model and thinking a reply uses right now: voice mode has its own pick. */
 export function activeModel(s: { prefs: Prefs; voiceOn: boolean }): { model: string; think: boolean } {
   if (!s.voiceOn) return { model: s.prefs.model || DEFAULT_MODEL, think: s.prefs.think }
@@ -181,24 +195,63 @@ function stamp() {
   return lastStamp
 }
 
-let currentReq: string | null = null
-let stopped = false
-/** The agent run in progress, so "send now" can wait for it to wind down. */
-let running: Promise<void> | null = null
-/** Set while "send now" cuts a reply short, so the queue does not pause for it. */
-let jumping = false
-let saveTimer: any = null
+/** One chat's run: chats work in parallel, each with its own reply, question and error. */
+interface Session {
+  chat: Chat
+  busy: boolean
+  live: ChatMessage | null
+  activity: string
+  pendingAsk: AgentState['pendingAsk']
+  error: string | null
+  usage: AgentState['usage']
+  stopped: boolean
+  currentReq: string | null
+  /** The run in progress, so "send now" can wait for it to wind down. */
+  running: Promise<void> | null
+  /** Set while "send now" cuts a reply short, so the queue does not pause for it. */
+  jumping: boolean
+  /** A reply came in (or failed) while you were in another chat. */
+  unread: boolean
+  /** When the current run started, for "working 2 min". */
+  since: number
+  saveTimer: any
+  /** What you were typing here when you switched away. */
+  composer?: { draft: string; attachments: ChatAttachment[]; mentions: Mention[]; quote: string | null }
+}
 
-function persist(chat: Chat) {
-  clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    chatApi.put(chat).catch(() => {})
+const sessions = new Map<string, Session>()
+/** The chat on screen. */
+let openId = ''
+
+/** Fields of the open chat's session that the panel reads from the store. */
+const MIRROR = ['chat', 'busy', 'live', 'activity', 'pendingAsk', 'error', 'usage'] as const
+
+function makeSession(chat: Chat): Session {
+  const s: Session = { chat, busy: false, live: null, activity: '', pendingAsk: null, error: null, usage: lastUsage(chat), stopped: false, currentReq: null, running: null, jumping: false, unread: false, since: 0, saveTimer: null }
+  sessions.set(chat.id, s)
+  return s
+}
+
+function persist(s: Session) {
+  clearTimeout(s.saveTimer)
+  s.saveTimer = setTimeout(() => {
+    s.saveTimer = null
+    chatApi.put(s.chat).catch(() => {})
   }, 400)
 }
 
-function flushPersist(chat: Chat) {
-  clearTimeout(saveTimer)
-  return chatApi.put(chat).catch(() => chat)
+function flushPersist(s: Session) {
+  clearTimeout(s.saveTimer)
+  s.saveTimer = null
+  return chatApi.put(s.chat).catch(() => s.chat)
+}
+
+/** The chat's title, or its first words while it has none yet. */
+function chatLabel(c: Chat) {
+  if (c.titleAt || c.title !== 'New chat') return c.title
+  const first = c.messages.find((m) => m.role === 'user')
+  const words = first?.content.replace(/\s+/g, ' ').trim()
+  return words ? (words.length > 40 ? `${words.slice(0, 40)}...` : words) : c.title
 }
 
 function emptyChat(voice = false): Chat {
@@ -336,17 +389,47 @@ function parseArgs(a: any) {
 /* ---------------- the store ---------------- */
 
 export const useAgent = create<AgentState>((set, get) => {
-  const update = (fn: (c: Chat) => Chat, save = true) => {
-    const c = get().chat
-    if (!c) return
-    const next = { ...fn(c), updatedAt: Date.now() }
-    set({ chat: next })
-    if (save) persist(next)
+  /** Updates a chat's session, and the panel too when that chat is on screen. */
+  const setS = (id: string, patch: Partial<Session>) => {
+    const s = sessions.get(id)
+    if (!s) return
+    Object.assign(s, patch)
+    if (id === openId) {
+      const mirror: Record<string, unknown> = {}
+      for (const k of MIRROR) if (k in patch) mirror[k] = patch[k]
+      if (Object.keys(mirror).length) set(mirror as any)
+    }
+    if ('busy' in patch || 'pendingAsk' in patch || 'activity' in patch || 'error' in patch || 'unread' in patch || 'chat' in patch) refreshRun(id)
+  }
+
+  /** Keeps the list of chats with something going on up to date. */
+  const refreshRun = (id: string) => {
+    const s = sessions.get(id)
+    const runs = get().runs
+    let info: RunInfo | null = null
+    if (s) {
+      const state: RunInfo['state'] | null = s.pendingAsk ? 'asking' : s.busy ? 'working' : s.unread && s.error ? 'error' : s.unread ? 'unread' : null
+      if (state) info = { state, title: chatLabel(s.chat), activity: s.activity, since: s.since }
+    }
+    const old = runs[id]
+    if (!info && !old) return
+    if (info && old && old.state === info.state && old.title === info.title && old.activity === info.activity && old.since === info.since) return
+    const next = { ...runs }
+    if (info) next[id] = info
+    else delete next[id]
+    set({ runs: next })
+  }
+
+  const update = (id: string, fn: (c: Chat) => Chat, save = true) => {
+    const s = sessions.get(id)
+    if (!s) return
+    setS(id, { chat: { ...fn(s.chat), updatedAt: Date.now() } })
+    if (save) persist(s)
   }
 
   /** Adds a message after the last shown one (or after m.parent), and shows it at that fork. */
-  const pushMsg = (m: ChatMessage) =>
-    update((c) => {
+  const pushMsg = (id: string, m: ChatMessage) =>
+    update(id, (c) => {
       const parent = m.parent !== undefined ? m.parent : tipOf(c)
       const key = parent ?? ROOT
       return {
@@ -355,29 +438,30 @@ export const useAgent = create<AgentState>((set, get) => {
         chosen: { ...(c.chosen || {}), [key]: { id: m.id, at: stamp() } },
       }
     })
-  const patchMsg = (id: string, patch: Partial<ChatMessage>) =>
-    update((c) => ({ ...c, messages: c.messages.map((m) => (m.id === id ? { ...m, ...patch, v: (m.v || 0) + 1 } : m)) }))
+  const patchMsg = (id: string, mid: string, patch: Partial<ChatMessage>) =>
+    update(id, (c) => ({ ...c, messages: c.messages.map((m) => (m.id === mid ? { ...m, ...patch, v: (m.v || 0) + 1 } : m)) }))
 
   /** Streams one model reply. Returns it, or null if stopped or failed. */
-  async function streamOnce(chat: Chat, noThink = false): Promise<ChatMessage | null> {
-    const voice = get().voiceOn
+  async function streamOnce(id: string, noThink = false): Promise<ChatMessage | null> {
+    const s = sessions.get(id)!
+    const voice = get().voiceOn && id === openId
     const { model, think } = activeModel(get())
     const reqId = nanoid()
-    currentReq = reqId
+    s.currentReq = reqId
     let looping = false
     let checkedAt = 0
     const msg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', thinking: '', toolCalls: [] }
-    set({ live: msg, activity: 'Thinking' })
+    setS(id, { live: msg, activity: 'Thinking' })
     let thinkStart = 0
     let usage: { prompt: number; output: number; cached: number; ms: number } | null = null
     let thinkEnd = 0
     let frame = 0
     const flush = () => {
       frame = 0
-      set({ live: { ...msg, toolCalls: [...(msg.toolCalls || [])] } })
+      setS(id, { live: { ...msg, toolCalls: [...(msg.toolCalls || [])] } })
     }
-    const off = agentApi.onChunk((id, chunk) => {
-      if (id !== reqId) return
+    const off = agentApi.onChunk((rid, chunk) => {
+      if (rid !== reqId) return
       const m = chunk.message || {}
       if (m.thinking) {
         if (!thinkStart) thinkStart = Date.now()
@@ -407,81 +491,82 @@ export const useAgent = create<AgentState>((set, get) => {
       if (chunk.done) {
         usage = { prompt: Number(chunk.prompt_eval_count) || 0, output: Number(chunk.eval_count) || 0, cached: Number(chunk.prompt_eval_cached_count) || 0, ms: Math.round((chunk.total_duration || 0) / 1e6) }
       }
-      if (!frame) frame = requestAnimationFrame(flush) as any
+      // A chat in the background still streams, but only the one on screen repaints each frame.
+      if (!frame) frame = (id === openId ? requestAnimationFrame(flush) : setTimeout(flush, 250)) as any
     })
     const body: any = {
       model,
-      messages: toRequestMessages(chat, model, voice),
+      messages: toRequestMessages(s.chat, model, voice),
       tools: TOOL_DEFS,
       options: { temperature: 0.4 },
     }
     body.think = noThink ? thinkValue(model, false) : thinkValue(model, think)
     const res = await agentApi.chat(reqId, body)
     off()
-    if (frame) cancelAnimationFrame(frame)
-    currentReq = null
-    if (looping && !stopped) {
-      set({ live: null, activity: 'Reasoning went in circles, answering directly' })
-      return streamOnce(chat, true)
+    if (frame) {
+      cancelAnimationFrame(frame)
+      clearTimeout(frame)
+    }
+    s.currentReq = null
+    if (looping && !s.stopped) {
+      setS(id, { live: null, activity: 'Reasoning went in circles, answering directly' })
+      return streamOnce(id, true)
     }
     if (thinkStart) msg.thinkingMs = (thinkEnd || Date.now()) - thinkStart
     if (!res.ok) {
-      set({ live: null })
-      if (res.aborted || stopped) {
-        if (msg.content || msg.thinking) pushMsg({ ...msg, meta: { stopped: true } })
+      setS(id, { live: null })
+      if (res.aborted || s.stopped) {
+        if (msg.content || msg.thinking) pushMsg(id, { ...msg, meta: { stopped: true } })
         return null
       }
       const err = res.error === 'NO_KEY' ? 'Add your Ollama API key in Settings, AI.' : res.error || 'The model did not answer.'
-      set({ error: err })
+      setS(id, { error: err })
       if (res.error === 'NO_KEY') set({ hasKey: false })
       return null
     }
-    set({ live: null })
+    setS(id, { live: null })
     if (!msg.thinking) delete msg.thinking
     if (!msg.toolCalls?.length) delete msg.toolCalls
     const u = usage as { prompt: number; output: number; cached: number; ms: number } | null
     if (u) {
       msg.meta = { ...(msg.meta || {}), usage: { ...u, model } } as any
-      set({ usage: { ...u, model, at: Date.now() } })
+      setS(id, { usage: { ...u, model, at: Date.now() } })
     }
-    pushMsg(msg)
+    pushMsg(id, msg)
     return msg
   }
 
-  async function runLoop() {
+  async function runLoop(id: string) {
+    const s = sessions.get(id)
+    if (!s) return
     let finished!: () => void
-    running = new Promise<void>((r) => (finished = r))
-    const runChat = get().chat?.id || ''
+    s.running = new Promise<void>((r) => (finished = r))
     try {
-      await runTurn()
+      await runTurn(id)
     } finally {
       finished()
-      running = null
-      afterRun(runChat)
+      s.running = null
+      afterRun(id)
     }
   }
 
-  /** When a reply ends: send the next queued message, or hold the queue if the run did not end on its own. */
+  /** When a reply ends: send the chat's next queued message, or hold its queue if the run did not end on its own. */
   function afterRun(chatId: string) {
-    if (jumping || !chatId || !get().queue.some((q) => q.chatId === chatId)) return
-    const why =
-      get().chat?.id !== chatId ? 'Paused while you were in another chat'
-      : stopped ? 'Paused because you stopped the reply'
-      : get().error ? 'Paused after an error'
-      : ''
+    const s = sessions.get(chatId)
+    if (!s || s.jumping || !get().queue.some((q) => q.chatId === chatId)) return
+    const why = s.stopped ? 'Paused because you stopped the reply' : s.error ? 'Paused after an error' : ''
     if (why) set({ queueHold: { ...get().queueHold, [chatId]: why } })
-    else setTimeout(pump, 350)
+    else setTimeout(() => pump(chatId), 350)
   }
 
-  /** Sends the next queued message of the open chat, if it is free to go. */
-  function pump() {
-    const s = get()
-    const id = s.chat?.id
-    if (!id || s.busy || s.pendingAsk || s.queueHold[id]) return
-    const next = s.queue.find((q) => q.chatId === id)
+  /** Sends a chat's next queued message, if it is free to go (any chat, on screen or not). */
+  function pump(id = openId) {
+    const s = sessions.get(id)
+    if (!s || s.busy || s.pendingAsk || get().queueHold[id]) return
+    const next = get().queue.find((q) => q.chatId === id)
     if (!next) return
-    setQueue(s.queue.filter((q) => q.id !== next.id))
-    sendItem(next, { queued: { waitedMs: Date.now() - next.at } })
+    setQueue(get().queue.filter((q) => q.id !== next.id))
+    sendItem(next, { queued: { waitedMs: Date.now() - next.at } }, id)
   }
 
   function setQueue(queue: Queued[]) {
@@ -505,10 +590,17 @@ export const useAgent = create<AgentState>((set, get) => {
     return { text, attachments, mentions, quote, selection: currentSelection() }
   }
 
-  async function sendItem(item: Omit<Queued, 'id' | 'chatId' | 'at'>, mark: Partial<NonNullable<ChatMessage['meta']>> = {}) {
-    if (!get().chat) get().newChat()
+  /** The open chat's session (a new chat when there is none). */
+  function openSession(): Session {
+    if (!sessions.get(openId)) get().newChat()
+    return sessions.get(openId)!
+  }
+
+  async function sendItem(item: Omit<Queued, 'id' | 'chatId' | 'at'>, mark: Partial<NonNullable<ChatMessage['meta']>> = {}, chatId?: string) {
+    const id = chatId && sessions.has(chatId) ? chatId : openSession().chat.id
+    const s = sessions.get(id)!
     // The first spoken message makes the chat a voice chat (a mark in the history).
-    if (mark.voice && !get().chat?.voice) update((c) => ({ ...c, voice: true }), false)
+    if (mark.voice && !s.chat.voice) update(id, (c) => ({ ...c, voice: true }), false)
     const { text, attachments, mentions, quote, selection: sel } = item
     // Pages pointed at with @ are read now, so the agent sees their content.
     const mentionPages: Record<string, any> = {}
@@ -520,7 +612,8 @@ export const useAgent = create<AgentState>((set, get) => {
     }
     const ctx = buildContext({ mentions, mentionPages, ignoreSelection: true })
     // Later than anything already in the chat, even if it came from a computer whose clock runs ahead.
-    for (const m of get().chat?.messages || []) lastStamp = Math.max(lastStamp, m.at || 0)
+    for (const m of s.chat.messages) lastStamp = Math.max(lastStamp, m.at || 0)
+    const first = !s.chat.messages.length
     const msg: ChatMessage = {
       id: nanoid(14),
       at: stamp(),
@@ -537,37 +630,40 @@ export const useAgent = create<AgentState>((set, get) => {
         ...mark,
       },
     }
-    pushMsg(msg)
-    await runLoop()
+    pushMsg(id, msg)
+    // A new chat shows in the list right away, so you can leave it running and find it again.
+    if (first) flushPersist(s).then(() => get().loadChats())
+    await runLoop(id)
   }
 
-  async function runTurn() {
-    stopped = false
-    turnStart = Date.now()
-    turnTimed = !get().voiceOn
+  async function runTurn(id: string) {
+    const s = sessions.get(id)!
+    s.stopped = false
+    if (id === openId) {
+      turnStart = Date.now()
+      turnTimed = !get().voiceOn
+    }
     const rec = new TurnRecorder()
     const turnId = nanoid(10)
     let firstAssistantId: string | null = null
     let emptyTries = 0
-    set({ busy: true, error: null })
+    setS(id, { busy: true, error: null, since: Date.now(), unread: false })
     const attachmentsOf = () => {
       const map = new Map<string, ChatAttachment>()
-      for (const m of get().chat?.messages || []) for (const a of m.attachments || []) {
+      for (const m of s.chat.messages) for (const a of m.attachments || []) {
         map.set(a.sha, a)
         for (const p of a.pages || []) map.set(p, { ...a, sha: p, mime: 'image/png', kind: 'image' })
       }
       return map
     }
     try {
-      for (let step = 0; step < MAX_STEPS && !stopped; step++) {
-        const chat = get().chat
-        if (!chat) break
+      for (let step = 0; step < MAX_STEPS && !s.stopped; step++) {
         // After an empty answer, ask again without thinking: models that reason at length sometimes never get to the reply.
-        const reply = await streamOnce(chat, emptyTries > 0)
+        const reply = await streamOnce(id, emptyTries > 0)
         if (!reply) break
         // Now and then the model ends with nothing at all: ask again.
         if (!reply.content && !reply.toolCalls?.length) {
-          update((c) => {
+          update(id, (c) => {
             // Its fork goes back to waiting for a reply, instead of falling back to an older version.
             const chosen = Object.fromEntries(Object.entries(c.chosen || {}).map(([k, v]) => [k, v.id === reply.id ? { id: PENDING, at: v.at } : v]))
             return { ...c, messages: c.messages.filter((m) => m.id !== reply.id), chosen }
@@ -575,17 +671,17 @@ export const useAgent = create<AgentState>((set, get) => {
           // Tools already ran this turn: the work is done, a closing line is optional.
           if (firstAssistantId) break
           if (emptyTries++ < 2) {
-            set({ activity: 'Empty answer, asking again' })
+            setS(id, { activity: 'Empty answer, asking again' })
             continue
           }
-          set({ error: `${modelInfo(activeModel(get()).model).name} sent back an empty answer three times. Send again, or try another model.` })
+          setS(id, { error: `${modelInfo(activeModel(get()).model).name} sent back an empty answer three times. Send again, or try another model.` })
           break
         }
         if (!firstAssistantId) firstAssistantId = reply.id
         if (!reply.toolCalls?.length) break
         for (const call of reply.toolCalls) {
-          if (stopped) break
-          set({ activity: labelFor(call.name, activeModel(get()).model) })
+          if (s.stopped) break
+          setS(id, { activity: labelFor(call.name, activeModel(get()).model) })
           const env = {
             rec,
             attachments: attachmentsOf(),
@@ -593,16 +689,17 @@ export const useAgent = create<AgentState>((set, get) => {
             ask: (q: { question: string; options?: string[]; multi?: boolean }) =>
               new Promise<string>((resolve) => {
                 const askMsg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', meta: { ask: { ...q } } }
-                pushMsg(askMsg)
-                set({ pendingAsk: { messageId: askMsg.id, resolve }, activity: 'Waiting for your answer' })
+                pushMsg(id, askMsg)
+                setS(id, { pendingAsk: { messageId: askMsg.id, resolve }, activity: 'Waiting for your answer' })
               }),
           }
           const result = await runTool(call.name, call.arguments || {}, env)
-          if (!READ_ONLY.has(call.name) && rec.changed && result.ok && result.target?.cellId) {
+          // Only the chat on screen moves your view; one in the background leaves it alone.
+          if (id === openId && !READ_ONLY.has(call.name) && rec.changed && result.ok && result.target?.cellId) {
             const st = useStore.getState()
             if (st.page?.id === result.target.pageId) scrollToCell(result.target.cellId, result.target.anchor)
           }
-          pushMsg({
+          pushMsg(id, {
             id: nanoid(14),
             at: stamp(),
             v: 1,
@@ -620,26 +717,27 @@ export const useAgent = create<AgentState>((set, get) => {
         }
       }
     } catch (e) {
-      set({ error: e instanceof Error ? e.message : String(e) })
+      setS(id, { error: e instanceof Error ? e.message : String(e) })
     } finally {
       if (rec.changed && firstAssistantId) {
         keepSnapshot(turnId, rec.snap)
-        patchMsg(firstAssistantId, { meta: { ...(get().chat?.messages.find((m) => m.id === firstAssistantId)?.meta || {}), turnId } })
+        patchMsg(id, firstAssistantId, { meta: { ...(s.chat.messages.find((m) => m.id === firstAssistantId)?.meta || {}), turnId } })
       }
       // A fork still waiting (the reply failed or was stopped) shows its newest version again.
-      if (Object.values(get().chat?.chosen || {}).some((v) => v.id === PENDING))
-        update((c) => {
+      if (Object.values(s.chat.chosen || {}).some((v) => v.id === PENDING))
+        update(id, (c) => {
           const kids = treeOf(c.messages).children
           const chosen = Object.fromEntries(
             Object.entries(c.chosen || {}).map(([k, v]) => [k, v.id === PENDING ? { id: kids.get(k)?.slice(-1)[0]?.id || '', at: stamp() } : v]),
           )
           return { ...c, chosen }
         })
-      set({ busy: false, live: null, activity: '', pendingAsk: null })
-      const c = get().chat
-      if (c) {
-        await flushPersist(c)
-        if (!c.titleAt) nameChat(c).catch(() => {})
+      // Finished while you were elsewhere: flag it in the chat list (unless it was deleted).
+      const gone = !sessions.has(id)
+      setS(id, { busy: false, live: null, activity: '', pendingAsk: null, unread: id !== openId && !s.stopped })
+      if (!gone) {
+        await flushPersist(s)
+        if (!s.chat.titleAt) nameChat(s.chat).catch(() => {})
         get().loadChats()
       }
     }
@@ -671,14 +769,50 @@ export const useAgent = create<AgentState>((set, get) => {
     })
     const title = (res.content || '').replace(/["*#\n]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 70)
     if (!title) return
-    const cur = get().chat
-    if (cur && cur.id === c.id) {
-      update((x) => ({ ...x, title, titleAt: Date.now() }))
+    if (sessions.has(c.id)) {
+      update(c.id, (x) => ({ ...x, title, titleAt: Date.now() }))
     } else {
       const stored = await chatApi.get(c.id)
       if (stored) await chatApi.put({ ...stored, title, titleAt: Date.now() })
     }
     get().loadChats()
+  }
+
+  /** Leaving the open chat: keep what was typed, and let an idle chat go (a running one carries on). */
+  function leave() {
+    const s = sessions.get(openId)
+    if (!s) return
+    const { draft, attachments, mentions, quote } = get()
+    s.composer = draft.trim() || attachments.length || mentions.length || quote ? { draft, attachments, mentions, quote } : undefined
+    const waiting = get().queue.some((q) => q.chatId === openId)
+    if (!s.busy && !s.pendingAsk && !s.composer && !waiting) {
+      if (s.saveTimer) flushPersist(s)
+      sessions.delete(openId)
+    }
+    s.unread = false
+    refreshRun(openId)
+  }
+
+  /** Shows a session in the panel. */
+  function show(s: Session) {
+    openId = s.chat.id
+    s.unread = false
+    const c = s.composer
+    s.composer = undefined
+    set({
+      chat: s.chat,
+      busy: s.busy,
+      live: s.live,
+      activity: s.activity,
+      pendingAsk: s.pendingAsk,
+      error: s.error,
+      usage: s.usage,
+      draft: c?.draft || '',
+      attachments: c?.attachments || [],
+      mentions: c?.mentions || [],
+      quote: c?.quote || null,
+    })
+    refreshRun(openId)
   }
 
   return {
@@ -705,39 +839,59 @@ export const useAgent = create<AgentState>((set, get) => {
 
     chats: [],
     chat: null,
+    runs: {},
     syncStatus: null,
     async loadChats() {
       set({ chats: await chatApi.list() })
     },
     async openChat(id) {
-      if (get().busy) get().stop()
-      const c = await chatApi.get(id)
-      if (c) set({ chat: c, error: null, draft: '', attachments: [], mentions: [], quote: null, usage: lastUsage(c) })
-      // Wait for the run being stopped to wind down before the queue may move.
-      await running
-      pump()
+      if (id === openId && sessions.has(id)) return
+      let s = sessions.get(id)
+      if (!s) {
+        const c = await chatApi.get(id)
+        if (!c) return
+        // It may have started while this was loading.
+        s = sessions.get(id) || makeSession(c)
+      }
+      leave()
+      show(s)
+      pump(id)
     },
     newChat() {
-      if (get().busy) get().stop()
-      set({ chat: emptyChat(get().voiceOn), error: null, live: null, attachments: [], mentions: [], quote: null, usage: null })
+      leave()
+      show(makeSession(emptyChat(get().voiceOn)))
     },
     async deleteChat(id) {
+      const s = sessions.get(id)
+      if (s?.busy) get().stop(id)
+      if (s) clearTimeout(s.saveTimer)
+      sessions.delete(id)
+      refreshRun(id)
+      setQueue(get().queue.filter((q) => q.chatId !== id))
       await chatApi.remove(id)
-      if (get().chat?.id === id) get().newChat()
+      if (openId === id) {
+        openId = ''
+        get().newChat()
+      }
       await get().loadChats()
     },
     async renameChat(id, title) {
-      const c = get().chat?.id === id ? get().chat : await chatApi.get(id)
-      if (!c) return
-      const next = { ...c, title, titleAt: Date.now() }
-      if (get().chat?.id === id) set({ chat: next })
-      await chatApi.put(next)
+      if (sessions.has(id)) {
+        update(id, (c) => ({ ...c, title, titleAt: Date.now() }), false)
+        await flushPersist(sessions.get(id)!)
+      } else {
+        const c = await chatApi.get(id)
+        if (!c) return
+        await chatApi.put({ ...c, title, titleAt: Date.now() })
+      }
       await get().loadChats()
     },
+    hasSession: (id) => sessions.has(id),
 
     mergeRemote(remote) {
-      const cur = get().chat
-      if (!cur || cur.id !== remote.id) return
+      const s = sessions.get(remote.id)
+      if (!s) return
+      const cur = s.chat
       const byId = new Map<string, ChatMessage>()
       for (const m of cur.messages) byId.set(m.id, m)
       for (const m of remote.messages || []) {
@@ -757,7 +911,7 @@ export const useAgent = create<AgentState>((set, get) => {
         }
       }
       if (same && !titled && !picked) return
-      set({ chat: { ...cur, ...(titled ? { title: remote.title, titleAt: remote.titleAt } : {}), messages, chosen } })
+      setS(remote.id, { chat: { ...cur, ...(titled ? { title: remote.title, titleAt: remote.titleAt } : {}), messages, chosen } })
     },
 
     busy: false,
@@ -786,39 +940,44 @@ export const useAgent = create<AgentState>((set, get) => {
       setTimeout(() => (document.querySelector('.agent-input') as HTMLTextAreaElement | null)?.focus(), 50)
     },
 
-    async editMessage(id, text, attachments) {
-      const c = get().chat
-      const old = c?.messages.find((m) => m.id === id)
+    async editMessage(mid, text, attachments) {
+      const s = sessions.get(openId)
+      const c = s?.chat
+      const old = c?.messages.find((m) => m.id === mid)
       const atts = attachments ?? old?.attachments ?? []
-      if (!c || !old || get().busy || (!text.trim() && !atts.length)) return
+      if (!s || !c || !old || s.busy || (!text.trim() && !atts.length)) return
+      const id = openId
       for (const m of c.messages) lastStamp = Math.max(lastStamp, m.at || 0)
       // Same place and selection as before (attachments as edited); the screen context is fresh.
       const ctx = buildContext({ mentions: old.meta?.mentions || [], mentionPages: {}, ignoreSelection: true })
-      pushMsg({
+      pushMsg(id, {
         ...old,
         id: nanoid(14),
         at: stamp(),
         v: 1,
-        parent: parentKey(c, id) === ROOT ? null : parentKey(c, id),
+        parent: parentKey(c, mid) === ROOT ? null : parentKey(c, mid),
         content: text.trim(),
         attachments: atts.length ? atts : undefined,
         meta: { ...old.meta, context: ctx.full, brief: ctx.brief },
       })
-      await runLoop()
+      await runLoop(id)
     },
 
     async regenerate(userMessageId) {
-      const c = get().chat
-      if (!c || get().busy || !c.messages.some((m) => m.id === userMessageId)) return
+      const s = sessions.get(openId)
+      const c = s?.chat
+      if (!s || !c || s.busy || !c.messages.some((m) => m.id === userMessageId)) return
+      const id = openId
       for (const m of c.messages) lastStamp = Math.max(lastStamp, m.at || 0)
       // Show the conversation up to that message; the new reply becomes the chosen one when it arrives.
-      update((x) => ({ ...x, chosen: { ...(x.chosen || {}), [userMessageId]: { id: PENDING, at: stamp() } } }))
-      await runLoop()
+      update(id, (x) => ({ ...x, chosen: { ...(x.chosen || {}), [userMessageId]: { id: PENDING, at: stamp() } } }))
+      await runLoop(id)
     },
 
-    showVersion(parent, id) {
-      if (get().busy) return
-      update((x) => ({ ...x, chosen: { ...(x.chosen || {}), [parent]: { id, at: stamp() } } }))
+    showVersion(parent, mid) {
+      const s = sessions.get(openId)
+      if (!s || s.busy) return
+      update(openId, (x) => ({ ...x, chosen: { ...(x.chosen || {}), [parent]: { id: mid, at: stamp() } } }))
     },
 
     async send(textArg) {
@@ -840,99 +999,101 @@ export const useAgent = create<AgentState>((set, get) => {
     // Messages left from the last session wait until you say go.
     queueHold: Object.fromEntries(loadQueue().map((q) => [q.chatId, 'Left over from last time'])),
     enqueue() {
-      const chatId = get().chat?.id
+      const chatId = sessions.has(openId) ? openId : ''
       if (!chatId) return
       const item = takeComposer()
       if (!item) return
       setQueue([...get().queue, { ...item, id: nanoid(10), chatId, at: Date.now() }])
       // Nothing running (it finished as you typed): go now.
-      if (!get().busy) pump()
+      if (!sessions.get(chatId)?.busy) pump(chatId)
     },
-    async sendNow(id) {
-      const s = get()
-      const queued = id ? s.queue.find((q) => q.id === id) : null
-      if (id && !queued) return
+    async sendNow(qid) {
+      const queued = qid ? get().queue.find((q) => q.id === qid) : null
+      if (qid && !queued) return
       const item = queued || takeComposer()
       if (!item) return
-      if (queued) setQueue(get().queue.filter((q) => q.id !== id))
-      const chatId = s.chat?.id
+      if (queued) setQueue(get().queue.filter((q) => q.id !== qid))
+      const s = openSession()
+      const chatId = s.chat.id
       const cut = s.busy
       if (cut) {
-        jumping = true
-        get().stop()
-        await running
-        jumping = false
+        s.jumping = true
+        get().stop(chatId)
+        await s.running
+        s.jumping = false
       }
-      if (chatId && get().queueHold[chatId]) {
+      if (get().queueHold[chatId]) {
         const { [chatId]: _, ...rest } = get().queueHold
         set({ queueHold: rest })
       }
-      await sendItem(item, cut ? { sentNow: true } : {})
+      await sendItem(item, cut ? { sentNow: true } : {}, chatId)
     },
-    unqueue(id) {
-      setQueue(get().queue.filter((q) => q.id !== id))
+    unqueue(qid) {
+      setQueue(get().queue.filter((q) => q.id !== qid))
     },
-    editQueued(id, text) {
-      setQueue(get().queue.map((q) => (q.id === id ? { ...q, text: text.trim() } : q)).filter((q) => q.text || q.attachments.length))
+    editQueued(qid, text) {
+      setQueue(get().queue.map((q) => (q.id === qid ? { ...q, text: text.trim() } : q)).filter((q) => q.text || q.attachments.length))
     },
-    moveQueued(id, to) {
-      const chatId = get().chat?.id
+    moveQueued(qid, to) {
+      const chatId = openId
       const mine = get().queue.filter((q) => q.chatId === chatId)
-      const from = mine.findIndex((q) => q.id === id)
+      const from = mine.findIndex((q) => q.id === qid)
       if (from < 0) return
       const [it] = mine.splice(from, 1)
       mine.splice(Math.max(0, Math.min(mine.length, to)), 0, it)
       setQueue([...get().queue.filter((q) => q.chatId !== chatId), ...mine])
     },
     resumeQueue() {
-      const chatId = get().chat?.id
+      const chatId = openId
       if (!chatId) return
       const { [chatId]: _, ...rest } = get().queueHold
       set({ queueHold: rest })
-      pump()
+      pump(chatId)
     },
     clearQueue() {
-      const chatId = get().chat?.id
+      const chatId = openId
       setQueue(get().queue.filter((q) => q.chatId !== chatId))
-      const { [chatId || '']: _, ...rest } = get().queueHold
+      const { [chatId]: _, ...rest } = get().queueHold
       set({ queueHold: rest })
     },
 
     answerAsk(answer) {
-      const p = get().pendingAsk
-      if (!p) return
-      const m = get().chat?.messages.find((x) => x.id === p.messageId)
-      if (m?.meta?.ask) patchMsg(m.id, { meta: { ...m.meta, ask: { ...m.meta.ask, answer } } })
-      set({ pendingAsk: null, activity: 'Working' })
+      const s = sessions.get(openId)
+      const p = s?.pendingAsk
+      if (!s || !p) return
+      const m = s.chat.messages.find((x) => x.id === p.messageId)
+      if (m?.meta?.ask) patchMsg(openId, m.id, { meta: { ...m.meta, ask: { ...m.meta.ask, answer } } })
+      setS(openId, { pendingAsk: null, activity: 'Working' })
       // Voice timing counts from the answer, not from the question before it.
       turnStart = Date.now()
       p.resolve(answer)
     },
 
-    stop() {
-      stopped = true
-      if (currentReq) agentApi.abort(currentReq)
-      const p = get().pendingAsk
+    stop(chatId = openId) {
+      const s = sessions.get(chatId)
+      if (!s) return
+      s.stopped = true
+      if (s.currentReq) agentApi.abort(s.currentReq)
+      const p = s.pendingAsk
       if (p) {
-        set({ pendingAsk: null })
+        setS(chatId, { pendingAsk: null })
         p.resolve('(The user stopped the task instead of answering.)')
       }
     },
 
     async undo(turnId) {
       const ok = await undoTurn(turnId)
-      const c = get().chat
-      const m = c?.messages.find((x) => x.meta?.turnId === turnId)
-      if (m) patchMsg(m.id, { meta: { ...m.meta, undone: true } })
-      if (!ok) set({ error: 'That change can no longer be undone on this computer.' })
+      const s = sessions.get(openId)
+      const m = s?.chat.messages.find((x) => x.meta?.turnId === turnId)
+      if (m) patchMsg(openId, m.id, { meta: { ...m.meta, undone: true } })
+      if (!ok) setS(openId, { error: 'That change can no longer be undone on this computer.' })
     },
 
     async retry() {
-      const c = get().chat
-      if (!c || get().busy) return
-      set({ error: null })
-      // Drop a trailing partial reply, then run again from the last message.
-      await runLoop()
+      const s = sessions.get(openId)
+      if (!s || s.busy) return
+      setS(openId, { error: null })
+      await runLoop(openId)
     },
 
     voiceOn: false,
@@ -951,23 +1112,24 @@ export const useAgent = create<AgentState>((set, get) => {
         get().answerAsk(t)
         return
       }
-      const cut = get().busy
+      const s = openSession()
+      const chatId = s.chat.id
+      const cut = s.busy
       if (cut) {
-        jumping = true
-        get().stop()
-        await running
-        jumping = false
+        s.jumping = true
+        get().stop(chatId)
+        await s.running
+        s.jumping = false
       }
-      const chatId = get().chat?.id
-      if (chatId && get().queueHold[chatId]) {
+      if (get().queueHold[chatId]) {
         const { [chatId]: _, ...rest } = get().queueHold
         set({ queueHold: rest })
       }
-      set({ error: null })
+      setS(chatId, { error: null })
       // Resolves once the message is in the chat, not when the reply is done:
       // the next thing said must never wait behind a whole reply.
-      sendItem({ text: t, attachments: [], mentions: [], quote: null, selection: currentSelection() }, { voice: true, ...(cut ? { sentNow: true } : {}) }).catch((e) =>
-        set({ error: e instanceof Error ? e.message : String(e) }),
+      sendItem({ text: t, attachments: [], mentions: [], quote: null, selection: currentSelection() }, { voice: true, ...(cut ? { sentNow: true } : {}) }, chatId).catch((e) =>
+        setS(chatId, { error: e instanceof Error ? e.message : String(e) }),
       )
     },
   }

@@ -7,10 +7,11 @@ import { renderMarkdown } from '../../agent/render'
 import { pathTo, useStore } from '../../store'
 import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
 import Composer from './Composer'
+import { RunMark, SessionStrip, runLine } from './Sessions'
 import { AttachmentTray, useAddFiles } from './AttachmentTray'
 import { ContextRing, ContextInspector } from './ContextMeter'
 import {
-  AssistantMark, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock, AudioLines, Mic,
+  AssistantMark, StopI, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock, AudioLines, Mic,
 } from '../Icons'
 import { waitText } from './QueueDeck'
 import VoiceDock, { HearingBubble, VoiceEmpty } from '../voice/VoiceDock'
@@ -695,7 +696,15 @@ function HistoryView({ onClose }: { onClose(): void }) {
   const deleteChat = useAgent((s) => s.deleteChat)
   const renameChat = useAgent((s) => s.renameChat)
   const sync = useAgent((s) => s.syncStatus)
+  const runs = useAgent((s) => s.runs)
   const [q, setQ] = useState('')
+  const [now, setNow] = useState(Date.now())
+  const anyWorking = Object.values(runs).some((r) => r.state === 'working')
+  useEffect(() => {
+    if (!anyWorking) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [anyWorking])
   const [editing, setEditing] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const list = chats.filter((c) => !q || `${c.title} ${c.preview}`.toLowerCase().includes(q.toLowerCase()))
@@ -709,11 +718,12 @@ function HistoryView({ onClose }: { onClose(): void }) {
           const day = relDay(c.updatedAt)
           const head = day !== lastDay ? <div className="ag-day">{day}</div> : null
           lastDay = day
+          const run = runs[c.id]
           return (
             <React.Fragment key={c.id}>
               {head}
               <div
-                className={`ag-chat-row ${c.id === current ? 'active' : ''}`}
+                className={`ag-chat-row ${c.id === current ? 'active' : ''} ${run ? `run-${run.state}` : ''}`}
                 onClick={() => {
                   if (editing) return
                   openChat(c.id)
@@ -739,14 +749,31 @@ function HistoryView({ onClose }: { onClose(): void }) {
                 ) : (
                   <div className="ag-chat-main">
                     <div className="ag-chat-title">
+                      {run && <RunMark state={run.state} />}
                       {c.voice && <AudioLines size={11} className="ag-chat-voice" />}
-                      {c.title}
+                      <span className="ag-chat-name">{run?.title || c.title}</span>
                       <span className="ag-chat-time">{chatTime(c.updatedAt)}</span>
                     </div>
-                    <div className="ag-chat-prev">{c.preview || `${c.count} messages`}</div>
+                    {run ? (
+                      <div className={`ag-chat-prev run ${run.state}`}>{runLine(run, now)}</div>
+                    ) : (
+                      <div className="ag-chat-prev">{c.preview || `${c.count} messages`}</div>
+                    )}
                   </div>
                 )}
                 <div className="ag-chat-btns">
+                  {run?.state === 'working' && (
+                    <button
+                      className="ag-icon-btn"
+                      title="Stop this chat"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        useAgent.getState().stop(c.id)
+                      }}
+                    >
+                      <StopI size={11} />
+                    </button>
+                  )}
                   <button
                     className="ag-icon-btn"
                     title="Rename"
@@ -839,7 +866,7 @@ export default function AgentPanel() {
     const off2 = chatApi.onEvent(async (ev) => {
       useAgent.getState().loadChats()
       const st = useAgent.getState()
-      if (ev?.id && st.chat?.id === ev.id) {
+      if (ev?.id && st.hasSession(ev.id)) {
         const c = await chatApi.get(ev.id)
         // Merge, never replace: a message sent while this was loading must survive.
         if (c) useAgent.getState().mergeRemote(c)
@@ -944,6 +971,7 @@ export default function AgentPanel() {
         </header>
 
         {showCtx && <ContextInspector onClose={() => setShowCtx(false)} />}
+        {!showHistory && <SessionStrip />}
         {showHistory ? (
           <HistoryView onClose={() => setShowHistory(false)} />
         ) : hasKey === false ? (

@@ -7,6 +7,7 @@ import { nudgeInkSize } from './components/InkSizeControl'
 import Tree, { CellCount } from './components/Tree'
 import SearchModal from './components/SearchModal'
 import TabStrip from './components/TabStrip'
+import { useRunsSummary } from './components/agent/Sessions'
 import SettingsModal from './components/SettingsModal'
 import LinkModal from './components/LinkModal'
 import ArtifactModal from './components/ArtifactModal'
@@ -546,13 +547,7 @@ export default function App() {
           <button title="Zoom in (Ctrl and plus)" onClick={() => useStore.getState().setZoom(zoom + settings.zoomStep)}><ZoomIn size={15} /></button>
         </div>
         <VoiceEngineChip />
-        <button
-          className={`tb-btn agent-toggle ${agentOpen ? 'on' : ''}`}
-          title="Assistant (Ctrl+J). Ctrl+L asks about the selection."
-          onClick={() => useAgent.getState().toggle()}
-        >
-          <AssistantMark size={17} /> Assistant
-        </button>
+        <AssistantButton open={agentOpen} />
         <button className="tb-btn" title="Settings (Ctrl+,)" onClick={() => setShowSettings(true)}><Gear /></button>
         {isDesktop && (
           <>
@@ -681,6 +676,26 @@ function Resizer({
         e.preventDefault()
       }}
     />
+  )
+}
+
+/** The Assistant button, with a count of chats waiting on you and a ring while any chat works. */
+function AssistantButton({ open }: { open: boolean }) {
+  const { attention, working, asking } = useRunsSummary(!open)
+  const parts = [
+    asking ? `${asking} with a question for you` : '',
+    attention - asking ? `${attention - asking} with news` : '',
+    working ? `${working} working` : '',
+  ].filter(Boolean)
+  return (
+    <button
+      className={`tb-btn agent-toggle ${open ? 'on' : ''} ${working ? 'working' : ''}`}
+      title={`Assistant (Ctrl+J). Ctrl+L asks about the selection.${parts.length ? `\nChats: ${parts.join(', ')}` : ''}`}
+      onClick={() => useAgent.getState().toggle()}
+    >
+      <AssistantMark size={17} /> Assistant
+      {attention > 0 && <span className={`agent-badge ${asking ? 'asking' : ''}`}>{attention}</span>}
+    </button>
   )
 }
 

@@ -1692,7 +1692,7 @@ window.addEventListener('beforeunload', () => {
 function captureTab(): PageTab[] {
   const { tabs, activeTab, activePageId, navBack, navForward, zoom } = useStore.getState()
   return tabs.map((t) => {
-    if (t.id !== activeTab) return t.fresh ? { ...t, fresh: false } : t
+    if (t.id !== activeTab) return t
     const spot = !tabOpening && t.pageId === activePageId ? here(t.pageId, zoom) : t
     return { ...t, left: spot.left, top: spot.top, back: navBack, forward: navForward }
   })
@@ -1715,7 +1715,8 @@ async function activateTab(id: string) {
   const st = useStore.getState()
   const t = st.tabs.find((x) => x.id === id)
   if (!t) return
-  useStore.setState({ activeTab: id, navBack: t.back, navForward: t.forward })
+  // Visited: no longer a fresh background tab.
+  useStore.setState({ activeTab: id, navBack: t.back, navForward: t.forward, tabs: st.tabs.map((x) => (x.id === id && x.fresh ? { ...x, fresh: false } : x)) })
   saveTabsSoon()
   if (st.activePageId !== t.pageId) {
     tabOpening++
