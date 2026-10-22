@@ -116,6 +116,9 @@ interface AgentState {
   loadChats(): Promise<void>
   openChat(id: string): Promise<void>
   newChat(): void
+  /** Browser like history of the chats opened in the panel (mouse side buttons over it). */
+  chatBack(): Promise<void>
+  chatForward(): Promise<void>
   deleteChat(id: string): Promise<void>
   renameChat(id: string, title: string): Promise<void>
   /** Folds a copy from disk or the cloud into the open chat without losing anything held only in memory. */
@@ -223,6 +226,9 @@ interface Session {
 const sessions = new Map<string, Session>()
 /** The chat on screen. */
 let openId = ''
+/** Chats opened before and after the open one; '' stands for a new, empty chat. */
+let backIds: string[] = []
+let forwardIds: string[] = []
 
 /** Fields of the open chat's session that the panel reads from the store. */
 const MIRROR = ['chat', 'busy', 'live', 'activity', 'pendingAsk', 'error', 'usage'] as const
@@ -800,6 +806,52 @@ export const useAgent = create<AgentState>((set, get) => {
     refreshRun(openId)
   }
 
+  /** The open chat as a history entry: '' when it is new and empty. */
+  function here() {
+    const s = sessions.get(openId)
+    return s && s.chat.messages.length ? openId : ''
+  }
+
+  /** A real move to another chat: the one left goes on the back list. */
+  function record(from: string) {
+    if (from === here()) return
+    if (backIds[backIds.length - 1] !== from) backIds = [...backIds, from].slice(-100)
+    forwardIds = []
+  }
+
+  /** Opens a saved chat without touching the history. False when it is gone. */
+  async function openStored(id: string) {
+    let s = sessions.get(id)
+    if (!s) {
+      const c = await chatApi.get(id)
+      if (!c) return false
+      // It may have started while this was loading.
+      s = sessions.get(id) || makeSession(c)
+    }
+    leave()
+    show(s)
+    pump(id)
+    return true
+  }
+
+  /** Back or forward: takes the next entry from `from`, puts the chat left on `to`. Skips deleted chats. */
+  async function step(from: string[], to: string[]) {
+    const cur = here()
+    while (from.length) {
+      const id = from.pop()!
+      if (id === cur) continue
+      if (id) {
+        if (!(await openStored(id))) continue
+      } else {
+        leave()
+        show(makeSession(emptyChat(get().voiceOn)))
+      }
+      if (to[to.length - 1] !== cur) to.push(cur)
+      if (to.length > 100) to.shift()
+      return
+    }
+  }
+
   /** Shows a session in the panel. */
   function show(s: Session) {
     openId = s.chat.id
@@ -854,20 +906,20 @@ export const useAgent = create<AgentState>((set, get) => {
     },
     async openChat(id) {
       if (id === openId && sessions.has(id)) return
-      let s = sessions.get(id)
-      if (!s) {
-        const c = await chatApi.get(id)
-        if (!c) return
-        // It may have started while this was loading.
-        s = sessions.get(id) || makeSession(c)
-      }
-      leave()
-      show(s)
-      pump(id)
+      const from = here()
+      if (await openStored(id)) record(from)
     },
     newChat() {
+      const from = here()
       leave()
       show(makeSession(emptyChat(get().voiceOn)))
+      record(from)
+    },
+    async chatBack() {
+      await step(backIds, forwardIds)
+    },
+    async chatForward() {
+      await step(forwardIds, backIds)
     },
     async deleteChat(id) {
       const s = sessions.get(id)
@@ -877,6 +929,8 @@ export const useAgent = create<AgentState>((set, get) => {
       refreshRun(id)
       setQueue(get().queue.filter((q) => q.chatId !== id))
       await chatApi.remove(id)
+      backIds = backIds.filter((x) => x !== id)
+      forwardIds = forwardIds.filter((x) => x !== id)
       if (openId === id) {
         openId = ''
         get().newChat()

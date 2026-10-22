@@ -190,6 +190,13 @@ export default function App() {
       if (e.button !== 3 && e.button !== 4) return
       e.preventDefault()
       e.stopPropagation()
+      // Over the assistant it moves through the chats opened there, like a browser.
+      if ((e.target as Element | null)?.closest?.('.agent-panel')) {
+        const ag = useAgent.getState()
+        if (e.button === 3) ag.chatBack()
+        else ag.chatForward()
+        return
+      }
       const st = useStore.getState()
       if (e.button === 3) st.goBack()
       else st.goForward()
