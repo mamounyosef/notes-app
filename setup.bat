@@ -91,6 +91,8 @@ echo.
 echo   Done. Starting Notes.
 if exist "release\win-unpacked\Notes.exe" (
   start "" "%~dp0release\win-unpacked\Notes.exe"
+) else if defined NOTES_QUIET (
+  powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -WindowStyle Hidden -FilePath '%~dp0run-notes.bat'"
 ) else (
   start "" "%~dp0run-notes.bat"
 )
@@ -110,6 +112,6 @@ REM Started from Settings: Notes was closed for the update, so open what is ther
 if exist "release\win-unpacked\Notes.exe" (
   start "" "%~dp0release\win-unpacked\Notes.exe"
 ) else (
-  start "" "%~dp0run-notes.bat"
+  powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -WindowStyle Hidden -FilePath '%~dp0run-notes.bat'"
 )
 exit /b 1

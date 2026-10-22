@@ -12,7 +12,8 @@ $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object $mine
 if (-not $procs) { exit 0 }
 Write-Host '  Closing Notes so it can be updated.'
 $procs | ForEach-Object { [void]$_.CloseMainWindow() }
-Start-Sleep -Seconds 3
+# Give it time to save (the app waits up to 5 seconds for that), then stop what is left.
+for ($i = 0; $i -lt 16 -and (Get-Process -ErrorAction SilentlyContinue | Where-Object $mine); $i++) { Start-Sleep -Milliseconds 500 }
 Get-Process -ErrorAction SilentlyContinue | Where-Object $mine | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
 exit 0
