@@ -1,5 +1,6 @@
 import { marked } from 'marked'
 import TurndownService from 'turndown'
+import { toBase64 } from '../widgets/widget'
 
 /**
  * Markdown coming from an LLM chat carries LaTeX in four shapes:
@@ -89,12 +90,24 @@ export function looksLikeMarkdown(text: string) {
     /\$\$?[^$\n]+\$\$?/,
     /\\\(|\\\[|\\begin\{/,
     /^---$/m,
+    /^[ \t]*<svg\b/im,
   ].some((re) => re.test(text))
 }
 
+/** A raw <svg> drawing on its own lines (pasted from a chat). The editor has no svg node, so it would lose all but its text. */
+const RAW_SVG = /^[ \t]*<svg\b[\s\S]*?<\/svg>[ \t]*$/gim
+const SVG_PLACEHOLDER = (i: number) => `xx0svg${i}xx0`
+
 export function markdownToHtml(md: string) {
+  // Drawings first, so nothing inside them is read as Markdown or math: each becomes an HTML widget block.
+  const svgs: string[] = []
+  md = md.replace(RAW_SVG, (m) => `\n\n${SVG_PLACEHOLDER(svgs.push(m.trim()) - 1)}\n\n`)
   const { text, math } = extractMath(md)
   let html = marked.parse(text, { async: false, gfm: true, breaks: true }) as string
+  svgs.forEach((svg, idx) => {
+    const block = `<div data-html-embed="" data-html-src="${toBase64(svg)}">HTML Widget</div>`
+    html = html.replace(new RegExp(`(?:<p>\\s*)?${SVG_PLACEHOLDER(idx)}(?:\\s*</p>)?`), () => block)
+  })
   math.forEach((m, idx) => {
     const tag = m.display
       ? `<div data-latex="${escapeAttr(m.latex)}"></div>`
