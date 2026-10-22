@@ -3,7 +3,6 @@
  * the chat's model pick, so the laptop and the desktop each keep their own.
  */
 import { useCallback, useEffect, useState } from 'react'
-import { MODELS } from '../agent/models'
 
 export interface VoicePrefs {
   /** A Kokoro voice id, e.g. "af_heart". */
@@ -24,8 +23,6 @@ export interface VoicePrefs {
   volume: number
   /** The model thinks before answering: more careful, but a much longer silence. */
   think: boolean
-  /** The model that answers in voice mode; empty means "the same as the chat". */
-  model: string
   /** Highlight, in the chat, the sentence being spoken right now. */
   follow: boolean
 }
@@ -40,7 +37,6 @@ export const DEFAULT_VOICE_PREFS: VoicePrefs = {
   sounds: true,
   volume: 0.9,
   think: false,
-  model: '',
   follow: true,
 }
 
@@ -65,7 +61,6 @@ export function coerceVoicePrefs(raw: unknown): VoicePrefs {
     sounds: bool(r.sounds, d.sounds),
     volume: Math.round(num(r.volume, 0, 1, d.volume) * 100) / 100,
     think: bool(r.think, d.think),
-    model: typeof r.model === 'string' && MODELS.some((m) => m.id === r.model) ? r.model : '',
     follow: bool(r.follow, d.follow),
   }
 }

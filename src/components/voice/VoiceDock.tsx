@@ -107,7 +107,7 @@ export default function VoiceDock({ voice, onSettings }: { voice: VoiceConversat
     <div className="vd" style={{ ['--vd-tint' as any]: tint }}>
       <div className="vd-card">
         <div className="vd-top">
-          <ModelPicker label="Voice" value={prefs.model || chatModel} onPick={(id) => setPrefs({ model: id })} voiceThink={prefs.think} />
+          <ModelPicker label="Voice" value={chatModel} onPick={(id) => useAgent.getState().setPrefs({ model: id })} voiceThink={prefs.think} />
           <button
             className={`vd-chip ${prefs.think ? 'on' : ''}`}
             onClick={() => setPrefs({ think: !prefs.think })}

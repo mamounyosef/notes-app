@@ -31,7 +31,7 @@ export default function VoiceSettings() {
   const [folderMsg, setFolderMsg] = useState('')
   const speeds = useSpeeds()
   const test = useSpeedTest()
-  const model = prefs.model || chatModel
+  const model = chatModel
 
   const loadVoices = () => {
     setVoicesError(null)
@@ -231,7 +231,7 @@ export default function VoiceSettings() {
 
       <h3>Voice model</h3>
       <div className="empty-hint" style={{ padding: '0 0 8px' }}>
-        Which model answers in voice mode: separate from the chat's model, and remembered on this computer. The seconds are how long each one takes to start talking,
+        Voice mode uses the chat's model, so a conversation carries on with the same one; picking one here changes it for the chat too. The seconds are how long each one takes to start talking,
         measured here by the speed test and by every voice reply. Times change with how busy the cloud is.
       </div>
       <Toggle on={prefs.think} onChange={(v) => update({ think: v })} title="Think before answering" desc="More careful answers, but a much longer silence before it speaks. Both times are shown; the highlighted column is what you will get." />
@@ -258,7 +258,7 @@ export default function VoiceSettings() {
         {MODELS.map((m) => {
           const sel = m.id === model
           return (
-            <button key={m.id} className={`vs-model ${sel ? 'sel' : ''}`} onClick={() => update({ model: m.id })}>
+            <button key={m.id} className={`vs-model ${sel ? 'sel' : ''}`} onClick={() => useAgent.getState().setPrefs({ model: m.id })}>
               <span className="grow">
                 <b>{m.name}</b> <em className={`mp-prov ${m.provider}`}>{PROVIDER_LABEL[m.provider]}</em>
                 <small>{paramsLabel(m)}{m.note ? ` · ${m.note}` : ''}</small>
@@ -270,7 +270,6 @@ export default function VoiceSettings() {
           )
         })}
       </div>
-      {!prefs.model && <div className="empty-hint" style={{ paddingTop: 6 }}>No voice model picked yet: voice mode uses the chat's model until you pick one.</div>}
     </div>
   )
 }

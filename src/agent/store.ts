@@ -185,7 +185,8 @@ export interface RunInfo {
 export function activeModel(s: { prefs: Prefs; voiceOn: boolean }): { model: string; think: boolean } {
   if (!s.voiceOn) return { model: s.prefs.model || DEFAULT_MODEL, think: s.prefs.think }
   const v = readVoicePrefs()
-  return { model: v.model || s.prefs.model || DEFAULT_MODEL, think: v.think }
+  // Voice continues the conversation on the chat's own model; only thinking is set for voice.
+  return { model: s.prefs.model || DEFAULT_MODEL, think: v.think }
 }
 
 let lastStamp = 0

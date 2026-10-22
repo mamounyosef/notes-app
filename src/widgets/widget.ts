@@ -387,7 +387,7 @@ const RUNTIME = String.raw`(async function () {
   }
   try { if (document.fonts) await document.fonts.ready } catch (e) {}
   await new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r) }) });
-  var last = -1, lastW = -1;
+  var last = -1, lastW = -1, lastCw = -1;
   // The real extent of what is drawn. Page boxes that stretch to the frame
   // (height:100%, 100vh, centering) would report the frame's own size, so
   // for the moment of measuring they go back to fitting their content.
@@ -430,17 +430,35 @@ const RUNTIME = String.raw`(async function () {
       h = Math.max(bottom, bodyBottom) - Math.min(0, top);
       w = Math.max(right, Math.min(bodyRight, right + 40)) - Math.min(0, left);
     }
+    // How wide the content is when nothing stretches it (0: it fills whatever
+    // room it gets: a percentage width, a chart, an svg without a size).
+    var cw = 0, flexible = false;
+    for (i = 0; i < all.length && i < 6000 && !flexible; i++) {
+      el = all[i]; nm = el.nodeName;
+      if (nm === 'SCRIPT' || nm === 'STYLE') continue;
+      if (/^(canvas|iframe|video)$/i.test(nm)) { flexible = true; break }
+      try {
+        var sm = el.computedStyleMap(), sw = sm.get('width'), mx = sm.get('max-width');
+        if (sw && sw.unit === 'percent' && !(mx && mx.unit === 'px')) flexible = true;
+        else if (nm.toLowerCase() === 'svg' && !el.getAttribute('width') && String(sw) === 'auto') flexible = true;
+      } catch (e) { flexible = true }
+    }
+    if (!flexible) {
+      set(de, 'width', 'max-content'); set(b, 'width', 'max-content');
+      var mr = b.getBoundingClientRect();
+      cw = mr.width + (parseFloat(bs.marginLeft) || 0) + (parseFloat(bs.marginRight) || 0);
+    }
     for (i = undo.length - 1; i >= 0; i--) { var u = undo[i]; if (u[2]) u[0].style.setProperty(u[1], u[2], u[3]); else u[0].style.removeProperty(u[1]) }
     // The style changes above were only for measuring: not news.
     if (mo) mo.takeRecords();
-    return { h: Math.ceil(h), w: Math.ceil(w) };
+    return { h: Math.ceil(h), w: Math.ceil(w), cw: Math.ceil(cw) };
   }
   var pending = 0;
   function send() {
     pending = 0;
     var m = measure(), h = Math.max(20, m.h), w = m.w;
-    window.__widget = { done: true, h: h, w: w, errors: errs.slice() };
-    if (Math.abs(h - last) > 2 || Math.abs(w - lastW) > 2) { last = h; lastW = w; post({ type: 'size', h: h, w: w, vw: document.documentElement.clientWidth }) }
+    window.__widget = { done: true, h: h, w: w, cw: m.cw, errors: errs.slice() };
+    if (Math.abs(h - last) > 2 || Math.abs(w - lastW) > 2 || Math.abs(m.cw - lastCw) > 2) { last = h; lastW = w; lastCw = m.cw; post({ type: 'size', h: h, w: w, cw: m.cw, vw: document.documentElement.clientWidth }) }
   }
   function soon() { if (!pending) pending = requestAnimationFrame(send) }
   send();

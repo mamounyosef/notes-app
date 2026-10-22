@@ -70,8 +70,10 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
    * for that much room (the cell widens to make it); past that, or when you
    * set a width, the content is scaled down to fit, like a picture.
    */
-  const boxW = drag?.w ?? storedW ?? null
   const natW = natural && natural.w > 0 ? natural.w : 0
+  // A width saved by the old Center button (the whole cell) on content narrower than that: fit the content instead.
+  const staleW = storedW != null && natW > 0 && natW < storedW - 8 && room > 0 && storedW >= room - 4
+  const boxW = drag?.w ?? (staleW ? null : storedW) ?? null
   const wantW = boxW ?? (natW ? Math.min(natW, MAX_NATURAL_W) : null)
   const avail = Math.max(120, boxW ?? (room || 600))
   const scale = natW > avail + 2 ? Math.max(MIN_SCALE, avail / natW) : 1
@@ -85,11 +87,8 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
   if (textAlign === 'right') justifyContent = 'flex-end'
 
   const setAlign = (align: 'left' | 'center' | 'right') => {
-    const patch: Record<string, any> = { textAlign: align }
-    if (!node.attrs.width && wrapRef.current) {
-      patch.width = wrapRef.current.offsetWidth
-    }
-    updateAttributes(patch)
+    // Only the alignment: the block keeps fitting its content, so it can move inside the cell.
+    updateAttributes({ textAlign: align })
   }
 
   useEffect(() => {
@@ -138,8 +137,11 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
         // fills whatever room it gets stays flexible (0). It only ever grows, so
         // content that is always a little wider than its frame cannot creep.
         const fixed = typeof d.vw === 'number' && w > d.vw + 2
+        // Content narrower than its frame (and not made to fill it) asks only for its own width.
+        const cw = Math.max(0, Math.ceil(Number(d.cw) || 0))
+        const narrow = !fixed && cw > 0 && typeof d.vw === 'number' && cw < d.vw - 8
         setNatural((cur) => {
-          const nw = fixed && (!cur || w > cur.w + 8) ? w : cur?.w ?? 0
+          const nw = fixed && (!cur || w > cur.w + 8) ? w : narrow ? cw : cur?.w ?? 0
           return cur && Math.abs(cur.h - h) < 2 && nw === cur.w ? cur : { w: nw, h }
         })
       }
@@ -228,7 +230,7 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     <NodeViewWrapper className="html-embed-wrapper" style={{ display: 'flex', justifyContent, width: '100%' }} data-drag-handle>
       <div
         ref={wrapRef}
-        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${active ? 'html-embed-selected' : ''} ${drag ? 'resizing' : ''}`}
+        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${(boxW ?? wantW ?? Infinity) < 260 ? 'html-embed-narrow' : ''} ${active ? 'html-embed-selected' : ''} ${drag ? 'resizing' : ''}`}
         style={{
           width: boxW ? `${boxW}px` : wantW ? `${wantW}px` : '100%',
           // Content up to MAX_NATURAL_W asks for its room, so the cell widens to show it at full size.

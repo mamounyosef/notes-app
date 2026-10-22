@@ -2162,6 +2162,9 @@ select:focus {
 .html-embed-figure .html-embed-label {
   flex: none;
 }
+/* A block as narrow as its content: just the buttons, so the bar fits over it. */
+.html-embed-narrow .html-embed-label,
+.html-embed-narrow .html-embed-bar > svg { display: none; }
 .html-embed-loading {
   display: grid;
   place-items: center;
