@@ -387,16 +387,69 @@ const RUNTIME = String.raw`(async function () {
   }
   try { if (document.fonts) await document.fonts.ready } catch (e) {}
   await new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r) }) });
-  var last = -1;
-  function send() {
-    var b = document.body, h = Math.ceil(Math.max(b.scrollHeight, b.getBoundingClientRect().height)), w = Math.ceil(document.documentElement.scrollWidth);
-    window.__widget = { done: true, h: h, w: w, errors: errs.slice() };
-    if (Math.abs(h - last) > 2) { last = h; post({ type: 'size', h: h, w: w }) }
+  var last = -1, lastW = -1;
+  // The real extent of what is drawn. Page boxes that stretch to the frame
+  // (height:100%, 100vh, centering) would report the frame's own size, so
+  // for the moment of measuring they go back to fitting their content.
+  var mo = null;
+  function measure() {
+    var b = document.body, de = document.documentElement, vh = de.clientHeight;
+    var undo = [];
+    function set(el, prop, v) { undo.push([el, prop, el.style.getPropertyValue(prop), el.style.getPropertyPriority(prop)]); el.style.setProperty(prop, v, 'important') }
+    set(de, 'height', 'auto'); set(de, 'min-height', '0');
+    set(b, 'height', 'auto'); set(b, 'min-height', '0');
+    var all = b.getElementsByTagName('*'), i, el, cs, nm;
+    for (i = 0; i < all.length && i < 6000; i++) {
+      el = all[i]; nm = el.nodeName;
+      if (nm === 'SCRIPT' || nm === 'STYLE') continue;
+      cs = getComputedStyle(el);
+      if (cs.position === 'absolute' || cs.position === 'fixed') continue;
+      if (Math.abs(parseFloat(cs.minHeight) - vh) < 2) set(el, 'min-height', '0');
+      if (Math.abs(parseFloat(cs.height) - vh) < 2 && el.children.length && !/^(svg|canvas|img|video|iframe)$/i.test(nm)) set(el, 'height', 'auto');
+    }
+    var top = Infinity, left = Infinity, bottom = 0, right = 0, sx = window.scrollX, sy = window.scrollY;
+    for (i = 0; i < all.length && i < 6000; i++) {
+      el = all[i]; nm = el.nodeName;
+      if (nm === 'SCRIPT' || nm === 'STYLE' || nm === 'LINK' || nm === 'META') continue;
+      var r = el.getBoundingClientRect();
+      if (r.width < 1 && r.height < 1) continue;
+      cs = getComputedStyle(el);
+      if (cs.display === 'none' || cs.position === 'fixed' || cs.visibility === 'hidden') continue;
+      if (r.top + sy < top) top = r.top + sy;
+      if (r.left + sx < left) left = r.left + sx;
+      if (r.bottom + sy > bottom) bottom = r.bottom + sy;
+      if (r.right + sx > right) right = r.right + sx;
+    }
+    var br = b.getBoundingClientRect(), bs = getComputedStyle(b);
+    var bodyBottom = br.bottom + sy + (parseFloat(bs.marginBottom) || 0);
+    var bodyRight = br.right + sx + (parseFloat(bs.marginRight) || 0);
+    var h, w;
+    if (top === Infinity) { h = bodyBottom; w = de.scrollWidth }
+    else {
+      // Content pushed above or left of the frame (centered and overflowing) still counts.
+      h = Math.max(bottom, bodyBottom) - Math.min(0, top);
+      w = Math.max(right, Math.min(bodyRight, right + 40)) - Math.min(0, left);
+    }
+    for (i = undo.length - 1; i >= 0; i--) { var u = undo[i]; if (u[2]) u[0].style.setProperty(u[1], u[2], u[3]); else u[0].style.removeProperty(u[1]) }
+    // The style changes above were only for measuring: not news.
+    if (mo) mo.takeRecords();
+    return { h: Math.ceil(h), w: Math.ceil(w) };
   }
+  var pending = 0;
+  function send() {
+    pending = 0;
+    var m = measure(), h = Math.max(20, m.h), w = m.w;
+    window.__widget = { done: true, h: h, w: w, errors: errs.slice() };
+    if (Math.abs(h - last) > 2 || Math.abs(w - lastW) > 2) { last = h; lastW = w; post({ type: 'size', h: h, w: w, vw: document.documentElement.clientWidth }) }
+  }
+  function soon() { if (!pending) pending = requestAnimationFrame(send) }
   send();
   post({ type: 'done', errors: errs.slice() });
-  try { new ResizeObserver(send).observe(document.body) } catch (e) {}
-  setTimeout(send, 450);
+  try { var ro = new ResizeObserver(soon); ro.observe(document.body); ro.observe(document.documentElement); for (var k = 0; k < document.body.children.length; k++) ro.observe(document.body.children[k]) } catch (e) {}
+  try { mo = new MutationObserver(soon); mo.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true }) } catch (e) {}
+  addEventListener('load', soon);
+  addEventListener('message', function (e) { if (e.data && e.data.__measure) { last = -1; send() } });
+  [150, 450, 1000, 2500].forEach(function (t) { setTimeout(send, t) });
 })();`
 
 export interface BuildOptions {

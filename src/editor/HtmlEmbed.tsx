@@ -11,7 +11,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Node, mergeAttributes } from '@tiptap/core'
 import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewProps } from '@tiptap/react'
-import { CodeI, Pen, AlignLeft, AlignCenter, AlignRight } from '../components/Icons'
+import { CodeI, Pen, AlignLeft, AlignCenter, AlignRight, FitI } from '../components/Icons'
 import { buildWidgetDoc, currentTheme, fromBase64, KIND_LABEL, kindOf, looksLikeHtmlDocument, toBase64, type WidgetKind } from '../widgets/widget'
 
 export { looksLikeHtmlDocument }
@@ -33,18 +33,26 @@ function useThemeKey() {
  * ------------------------------------------------------------------ */
 
 const BAR_H = 26
+/** A block asks its cell for at most this much width; wider content is scaled down to fit. */
+const MAX_NATURAL_W = 1000
+/** Never shrink content below this; past it the block scrolls sideways. */
+const MIN_SCALE = 0.3
+
+type Drag = 'e' | 'w' | 's' | 'se' | 'sw'
 
 function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewProps) {
   const iframeRef = useRef<HTMLIFrameElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
   const [editing, setEditing] = useState(false)
   const [code, setCode] = useState('')
-  const [resizing, setResizing] = useState(false)
-  const [currentWidth, setCurrentWidth] = useState<number | null>(null)
-  const [currentHeight, setCurrentHeight] = useState<number | null>(null)
+  /** Live size while dragging a handle (display pixels). */
+  const [drag, setDrag] = useState<{ w: number | null; h: number | null } | null>(null)
   const [focused, setFocused] = useState(editor.isFocused)
   const [doc, setDoc] = useState<string | null>(null)
-  const [autoH, setAutoH] = useState<number | null>(null)
+  /** What the content measures at its own size (reported by the block). */
+  const [natural, setNatural] = useState<{ w: number; h: number } | null>(null)
+  /** Room the block has across, measured here. */
+  const [room, setRoom] = useState(0)
   const frameId = useMemo(() => `w${Math.random().toString(36).slice(2, 10)}`, [])
   const themeKey = useThemeKey()
 
@@ -52,11 +60,25 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
   const htmlSrc = fromBase64(node.attrs.src || '')
   // Diagrams sit in the note like a figure; pasted pages keep their own frame.
   const figure = kind !== 'html' || !looksLikeHtmlDocument(htmlSrc)
-  const stored = node.attrs.height as number | null
-  const width = resizing && currentWidth != null ? currentWidth : (node.attrs.width || null)
-  const frameH = resizing && currentHeight != null ? currentHeight : (stored || autoH || (doc ? 120 : 80))
-  const active = selected && (focused || resizing)
+  const storedW = (node.attrs.width as number | null) || null
+  const storedH = (node.attrs.height as number | null) || null
   const textAlign = node.attrs.textAlign || 'left'
+  const active = selected && (focused || drag != null)
+
+  /* ---- sizes ----
+   * natural.w: the content's own width. Up to MAX_NATURAL_W the block asks
+   * for that much room (the cell widens to make it); past that, or when you
+   * set a width, the content is scaled down to fit, like a picture.
+   */
+  const boxW = drag?.w ?? storedW ?? null
+  const natW = natural && natural.w > 0 ? natural.w : 0
+  const wantW = boxW ?? (natW ? Math.min(natW, MAX_NATURAL_W) : null)
+  const avail = Math.max(120, boxW ?? (room || 600))
+  const scale = natW > avail + 2 ? Math.max(MIN_SCALE, avail / natW) : 1
+  const innerW = scale < 1 ? natW : null
+  const contentH = natural?.h ?? (doc ? 120 : 80)
+  const displayH = drag?.h ?? storedH ?? Math.ceil(contentH * scale)
+  const frameH = Math.ceil(displayH / scale)
 
   let justifyContent = 'flex-start'
   if (textAlign === 'center') justifyContent = 'center'
@@ -81,9 +103,21 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     }
   }, [editor])
 
+  /* ---- room across: the cell's text width ---- */
+  useEffect(() => {
+    const host = wrapRef.current?.parentElement
+    if (!host) return
+    const measure = () => setRoom(host.clientWidth)
+    measure()
+    const ro = new ResizeObserver(measure)
+    ro.observe(host)
+    return () => ro.disconnect()
+  }, [])
+
   /* ---- build what the frame shows (diagrams are drawn here, then themed) ---- */
   useEffect(() => {
     let live = true
+    setNatural(null)
     buildWidgetDoc(kind, htmlSrc, currentTheme(wrapRef.current))
       .then((d) => live && setDoc(d))
       .catch((e) => live && setDoc(`<pre style="color:#e06c75">${String(e?.message || e)}</pre>`))
@@ -92,84 +126,89 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     }
   }, [kind, htmlSrc, themeKey])
 
-  /* ---- the block reports its own height ---- */
+  /* ---- the block reports its own size ---- */
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       const d = e.data
       if (!d || d.__widget !== frameId || e.source !== iframeRef.current?.contentWindow) return
-      if (d.type === 'size' && typeof d.h === 'number') setAutoH(Math.max(40, Math.min(4000, Math.ceil(d.h))))
+      if (d.type === 'size' && typeof d.h === 'number') {
+        const h = Math.max(30, Math.min(6000, Math.ceil(d.h)))
+        const w = Math.max(0, Math.min(6000, Math.ceil(d.w || 0)))
+        // Only content wider than its frame has a width of its own; a page that
+        // fills whatever room it gets stays flexible (0). It only ever grows, so
+        // content that is always a little wider than its frame cannot creep.
+        const fixed = typeof d.vw === 'number' && w > d.vw + 2
+        setNatural((cur) => {
+          const nw = fixed && (!cur || w > cur.w + 8) ? w : cur?.w ?? 0
+          return cur && Math.abs(cur.h - h) < 2 && nw === cur.w ? cur : { w: nw, h }
+        })
+      }
     }
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
   }, [frameId])
 
-  /* ---- corner resize (like ResizableImage) ---- */
-  const onCornerPointerDown = useCallback((e: React.PointerEvent, corner: 'tl' | 'tr' | 'bl' | 'br') => {
-    if (e.button !== 0) return
-    e.preventDefault()
-    e.stopPropagation()
-    setResizing(true)
+  /** Measure again from scratch (after "fit" or a theme change). */
+  const remeasure = () => {
+    setNatural(null)
+    setTimeout(() => iframeRef.current?.contentWindow?.postMessage({ __measure: true }, '*'), 60)
+  }
 
-    const startX = e.clientX
-    const startY = e.clientY
-    const startW = wrapRef.current?.offsetWidth || node.attrs.width || 500
-    const startH = iframeRef.current?.offsetHeight || frameH
+  /* ---- resizing: right/left edge = width (content scales), bottom = height, corners = both ---- */
+  const startDrag = useCallback(
+    (e: React.PointerEvent, dir: Drag) => {
+      if (e.button !== 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      const el = e.currentTarget as HTMLElement
+      el.setPointerCapture(e.pointerId)
+      const startX = e.clientX
+      const startY = e.clientY
+      // The cell may be zoomed: work in the block's own pixels.
+      const rect = wrapRef.current!.getBoundingClientRect()
+      const zoom = rect.width / (wrapRef.current!.offsetWidth || rect.width) || 1
+      const startW = wrapRef.current!.offsetWidth
+      const startH = displayH
+      const keepRatio = (dir === 'se' || dir === 'sw') && !storedH
+      const sizeAt = (cx: number, cy: number) => {
+        const dx = (cx - startX) / zoom
+        const dy = (cy - startY) / zoom
+        let w: number | null = null
+        let h: number | null = null
+        if (dir === 'e' || dir === 'se') w = startW + dx
+        if (dir === 'w' || dir === 'sw') w = startW - dx
+        if (w != null) w = Math.round(Math.max(160, Math.min(room || 4000, w)))
+        if (dir === 's' || dir === 'se' || dir === 'sw') h = Math.round(Math.max(40, startH + dy))
+        // Corners of a block that fits its content: keep its shape, like a picture.
+        if (keepRatio && w != null) h = null
+        return { w, h }
+      }
+      setDrag({ w: null, h: null })
+      const move = (me: PointerEvent) => setDrag(sizeAt(me.clientX, me.clientY))
+      const up = (ue: PointerEvent) => {
+        el.releasePointerCapture?.(ue.pointerId)
+        el.removeEventListener('pointermove', move)
+        el.removeEventListener('pointerup', up)
+        el.removeEventListener('pointercancel', up)
+        const { w, h } = sizeAt(ue.clientX, ue.clientY)
+        const patch: Record<string, any> = {}
+        if (w != null) patch.width = w
+        if (h != null) patch.height = h
+        setDrag(null)
+        if (Object.keys(patch).length) updateAttributes(patch)
+      }
+      el.addEventListener('pointermove', move)
+      el.addEventListener('pointerup', up)
+      el.addEventListener('pointercancel', up)
+    },
+    [displayH, room, storedH, updateAttributes],
+  )
 
-    const isLeft = corner[1] === 'l'
-    const isTop = corner[0] === 't'
-
-    const onMove = (me: PointerEvent) => {
-      me.preventDefault()
-      const dx = me.clientX - startX
-      const dy = me.clientY - startY
-      setCurrentWidth(Math.max(200, startW + (isLeft ? -dx : dx)))
-      setCurrentHeight(Math.max(60, startH + (isTop ? -dy : dy)))
-    }
-
-    const onUp = (ue: PointerEvent) => {
-      setResizing(false)
-      const dx = ue.clientX - startX
-      const dy = ue.clientY - startY
-      updateAttributes({ width: Math.max(200, startW + (isLeft ? -dx : dx)), height: Math.max(60, startH + (isTop ? -dy : dy)) })
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }, [node.attrs.width, frameH, updateAttributes])
-
-  /* ---- edge resize (bottom + right) ---- */
-  const onEdgePointerDown = useCallback((e: React.PointerEvent, dir: 's' | 'e' | 'se') => {
-    if (e.button !== 0) return
-    e.preventDefault()
-    e.stopPropagation()
-    setResizing(true)
-
-    const startX = e.clientX
-    const startY = e.clientY
-    const startW = wrapRef.current?.offsetWidth || node.attrs.width || 500
-    const startH = iframeRef.current?.offsetHeight || frameH
-
-    const onMove = (me: PointerEvent) => {
-      me.preventDefault()
-      if (dir === 's' || dir === 'se') setCurrentHeight(Math.max(60, startH + me.clientY - startY))
-      if (dir === 'e' || dir === 'se') setCurrentWidth(Math.max(200, startW + me.clientX - startX))
-    }
-
-    const onUp = (ue: PointerEvent) => {
-      setResizing(false)
-      const patch: Record<string, any> = {}
-      if (dir === 's' || dir === 'se') patch.height = Math.max(60, startH + ue.clientY - startY)
-      if (dir === 'e' || dir === 'se') patch.width = Math.max(200, startW + ue.clientX - startX)
-      updateAttributes(patch)
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-    }
-
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-  }, [node.attrs.width, frameH, updateAttributes])
+  /** Back to fitting the content: its own width (scaled if needed) and full height. */
+  const fit = () => {
+    updateAttributes({ width: null, height: null })
+    remeasure()
+  }
 
   /* ---- edit the source ---- */
   const startEdit = () => {
@@ -182,56 +221,71 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     if (code.trim()) updateAttributes({ src: toBase64(code) })
   }
 
+  const sized = storedW != null || storedH != null
+  const label = drag ? `${Math.round(drag.w ?? wrapRef.current?.offsetWidth ?? 0)} × ${Math.round(drag.h ?? displayH)}${scale < 1 ? ` · ${Math.round(scale * 100)}%` : ''}` : null
+
   return (
     <NodeViewWrapper className="html-embed-wrapper" style={{ display: 'flex', justifyContent, width: '100%' }} data-drag-handle>
       <div
         ref={wrapRef}
-        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${active ? 'html-embed-selected' : ''}`}
-        style={{ width: width ? `${width}px` : '100%', maxWidth: '100%' }}
+        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${active ? 'html-embed-selected' : ''} ${drag ? 'resizing' : ''}`}
+        style={{
+          width: boxW ? `${boxW}px` : wantW ? `${wantW}px` : '100%',
+          // Content up to MAX_NATURAL_W asks for its room, so the cell widens to show it at full size.
+          minWidth: !boxW && wantW ? `${wantW}px` : undefined,
+          maxWidth: boxW || !wantW ? '100%' : undefined,
+        }}
       >
         <div className="html-embed-bar" style={{ height: BAR_H }}>
           <CodeI size={14} />
           <span className="html-embed-label">{KIND_LABEL[kind]}</span>
+          {scale < 1 && <span className="html-embed-scale" title="Shown smaller to fit; drag the right edge or widen the cell to enlarge">{Math.round(scale * 100)}%</span>}
           <div style={{ flex: 1 }} />
-          {(active || figure) && (
-            <div className="html-embed-actions" onMouseDown={(e) => e.stopPropagation()}>
-              <button className={`html-embed-btn ${textAlign === 'left' ? 'active' : ''}`} title="Align left" onClick={() => setAlign('left')}>
-                <AlignLeft size={13} />
+          <div className="html-embed-actions" onMouseDown={(e) => e.stopPropagation()}>
+            <button className={`html-embed-btn ${textAlign === 'left' ? 'active' : ''}`} title="Align left" onClick={() => setAlign('left')}>
+              <AlignLeft size={13} />
+            </button>
+            <button className={`html-embed-btn ${textAlign === 'center' ? 'active' : ''}`} title="Center" onClick={() => setAlign('center')}>
+              <AlignCenter size={13} />
+            </button>
+            <button className={`html-embed-btn ${textAlign === 'right' ? 'active' : ''}`} title="Align right" onClick={() => setAlign('right')}>
+              <AlignRight size={13} />
+            </button>
+            <div className="html-embed-divider" />
+            {sized && (
+              <button className="html-embed-btn wide" title="Fit to the content again (or double click a resize handle)" onClick={fit}>
+                <FitI size={13} /> Fit
               </button>
-              <button className={`html-embed-btn ${textAlign === 'center' ? 'active' : ''}`} title="Center" onClick={() => setAlign('center')}>
-                <AlignCenter size={13} />
-              </button>
-              <button className={`html-embed-btn ${textAlign === 'right' ? 'active' : ''}`} title="Align right" onClick={() => setAlign('right')}>
-                <AlignRight size={13} />
-              </button>
-              <div className="html-embed-divider" />
-              {stored != null && (
-                <button className="html-embed-btn" title="Fit height to content" onClick={() => updateAttributes({ height: null })}>
-                  ↕
-                </button>
-              )}
-              <button className="html-embed-btn" title="Edit source" onClick={startEdit}>
-                <Pen size={13} />
-              </button>
-            </div>
-          )}
+            )}
+            <button className="html-embed-btn" title="Edit source" onClick={startEdit}>
+              <Pen size={13} />
+            </button>
+          </div>
         </div>
 
         {!editing && doc != null && (
-          <iframe
-            ref={iframeRef}
-            name={frameId}
-            className={`html-embed-frame ${figure ? 'themed' : ''}`}
-            srcDoc={doc}
-            sandbox="allow-scripts"
-            title={KIND_LABEL[kind]}
-            style={{ height: frameH }}
-          />
+          <div className="html-embed-viewport" style={{ height: displayH, overflowX: scale <= MIN_SCALE && natW * scale > avail ? 'auto' : 'hidden' }}>
+            <iframe
+              ref={iframeRef}
+              name={frameId}
+              className={`html-embed-frame ${figure ? 'themed' : ''}`}
+              srcDoc={doc}
+              sandbox="allow-scripts"
+              title={KIND_LABEL[kind]}
+              style={{
+                height: frameH,
+                width: innerW ? `${innerW}px` : '100%',
+                transform: scale < 1 ? `scale(${scale})` : undefined,
+                transformOrigin: '0 0',
+                pointerEvents: drag ? 'none' : undefined,
+              }}
+            />
+          </div>
         )}
-        {!editing && doc == null && <div className="html-embed-loading" style={{ height: frameH }}>Drawing…</div>}
+        {!editing && doc == null && <div className="html-embed-loading" style={{ height: displayH }}>Drawing…</div>}
 
         {editing && (
-          <div className="html-embed-editor" style={{ height: Math.max(220, frameH) }}>
+          <div className="html-embed-editor" style={{ height: Math.max(220, displayH) }}>
             <textarea className="html-embed-code" value={code} onChange={(e) => setCode(e.target.value)} spellCheck={false} autoFocus />
             <div className="html-embed-editor-actions">
               <button className="html-embed-save" onClick={commitEdit}>Save</button>
@@ -240,31 +294,16 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
           </div>
         )}
 
-        {active && !editing && (
+        {!editing && (
           <>
-            {(['tl', 'tr', 'bl', 'br'] as const).map((corner) => {
-              const isTop = corner[0] === 't'
-              const isLeft = corner[1] === 'l'
-              return (
-                <div
-                  key={corner}
-                  className="html-embed-corner"
-                  onPointerDown={(e) => onCornerPointerDown(e, corner)}
-                  style={{
-                    top: isTop ? -6 : undefined,
-                    bottom: !isTop ? -6 : undefined,
-                    left: isLeft ? -6 : undefined,
-                    right: !isLeft ? -6 : undefined,
-                    cursor: isTop === isLeft ? 'nwse-resize' : 'nesw-resize',
-                  }}
-                  title="Drag to resize"
-                />
-              )
-            })}
-            <div className="html-embed-edge-s" onPointerDown={(e) => onEdgePointerDown(e, 's')} />
-            <div className="html-embed-edge-e" onPointerDown={(e) => onEdgePointerDown(e, 'e')} />
+            <div className="html-embed-edge e" title="Drag to resize (double click: fit)" onPointerDown={(e) => startDrag(e, 'e')} onDoubleClick={fit} />
+            <div className="html-embed-edge w" title="Drag to resize (double click: fit)" onPointerDown={(e) => startDrag(e, 'w')} onDoubleClick={fit} />
+            <div className="html-embed-edge s" title="Drag to change the height (double click: fit)" onPointerDown={(e) => startDrag(e, 's')} onDoubleClick={fit} />
+            <div className="html-embed-grip se" title="Drag to resize (double click: fit)" onPointerDown={(e) => startDrag(e, 'se')} onDoubleClick={fit} />
+            <div className="html-embed-grip sw" title="Drag to resize (double click: fit)" onPointerDown={(e) => startDrag(e, 'sw')} onDoubleClick={fit} />
           </>
         )}
+        {label && <div className="html-embed-size">{label}</div>}
       </div>
     </NodeViewWrapper>
   )

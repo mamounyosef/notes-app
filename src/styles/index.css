@@ -1966,12 +1966,21 @@ select:focus {
   color: var(--accent);
 }
 
+/* The frame keeps exactly the height it is given (flex sizing would drop an
+   iframe back to its default 150px). Wide content is scaled inside the viewport. */
+.html-embed-viewport {
+  position: relative;
+  flex: none;
+  overflow: hidden;
+}
+
 .html-embed-frame {
-  flex: 1;
+  display: block;
+  flex: none;
   width: 100%;
   border: none;
   background: #fff;
-  min-height: 60px;
+  min-height: 30px;
 }
 
 .html-embed-editor {
@@ -2035,36 +2044,85 @@ select:focus {
   color: var(--text);
 }
 
-.html-embed-corner {
+.html-embed { overflow: visible; }
+.html-embed > .html-embed-bar { border-radius: 7px 7px 0 0; }
+.html-embed:not(.html-embed-figure) > .html-embed-viewport { border-radius: 0 0 7px 7px; }
+
+/* Resize handles: edges and corners, shown on hover, easy to grab. */
+.html-embed-edge,
+.html-embed-grip {
   position: absolute;
+  z-index: 8;
+  opacity: 0;
+  transition: opacity .12s ease;
+  touch-action: none;
+}
+.html-embed:hover > .html-embed-edge,
+.html-embed:hover > .html-embed-grip,
+.html-embed.html-embed-selected > .html-embed-edge,
+.html-embed.html-embed-selected > .html-embed-grip,
+.html-embed.resizing > .html-embed-edge,
+.html-embed.resizing > .html-embed-grip { opacity: 1; }
+
+.html-embed-edge.e, .html-embed-edge.w { top: 30px; bottom: 16px; width: 12px; cursor: ew-resize; }
+/* Handles stay inside the block: anything sticking out would make the cell grow to fit it. */
+.html-embed-edge.e { right: 0; }
+.html-embed-edge.w { left: 0; }
+.html-embed-edge.s { left: 18px; right: 18px; bottom: 0; height: 12px; cursor: ns-resize; }
+.html-embed-edge::after {
+  content: '';
+  position: absolute;
+  border-radius: 3px;
+  background: var(--accent);
+  opacity: .55;
+  transition: opacity .1s ease, transform .1s ease;
+}
+.html-embed-edge.e::after { right: 2px; }
+.html-embed-edge.w::after { left: 2px; }
+.html-embed-edge.e::after, .html-embed-edge.w::after { top: 50%; width: 4px; height: 36px; margin-top: -18px; }
+.html-embed-edge.s::after { bottom: 2px; left: 50%; height: 4px; width: 44px; margin-left: -22px; }
+.html-embed-edge:hover::after { opacity: 1; transform: scale(1.15); }
+
+.html-embed-grip {
   width: 14px;
   height: 14px;
-  background: var(--accent, #7c9cff);
-  border: 2px solid var(--bg-1, #202020);
+  bottom: 2px;
   border-radius: 50%;
-  z-index: 10;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+  background: var(--accent);
+  border: 2px solid var(--bg-1);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .35);
+}
+.html-embed-grip.se { right: 2px; cursor: nwse-resize; }
+.html-embed-grip.sw { left: 2px; cursor: nesw-resize; }
+.html-embed-grip:hover { transform: scale(1.2); }
+
+.html-embed.resizing { border-color: var(--accent); }
+.html-embed.resizing, .html-embed.resizing * { user-select: none; }
+
+.html-embed-size {
+  position: absolute;
+  right: 10px;
+  bottom: 10px;
+  z-index: 9;
+  padding: 3px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+  background: rgba(0, 0, 0, .7);
+  pointer-events: none;
 }
 
-.html-embed-edge-s {
-  position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: -4px;
-  height: 9px;
-  cursor: ns-resize;
-  z-index: 5;
+.html-embed-scale {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 5px;
+  border-radius: 4px;
+  color: var(--text-dim);
+  background: var(--bg-4);
 }
 
-.html-embed-edge-e {
-  position: absolute;
-  top: 14px;
-  bottom: 14px;
-  right: -4px;
-  width: 9px;
-  cursor: ew-resize;
-  z-index: 5;
-}
+.html-embed-btn.wide { width: auto; padding: 0 6px; gap: 4px; display: inline-flex; align-items: center; font-size: 11px; }
 
 /* Diagrams and themed widgets sit in the note like a figure: no frame, and
    the bar only floats in on hover. */
