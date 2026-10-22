@@ -137,6 +137,8 @@ export interface KeyInfo {
   /** Out of credit: skipped until this time (ms). */
   outUntil: number | null
   detail: string
+  /** The key requests go to now. */
+  inUse?: boolean
 }
 
 export const agentAvailable = Boolean(desk?.agent)
@@ -152,9 +154,12 @@ export const agentApi = {
     desk?.agent?.addKey ? desk.agent.addKey(key, provider) : Promise.resolve({ ok: false, error: 'Desktop app only' }),
   removeKey: (provider: Provider, index: number): Promise<{ ok: boolean; error?: string }> =>
     desk?.agent?.removeKey ? desk.agent.removeKey(provider, index) : Promise.resolve({ ok: false }),
-  /** Moves a key one place earlier in the order they are tried. */
-  raiseKey: (provider: Provider, index: number): Promise<{ ok: boolean }> =>
-    desk?.agent?.raiseKey ? desk.agent.raiseKey(provider, index) : Promise.resolve({ ok: false }),
+  /** Makes a key the one used (moves it to the top, clears its out of credit mark). */
+  useKey: (provider: Provider, index: number): Promise<{ ok: boolean; error?: string }> =>
+    desk?.agent?.useKey ? desk.agent.useKey(provider, index) : Promise.resolve({ ok: false }),
+  /** Asks the service whether a key works right now. */
+  testKey: (provider: Provider, index: number): Promise<{ ok: boolean; error?: string; info?: string }> =>
+    desk?.agent?.testKey ? desk.agent.testKey(provider, index) : Promise.resolve({ ok: false, error: 'Desktop app only' }),
   /** Free model requests used and allowed today on one OpenRouter key (the first by default). */
   openrouterLimits: (index = 0): Promise<{ ok: boolean; freeUsed?: number | null; freeLimit?: number | null; freeTier?: boolean }> =>
     desk?.agent?.openrouterLimits ? desk.agent.openrouterLimits(index) : Promise.resolve({ ok: false }),

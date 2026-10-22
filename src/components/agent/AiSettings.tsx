@@ -31,14 +31,16 @@ function KeyRow({ provider, hint }: { provider: Provider; hint: string }) {
     refresh()
   }, [])
 
-  const act = async (job: () => Promise<{ ok: boolean; error?: string }>, done: string) => {
+  const act = async (job: () => Promise<{ ok: boolean; error?: string; info?: string }>, done: string | ((r: { info?: string }) => string)) => {
     setBusy(true)
     setMsg('')
     const r = await job()
     setBusy(false)
-    if (!r.ok) setMsg(r.error || 'Could not save the key.')
-    else {
-      setMsg(done)
+    if (!r.ok) {
+      setMsg(r.error || 'Could not save the key.')
+      refresh()
+    } else {
+      setMsg(typeof done === 'function' ? done(r) : done)
       refresh()
       useAgent.getState().refreshKey()
     }
@@ -72,14 +74,18 @@ function KeyRow({ provider, hint }: { provider: Provider; hint: string }) {
       {list.map((k, i) => (
         <div className="set-row" key={`${k.masked}-${i}`} style={{ paddingLeft: 16 }}>
           <label>
-            Key {i + 1}: {k.masked}
+            Key {i + 1}: {k.masked}{' '}
+            <b style={{ color: k.inUse ? 'var(--ok, #3fb950)' : k.outUntil ? 'var(--danger, #f85149)' : 'inherit', fontWeight: 600 }}>
+              {k.inUse ? (k.outUntil ? 'In use, but out of credit' : 'In use') : k.outUntil ? 'Out of credit' : 'Backup'}
+            </b>
             <span className="sub">
-              {k.outUntil ? `Out of credit, skipped until ${timeOf(k.outUntil)}.` : i === 0 ? 'Used first.' : `Used when key${i > 1 ? 's' : ''} ${Array.from({ length: i }, (_, j) => j + 1).join(', ')} run${i > 1 ? '' : 's'} out.`}
+              {k.outUntil ? `Skipped until ${timeOf(k.outUntil)}, then tried again. ${k.detail}` : k.inUse ? 'Requests go to this key.' : 'Used if the keys above it run out.'}
               {limits[i] || ''}
             </span>
           </label>
           <div className="row-inline">
-            {i > 0 && <button className="btn" disabled={busy} title="Try this key earlier" onClick={() => act(() => agentApi.raiseKey(provider, i), 'Order changed.')}>Move up</button>}
+            {!k.inUse && <button className="btn" disabled={busy} title="Use this key from now on" onClick={() => act(() => agentApi.useKey(provider, i), `Key ${i + 1} is now in use.`)}>Use</button>}
+            <button className="btn" disabled={busy} title="Ask the service whether this key works now" onClick={() => act(() => agentApi.testKey(provider, i).then((r) => (r.ok ? r : { ...r, error: `Key ${i + 1}: ${r.error}` })), (r) => `Key ${i + 1}: ${r.info || 'Works.'}`)}>Test</button>
             <button className="btn danger" disabled={busy} onClick={() => act(() => agentApi.removeKey(provider, i), 'Key removed.')}>Remove</button>
           </div>
         </div>

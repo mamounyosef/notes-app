@@ -150,18 +150,23 @@ export function setupAgent(opts: {
    */
   const statusFile = path.join(app.getPath('userData'), 'key-status.json')
   const idOf = (k: string) => createHash('sha256').update(k).digest('hex').slice(0, 24)
-  const outById: Record<string, { retryAt: number; detail: string }> = (() => {
+  const saved: { out?: Record<string, { retryAt: number; detail: string }>; current?: Partial<Record<Provider, string>> } = (() => {
     try {
-      return JSON.parse(fs.readFileSync(statusFile, 'utf8')) || {}
+      const j = JSON.parse(fs.readFileSync(statusFile, 'utf8')) || {}
+      // The first version saved only the out of credit list.
+      return j.out || j.current ? j : { out: j }
     } catch {
       return {}
     }
   })()
+  const outById = saved.out || {}
+  /** The key each service last answered with (its id): a reply is noted only when this changes. */
+  const current: Partial<Record<Provider, string>> = saved.current || {}
   const saveStatus = () => {
     const now = Date.now()
     for (const [id, v] of Object.entries(outById)) if (!(v?.retryAt > now)) delete outById[id]
     try {
-      fs.writeFileSync(statusFile, JSON.stringify(outById))
+      fs.writeFileSync(statusFile, JSON.stringify({ out: outById, current }))
     } catch (e: any) {
       opts.log('key status not saved', e?.message)
     }
@@ -183,17 +188,30 @@ export function setupAgent(opts: {
     if (e && !(e.retryAt > Date.now())) exhausted.delete(k)
     return exhausted.get(k) || null
   }
+  /** The key the next request goes to: the first one not out of credit (the first one if all are). */
+  const inUseIndex = (p: Provider, keys = readKeys(p)) => {
+    const i = keys.findIndex((k) => !outInfo(k))
+    return keys.length ? Math.max(0, i) : -1
+  }
+  /** Records the key that answered last, so only a change of key is told. */
+  const answeredWith = (p: Provider, k: string) => {
+    if (current[p] === idOf(k)) return
+    current[p] = idOf(k)
+    saveStatus()
+  }
+
   /** "Ollama" with one key, "Ollama key 2" with several. */
   const keyLabel = (p: Provider, i: number, n: number) => (n > 1 ? `${LABEL[p]} key ${i + 1}` : LABEL[p])
 
   ipcMain.handle('agent:keyStatus', (_e, provider?: Provider) => {
-    const keys = readKeys(providerOf(provider))
+    const p = providerOf(provider)
+    const keys = readKeys(p)
     return {
       hasKey: keys.length > 0,
       masked: mask(keys[0] || ''),
-      keys: keys.map((k) => {
+      keys: keys.map((k, i) => {
         const out = outInfo(k)
-        return { masked: mask(k), outUntil: out?.retryAt ?? null, detail: out?.detail ?? '' }
+        return { masked: mask(k), outUntil: out?.retryAt ?? null, detail: out?.detail ?? '', inUse: i === inUseIndex(p, keys) }
       }),
     }
   })
@@ -249,15 +267,57 @@ export function setupAgent(opts: {
     return { ok: true }
   })
 
-  /** Moves a key one place earlier, so it is tried before the one above it. */
-  ipcMain.handle('agent:raiseKey', (_e, provider: Provider, index: number) => {
+  /** Makes a key the one used: it moves to the top and its out of credit mark is cleared. */
+  ipcMain.handle('agent:useKey', (_e, provider: Provider, index: number) => {
     const p = providerOf(provider)
     const keys = readKeys(p)
     const i = Number(index)
-    if (!(i > 0 && i < keys.length)) return { ok: false }
-    ;[keys[i - 1], keys[i]] = [keys[i], keys[i - 1]]
-    writeKeys(p, keys)
+    if (!(i >= 0 && i < keys.length)) return { ok: false, error: 'No such key.' }
+    const k = keys[i]
+    exhausted.delete(k)
+    writeKeys(p, [k, ...keys.filter((_, j) => j !== i)])
     return { ok: true }
+  })
+
+  /**
+   * Asks the service whether a key works right now: OpenRouter reports the
+   * key's limits; Ollama answers a one token request. Updates the key's mark.
+   */
+  ipcMain.handle('agent:testKey', async (_e, provider: Provider, index: number) => {
+    const p = providerOf(provider)
+    const k = readKeys(p)[Number(index)]
+    if (!k) return { ok: false, error: 'No such key.' }
+    try {
+      let res: Response
+      if (p === 'openrouter') {
+        res = await fetch(`${OPENROUTER}/key`, { headers: { Authorization: `Bearer ${k}` } })
+        if (res.ok) {
+          const d: any = (await res.json())?.data || {}
+          const f = d.free_model_daily_requests
+          if (typeof d.limit_remaining === 'number' && d.limit_remaining <= 0) {
+            exhausted.set(k, { retryAt: Date.now() + 15 * 60_000, detail: 'Key spending limit reached' })
+            return { ok: false, error: 'Its spending limit is used up.' }
+          }
+          if (f?.limit && f.used >= f.limit) {
+            exhausted.set(k, { retryAt: nextUtcMidnight(), detail: 'Free requests for today used up' })
+            return { ok: false, error: `All ${f.limit} free requests for today are used.` }
+          }
+          exhausted.delete(k)
+          return { ok: true, info: f?.limit ? `Works. ${f.used ?? 0} of ${f.limit} free requests used today.` : 'Works.' }
+        }
+      } else {
+        res = await postOllama(k, { model: 'gpt-oss:20b', messages: [{ role: 'user', content: 'Hi' }], stream: false, think: 'low', options: { num_predict: 1 } }, AbortSignal.timeout(30_000))
+        if (res.ok) {
+          exhausted.delete(k)
+          return { ok: true, info: 'Works.' }
+        }
+      }
+      const err = await failure(p, res)
+      if (err instanceof OutOfCredit) exhausted.set(k, { retryAt: err.retryAt, detail: err.detail })
+      return { ok: false, error: err instanceof OutOfCredit ? `Out of credit: ${err.detail}` : err.message }
+    } catch (e: any) {
+      return { ok: false, error: e?.message || String(e) }
+    }
   })
 
   /** OpenRouter's free allowance for one key (the first by default): requests used today. */
@@ -338,11 +398,14 @@ export function setupAgent(opts: {
     })
     for (const { k, i } of tries) {
       if (signal.aborted) throw new Error('aborted')
-      const sw: KeySwitch | undefined = i > 0 ? { provider: p, key: i + 1, keys: n, reason: why.join(', ') } : undefined
+      // Told once, when the key differs from the one that answered last; not on every reply after.
+      const fresh = current[p] !== idOf(k) && (Boolean(current[p]) || i > 0)
+      const sw: KeySwitch | undefined = fresh ? { provider: p, key: i + 1, keys: n, reason: why.join(', ') } : undefined
       if (sw) onSwitch(sw)
       try {
         const result = await run(k)
         exhausted.delete(k)
+        answeredWith(p, k)
         return { result, switched: sw }
       } catch (e: any) {
         if (signal.aborted || !(e instanceof OutOfCredit)) throw e

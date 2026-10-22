@@ -84,11 +84,12 @@ const api = {
   },
   agent: {
     keyStatus: (provider?: string) =>
-      ipcRenderer.invoke('agent:keyStatus', provider) as Promise<{ hasKey: boolean; masked: string; keys: { masked: string; outUntil: number | null; detail: string }[] }>,
+      ipcRenderer.invoke('agent:keyStatus', provider) as Promise<{ hasKey: boolean; masked: string; keys: { masked: string; outUntil: number | null; detail: string; inUse: boolean }[] }>,
     setKey: (key: string, provider?: string) => ipcRenderer.invoke('agent:setKey', key, provider) as Promise<{ ok: boolean; error?: string }>,
     addKey: (key: string, provider: string) => ipcRenderer.invoke('agent:addKey', key, provider) as Promise<{ ok: boolean; error?: string }>,
     removeKey: (provider: string, index: number) => ipcRenderer.invoke('agent:removeKey', provider, index) as Promise<{ ok: boolean; error?: string }>,
-    raiseKey: (provider: string, index: number) => ipcRenderer.invoke('agent:raiseKey', provider, index) as Promise<{ ok: boolean }>,
+    useKey: (provider: string, index: number) => ipcRenderer.invoke('agent:useKey', provider, index) as Promise<{ ok: boolean; error?: string }>,
+    testKey: (provider: string, index: number) => ipcRenderer.invoke('agent:testKey', provider, index) as Promise<{ ok: boolean; error?: string; info?: string }>,
     openrouterLimits: (index?: number) => ipcRenderer.invoke('agent:openrouterLimits', index) as Promise<{ ok: boolean; freeUsed?: number | null; freeLimit?: number | null; freeTier?: boolean; error?: string }>,
     chat: (reqId: string, body: unknown) =>
       ipcRenderer.invoke('agent:chat', reqId, body) as Promise<{ ok: boolean; error?: string; aborted?: boolean; switched?: { provider: string; key: number; keys: number; reason: string } }>,
