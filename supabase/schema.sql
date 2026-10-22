@@ -107,6 +107,58 @@ drop trigger if exists docs_history on public.docs;
 create trigger docs_history after update or delete on public.docs
 for each row execute function public.docs_keep_history();
 
+/* ---------------- limits: the database stops a sync loop by itself ---------------- */
+
+-- The app has its own loop guard, but an old or buggy copy of the app must not
+-- be able to fill the database or burn the free egress quota either. So:
+--  - an upload that changes nothing is answered "saved" without writing;
+--  - one note, file or chat written more than 1200 times in an hour is refused
+--    for the rest of that hour;
+--  - more than 10000 writes in a day are refused until the day is over.
+-- A refused upload stays saved on the computer and goes up later, and the app
+-- shows the reason. Normal use stays far below both numbers.
+alter table public.docs add column if not exists burst_start timestamptz;
+alter table public.docs add column if not exists burst_count integer not null default 0;
+alter table public.files add column if not exists burst_start timestamptz;
+alter table public.files add column if not exists burst_count integer not null default 0;
+
+-- One row per account; only count_write (below) reads or writes it.
+create table if not exists public.write_quota (
+  user_id uuid primary key references auth.users on delete cascade,
+  window_start timestamptz not null default now(),
+  writes integer not null default 0
+);
+alter table public.write_quota enable row level security;
+
+-- Counts one write, or refuses it. p_item_writes: writes of this item in the
+-- last hour. The error text starts with "Sync limit", which the app looks for.
+create or replace function public.count_write(p_item_writes integer)
+returns void
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_writes integer;
+begin
+  if p_item_writes >= 1200 then
+    raise exception 'Sync limit (item): uploaded more than 1200 times in the last hour, so the cloud refuses it for now';
+  end if;
+  insert into public.write_quota as q (user_id, window_start, writes)
+  values (auth.uid(), now(), 1)
+  on conflict (user_id) do update set
+    window_start = case when q.window_start > now() - interval '1 day' then q.window_start else now() end,
+    writes = case when q.window_start > now() - interval '1 day' then q.writes + 1 else 1 end
+  returning writes into v_writes;
+  if v_writes > 10000 then
+    raise exception 'Sync limit (account): more than 10000 uploads today, so the cloud refuses uploads for now';
+  end if;
+end;
+$$;
+
+revoke execute on function public.count_write(integer) from public, anon;
+grant execute on function public.count_write(integer) to authenticated;
+
 /* ---------------- writes: only on top of the latest version ---------------- */
 
 -- Saves a note only if nobody changed it since p_expected_rev (0 = new).
@@ -120,6 +172,8 @@ security invoker
 set search_path = ''
 as $$
 declare
+  v_cur record;
+  v_n integer;
   v_rev bigint;
   v_seq bigint;
 begin
@@ -128,14 +182,31 @@ begin
     values (auth.uid(), p_kind, p_doc_id, p_data, 1, p_deleted, p_device)
     on conflict (user_id, kind, doc_id) do nothing
     returning rev, change_seq into v_rev, v_seq;
+    if v_rev is not null then
+      perform public.count_write(0);
+    end if;
   else
+    select rev, change_seq, data, deleted, burst_start, burst_count into v_cur
+    from public.docs
+    where user_id = auth.uid() and kind = p_kind and doc_id = p_doc_id
+    for update;
+    if not found or v_cur.rev <> p_expected_rev then
+      return jsonb_build_object('ok', false);
+    end if;
+    -- Nothing changed: answer "saved" without writing, so no other computer is woken up.
+    if v_cur.data is not distinct from p_data and v_cur.deleted = p_deleted then
+      return jsonb_build_object('ok', true, 'rev', v_cur.rev, 'change_seq', v_cur.change_seq);
+    end if;
+    v_n := case when v_cur.burst_start > now() - interval '1 hour' then v_cur.burst_count else 0 end;
+    perform public.count_write(v_n);
     update public.docs
-    set data = p_data, rev = rev + 1, deleted = p_deleted, device = p_device,
-        change_seq = nextval('public.notes_change_seq'), updated_at = now()
-    where user_id = auth.uid() and kind = p_kind and doc_id = p_doc_id and rev = p_expected_rev
+    set data = p_data, deleted = p_deleted, rev = rev + 1, device = p_device,
+        change_seq = nextval('public.notes_change_seq'), updated_at = now(),
+        burst_start = case when v_n = 0 then now() else burst_start end, burst_count = v_n + 1
+    where user_id = auth.uid() and kind = p_kind and doc_id = p_doc_id
     returning rev, change_seq into v_rev, v_seq;
   end if;
-  if not found then
+  if v_rev is null then
     return jsonb_build_object('ok', false);
   end if;
   return jsonb_build_object('ok', true, 'rev', v_rev, 'change_seq', v_seq);
@@ -151,6 +222,8 @@ security invoker
 set search_path = ''
 as $$
 declare
+  v_cur record;
+  v_n integer;
   v_rev bigint;
   v_seq bigint;
 begin
@@ -159,14 +232,31 @@ begin
     values (auth.uid(), p_path, p_sha, p_size, 1, p_deleted, p_device)
     on conflict (user_id, path) do nothing
     returning rev, change_seq into v_rev, v_seq;
+    if v_rev is not null then
+      perform public.count_write(0);
+    end if;
   else
+    select rev, change_seq, sha, size, deleted, burst_start, burst_count into v_cur
+    from public.files
+    where user_id = auth.uid() and path = p_path
+    for update;
+    if not found or v_cur.rev <> p_expected_rev then
+      return jsonb_build_object('ok', false);
+    end if;
+    -- Nothing changed: answer "saved" without writing, so no other computer is woken up.
+    if v_cur.sha is not distinct from p_sha and v_cur.size = p_size and v_cur.deleted = p_deleted then
+      return jsonb_build_object('ok', true, 'rev', v_cur.rev, 'change_seq', v_cur.change_seq);
+    end if;
+    v_n := case when v_cur.burst_start > now() - interval '1 hour' then v_cur.burst_count else 0 end;
+    perform public.count_write(v_n);
     update public.files
-    set sha = p_sha, size = p_size, rev = rev + 1, deleted = p_deleted, device = p_device,
-        change_seq = nextval('public.notes_change_seq'), updated_at = now()
-    where user_id = auth.uid() and path = p_path and rev = p_expected_rev
+    set sha = p_sha, size = p_size, deleted = p_deleted, rev = rev + 1, device = p_device,
+        change_seq = nextval('public.notes_change_seq'), updated_at = now(),
+        burst_start = case when v_n = 0 then now() else burst_start end, burst_count = v_n + 1
+    where user_id = auth.uid() and path = p_path
     returning rev, change_seq into v_rev, v_seq;
   end if;
-  if not found then
+  if v_rev is null then
     return jsonb_build_object('ok', false);
   end if;
   return jsonb_build_object('ok', true, 'rev', v_rev, 'change_seq', v_seq);
@@ -208,6 +298,8 @@ create table if not exists public.agent_chats (
   primary key (user_id, id)
 );
 create index if not exists agent_chats_user_seq on public.agent_chats (user_id, change_seq);
+alter table public.agent_chats add column if not exists burst_start timestamptz;
+alter table public.agent_chats add column if not exists burst_count integer not null default 0;
 
 alter table public.agent_chats enable row level security;
 drop policy if exists "own chats select" on public.agent_chats;
@@ -227,6 +319,8 @@ security invoker
 set search_path = ''
 as $$
 declare
+  v_cur record;
+  v_n integer;
   v_rev bigint;
   v_seq bigint;
 begin
@@ -235,14 +329,31 @@ begin
     values (auth.uid(), p_id, p_data, 1, p_deleted, p_device)
     on conflict (user_id, id) do nothing
     returning rev, change_seq into v_rev, v_seq;
+    if v_rev is not null then
+      perform public.count_write(0);
+    end if;
   else
+    select rev, change_seq, data, deleted, burst_start, burst_count into v_cur
+    from public.agent_chats
+    where user_id = auth.uid() and id = p_id
+    for update;
+    if not found or v_cur.rev <> p_expected_rev then
+      return jsonb_build_object('ok', false);
+    end if;
+    -- Nothing changed: answer "saved" without writing, so no other computer is woken up.
+    if v_cur.data is not distinct from p_data and v_cur.deleted = p_deleted then
+      return jsonb_build_object('ok', true, 'rev', v_cur.rev, 'change_seq', v_cur.change_seq);
+    end if;
+    v_n := case when v_cur.burst_start > now() - interval '1 hour' then v_cur.burst_count else 0 end;
+    perform public.count_write(v_n);
     update public.agent_chats
-    set data = p_data, rev = rev + 1, deleted = p_deleted, device = p_device,
-        change_seq = nextval('public.notes_change_seq'), updated_at = now()
-    where user_id = auth.uid() and id = p_id and rev = p_expected_rev
+    set data = p_data, deleted = p_deleted, rev = rev + 1, device = p_device,
+        change_seq = nextval('public.notes_change_seq'), updated_at = now(),
+        burst_start = case when v_n = 0 then now() else burst_start end, burst_count = v_n + 1
+    where user_id = auth.uid() and id = p_id
     returning rev, change_seq into v_rev, v_seq;
   end if;
-  if not found then
+  if v_rev is null then
     return jsonb_build_object('ok', false);
   end if;
   return jsonb_build_object('ok', true, 'rev', v_rev, 'change_seq', v_seq);
@@ -275,3 +386,22 @@ create policy "vault own write" on storage.objects for insert to authenticated
   with check (bucket_id = 'vault' and (storage.foldername(name))[1] = (select auth.uid()::text));
 create policy "vault own update" on storage.objects for update to authenticated
   using (bucket_id = 'vault' and (storage.foldername(name))[1] = (select auth.uid()::text));
+
+/* ---------------- daily cleanup ---------------- */
+
+-- Every night: drop history versions older than 30 days, including those of
+-- notes that are never edited again (the trigger only prunes on a write).
+-- Needs the pg_cron extension (Supabase: Integrations, Cron). If it cannot be
+-- turned on, everything above still works; only this job is skipped.
+do $do$
+begin
+  create extension if not exists pg_cron with schema pg_catalog;
+  perform cron.schedule(
+    'notes-history-cleanup',
+    '17 3 * * *',
+    $job$delete from public.doc_history where saved_at < now() - interval '30 days'$job$
+  );
+exception when others then
+  raise notice 'Daily cleanup not scheduled (pg_cron unavailable): %', sqlerrm;
+end;
+$do$;

@@ -16,10 +16,12 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'notes-cloud-test-'))
 
 /* ---------------- fake cloud ---------------- */
 
-const server = { seq: 0, docs: new Map(), files: new Map(), blobs: new Map(), rejected: 0 }
+const server = { seq: 0, docs: new Map(), files: new Map(), blobs: new Map(), rejected: 0, refuse: new Set() }
 const clone = (v) => (v == null ? v : structuredClone(v))
 
 function push(table, key, fields, expectedRev) {
+  // Same text as the database's loop limit in supabase/schema.sql.
+  if (server.refuse.has(key)) throw new Error('Sync limit (item): uploaded more than 1200 times in the last hour, so the cloud refuses it for now')
   const cur = table.get(key)
   if (expectedRev === 0 ? cur : !cur || cur.rev !== expectedRev) {
     server.rejected++
@@ -279,6 +281,25 @@ await test('a sync loop is paused, shown, and the note stays saved here', async 
   assert.match(st.lastError, /sync loop/)
   assert.ok(st.paused.some((p) => p.key === key))
   assert.equal(html(await readPage(PC, 'p1'), 'c1'), html(await readPage(LT, 'p1'), 'c1'), 'nothing lost')
+})
+
+await test('a note the database refuses waits here, and the other notes still sync', async () => {
+  server.refuse.add('page:p8')
+  await PC.vault.write('page', 'p8', page('p8', [cell('r', 'refused for now')]), null, null)
+  await PC.vault.write('page', 'p9', page('p9', [cell('a', 'goes up')]), null, null)
+  const seq = server.seq
+  for (let i = 0; i < 5; i++) {
+    PC.cloud.markDirty('page', 'p8')
+    await PC.cloud.syncNow()
+  }
+  await sync(LT)
+  assert.equal(html(await readPage(LT, 'p9'), 'a'), 'goes up')
+  assert.ok(!server.docs.has('page:p8'))
+  assert.equal(server.seq - seq, 1, 'only p9 was written')
+  const st = PC.cloud.status()
+  assert.match(st.paused.find((p) => p.key === 'page:p8')?.reason || '', /cloud refused/)
+  assert.equal(html(await readPage(PC, 'p8'), 'r'), 'refused for now', 'kept here')
+  server.refuse.delete('page:p8')
 })
 
 for (const c of [PC, LT]) {

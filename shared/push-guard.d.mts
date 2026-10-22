@@ -10,5 +10,6 @@ export class PushGuard {
   constructor(opts?: { windowMs?: number; maxRepeats?: number; maxPerItem?: number; maxTotal?: number; now?: () => number })
   check(key: string, hash: string | null): string | null
   record(key: string, hash: string | null): void
+  refused(key: string, e: unknown): boolean
   pausedItems(): PausedItem[]
 }

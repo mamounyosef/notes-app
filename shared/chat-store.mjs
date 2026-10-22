@@ -362,7 +362,8 @@ export class ChatStore {
       try {
         await this.pushChat(id, chat)
       } catch (e) {
-        failed ||= e
+        // Refused by the database's loop limits: held back here, not an error.
+        if (!this.guard.refused(`chat:${id}`, e)) failed ||= e
       }
     }
     if (failed) throw failed

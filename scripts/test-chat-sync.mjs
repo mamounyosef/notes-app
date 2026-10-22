@@ -45,6 +45,8 @@ function remoteFor() {
     pushChat: ({ id, data, expectedRev, deleted, device }) =>
       guard(() => {
         if (net.failPush.has(id)) throw new Error('payload too large')
+        // Same text as the database's loop limit in supabase/schema.sql.
+        if (net.refuse?.has(id)) throw new Error('Sync limit (item): uploaded more than 1200 times in the last hour, so the cloud refuses it for now')
         const cur = server.rows.get(id)
         if (expectedRev === 0 ? cur : !cur || cur.rev !== expectedRev) return { ok: false }
         server.pushes++
@@ -191,6 +193,19 @@ await test('a chat sync loop is paused, shown, and the chat stays saved here', a
   assert.equal(PC.store.status().phase, 'error')
   assert.match(PC.store.status().error, /sync loop/)
   assert.deepEqual(await ids(PC, 'c1'), ['m1', 'm2', 'm3'], 'nothing lost')
+})
+
+await test('a chat the database refuses waits here, and the other chats still sync', async () => {
+  LT.net.refuse = new Set(['r1'])
+  await LT.store.put(chat('r1', 'Refused for now', [msg('a', 'user', 'wait', 7)]))
+  await LT.store.put(chat('g1', 'Goes up', [msg('b', 'user', 'go', 8)]))
+  await sync(LT, LT, LT, PC)
+  assert.ok((await titles(PC)).includes('Goes up'))
+  assert.ok(!(await titles(PC)).includes('Refused for now'))
+  assert.equal(LT.store.status().phase, 'error')
+  assert.match(LT.store.status().error, /cloud refused/)
+  assert.deepEqual(await ids(LT, 'r1'), ['a'], 'kept here')
+  LT.net.refuse = null
 })
 
 for (const c of [LT, PC]) c.store.stop()

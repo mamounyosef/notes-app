@@ -38,6 +38,7 @@ export class PushGuard {
     this.paused = new Map()
     this.total = []
     this.allPausedUntil = 0
+    this.allReason = 'too many uploads in the last hour'
   }
 
   prune(t) {
@@ -55,7 +56,7 @@ export class PushGuard {
   check(key, hash) {
     const t = this.now()
     this.prune(t)
-    if (this.allPausedUntil > t) return 'too many uploads in the last hour'
+    if (this.allPausedUntil > t) return this.allReason
     const p = this.paused.get(key)
     if (p) return p.reason
     const list = this.log.get(key) || []
@@ -68,7 +69,8 @@ export class PushGuard {
     }
     if (this.total.length >= this.maxTotal) {
       this.allPausedUntil = t + this.windowMs
-      return 'too many uploads in the last hour'
+      this.allReason = 'too many uploads in the last hour'
+      return this.allReason
     }
     return null
   }
@@ -82,12 +84,31 @@ export class PushGuard {
     this.total.push(t)
   }
 
+  /**
+   * The database refused an upload because of its own loop limits ("Sync
+   * limit", see supabase/schema.sql): hold back that item, or every upload
+   * when the whole account hit the limit, for an hour instead of failing the
+   * whole run. Returns false for any other error.
+   */
+  refused(key, e) {
+    const msg = String(e?.message || e)
+    const m = /Sync limit \((item|account)\):\s*(.*)/.exec(msg)
+    if (!m) return false
+    const t = this.now()
+    const reason = `the cloud refused it: ${m[2]}`
+    if (m[1] === 'account') {
+      this.allPausedUntil = t + this.windowMs
+      this.allReason = reason
+    } else this.paused.set(key, { until: t + this.windowMs, reason })
+    return true
+  }
+
   /** What is paused right now, for the status line. */
   pausedItems() {
     const t = this.now()
     this.prune(t)
     const out = [...this.paused].map(([key, p]) => ({ key, reason: p.reason, until: p.until }))
-    if (this.allPausedUntil > t) out.push({ key: '*', reason: 'too many uploads in the last hour', until: this.allPausedUntil })
+    if (this.allPausedUntil > t) out.push({ key: '*', reason: this.allReason, until: this.allPausedUntil })
     return out
   }
 }

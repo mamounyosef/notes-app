@@ -53,6 +53,8 @@ const parseKey = (key) => {
   const id = key.slice(i + 1)
   return { kind, id: kind === 'page' ? id : undefined, docId: id }
 }
+/** pushDoc / pushFile answer for an upload the database refused (see PushGuard.refused). */
+const REFUSED = Symbol('refused')
 const isTemp = (name) => name.endsWith('.tmp') || name.includes('.tmp-') || name.includes('.cloud-dl-')
 
 function offlineError(e) {
@@ -150,6 +152,16 @@ export class CloudSync {
     }
     this.dirty.add(key)
     this.schedule(PUSH_DELAY_MS)
+  }
+
+  /** Runs one upload; an upload the database refuses holds back only `key`. */
+  async upload(key, push) {
+    try {
+      return await push()
+    } catch (e) {
+      if (this.guard.refused(key, e)) return REFUSED
+      throw e
+    }
   }
 
   /* ---------------- scheduling ---------------- */
@@ -287,7 +299,10 @@ export class CloudSync {
           continue
         }
         if (this.guard.check(key, 'deleted')) continue
-        const res = await remote.pushDoc({ kind, docId, data: null, expectedRev: Number(st.rev), deleted: true, device: this.vault.device })
+        const res = await this.upload(key, () =>
+          remote.pushDoc({ kind, docId, data: null, expectedRev: Number(st.rev), deleted: true, device: this.vault.device }),
+        )
+        if (res === REFUSED) continue
         if (res?.ok) {
           this.guard.record(key, 'deleted')
           this.state.docs[key] = { rev: Number(res.rev), hash: null, deleted: true }
@@ -319,14 +334,17 @@ export class CloudSync {
         }
         // A loop: leave it saved here and dirty, it goes up after the pause.
         if (this.guard.check(key, h)) break
-        const res = await remote.pushDoc({
-          kind,
-          docId,
-          data: cur,
-          expectedRev: Number(st.rev) || 0,
-          deleted: false,
-          device: this.vault.device,
-        })
+        const res = await this.upload(key, () =>
+          remote.pushDoc({
+            kind,
+            docId,
+            data: cur,
+            expectedRev: Number(st.rev) || 0,
+            deleted: false,
+            device: this.vault.device,
+          }),
+        )
+        if (res === REFUSED) break
         if (res?.ok) {
           this.guard.record(key, h)
           this.state.docs[key] = { rev: Number(res.rev), hash: h }
@@ -411,9 +429,15 @@ export class CloudSync {
     // Files deleted here.
     for (const [p, st] of Object.entries(this.state.files)) {
       if (st.deleted || !st.sha || local.files.has(p) || !local.known.has(p.split('/')[0])) continue
-      const res = await remote.pushFile({ path: p, sha: null, size: 0, expectedRev: Number(st.rev), deleted: true, device: this.vault.device })
-      if (res?.ok) this.state.files[p] = { rev: Number(res.rev), sha: null, deleted: true }
-      else {
+      if (this.guard.check(`file:${p}`, 'deleted')) continue
+      const res = await this.upload(`file:${p}`, () =>
+        remote.pushFile({ path: p, sha: null, size: 0, expectedRev: Number(st.rev), deleted: true, device: this.vault.device }),
+      )
+      if (res === REFUSED) continue
+      if (res?.ok) {
+        this.guard.record(`file:${p}`, 'deleted')
+        this.state.files[p] = { rev: Number(res.rev), sha: null, deleted: true }
+      } else {
         const row = await remote.getFile(p)
         if (row) await this.applyFile(remote, row, local, true)
       }
@@ -431,14 +455,17 @@ export class CloudSync {
         if (sha1(buf) !== loc.sha) return // changed while we looked; the next run sends it
         await remote.uploadBlob(loc.sha, buf)
       }
-      const res = await remote.pushFile({
-        path: p,
-        sha: loc.sha,
-        size: loc.size,
-        expectedRev: Number(st?.rev) || 0,
-        deleted: false,
-        device: this.vault.device,
-      })
+      const res = await this.upload(`file:${p}`, () =>
+        remote.pushFile({
+          path: p,
+          sha: loc.sha,
+          size: loc.size,
+          expectedRev: Number(st?.rev) || 0,
+          deleted: false,
+          device: this.vault.device,
+        }),
+      )
+      if (res === REFUSED) return
       if (res?.ok) {
         this.guard.record(`file:${p}`, loc.sha)
         this.state.files[p] = { rev: Number(res.rev), sha: loc.sha }

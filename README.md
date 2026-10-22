@@ -58,6 +58,14 @@ only lands on top of the latest version.
 Do not also keep the folder in OneDrive or Google Drive: let only one thing sync it.
 Old versions of every note stay in the `doc_history` table for 30 days.
 
+The database also guards itself against a sync loop, even from an old copy of
+the app: an upload that changes nothing writes nothing, one note, file or chat
+written more than 1200 times in an hour is refused for that hour, and more
+than 10000 writes in a day are refused until the next day. A refused upload
+stays saved on the computer and the sync button shows why. A nightly job
+deletes history older than 30 days. After updating the app, run
+`supabase/schema.sql` again to get these.
+
 ## Assistant
 
 A chat panel on the right (**Ctrl+J**, or the Assistant button) that can do
