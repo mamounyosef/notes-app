@@ -4,6 +4,9 @@ import { Menu, type MenuItem } from './Menu'
 import { Chevron, Copy, Plus, Star, X } from './Icons'
 
 /** Colors for notebooks that have none of their own, picked by notebook so it never changes. */
+/** Colors offered for a tab (the same as for notebooks). */
+const TAB_COLORS = ['#7c9cff', '#e06c75', '#e5c07b', '#98c379', '#56b6c2', '#c678dd', '#f06292', '#a5a5a5']
+
 const PALETTE = ['#61afef', '#98c379', '#e5c07b', '#c678dd', '#56b6c2', '#e06c75', '#d19a66', '#7aa2f7']
 
 function hashColor(id: string) {
@@ -33,6 +36,7 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
   const tabs = useStore((s) => s.tabs)
   const activeTab = useStore((s) => s.activeTab)
   const tree = useStore((s) => s.workspace.tree)
+  const picking = useStore((s) => s.pickingTab)
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
   const [dragId, setDragId] = useState<string | null>(null)
   const [drop, setDrop] = useState<{ id: string; after: boolean } | null>(null)
@@ -49,7 +53,7 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
           title: page?.title || 'Untitled',
           path: path.map((n) => n.title).join('  ›  '),
           notebookId: notebook?.id || '',
-          color: notebook?.color || (notebook ? hashColor(notebook.id) : 'var(--accent)'),
+          color: tab.color || notebook?.color || (notebook ? hashColor(notebook.id) : 'var(--accent)'),
         }
       }),
     [tabs, tree],
@@ -58,8 +62,14 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
   /* ---------- keys ---------- */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (!e.ctrlKey || e.altKey || e.metaKey) return
       const st = useStore.getState()
+      if (e.key === 'Escape' && st.pickingTab) {
+        st.openNextInNewTab(false)
+        e.preventDefault()
+        e.stopPropagation()
+        return
+      }
+      if (!e.ctrlKey || e.altKey || e.metaKey) return
       const k = e.key.toLowerCase()
       if (e.key === 'Tab') st.cycleTab(e.shiftKey ? -1 : 1)
       else if (e.key === 'PageDown' && !e.shiftKey) st.cycleTab(1)
@@ -103,6 +113,38 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
       { label: 'Duplicate tab', icon: <Copy />, onClick: () => st().duplicateTab(id) },
       { label: v.tab.pinned ? 'Unpin tab' : 'Pin tab', icon: <Star />, onClick: () => st().pinTab(id, !v.tab.pinned) },
       { separator: true },
+      { title: 'Tab color' },
+      {
+        icon: (
+          <div className="swatches tab-swatches">
+            {TAB_COLORS.map((c) => (
+              <button
+                key={c}
+                className={`swatch ${v.color === c ? 'on' : ''}`}
+                style={{ background: c }}
+                title={c}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  st().setTabColor(id, c)
+                  setMenu(null)
+                }}
+              />
+            ))}
+          </div>
+        ),
+      },
+      ...(v.tab.color
+        ? [
+            { label: 'Back to the notebook color', onClick: () => st().setTabColor(id, null) },
+            ...(v.notebookId
+              ? [{ label: 'Use this color for the whole notebook', onClick: () => {
+                  st().setNodeColor(v.notebookId, v.tab.color!)
+                  st().setTabColor(id, null)
+                } }]
+              : []),
+          ]
+        : []),
+      { separator: true },
       ...(only ? [] : [{ label: 'Close tab', hint: 'Ctrl+W', icon: <X />, onClick: () => st().closeTab(id) }]),
       ...(tabs.some((t) => t.id !== id && !t.pinned) ? [{ label: 'Close other tabs', onClick: () => st().closeOtherTabs(id) }] : []),
       ...(i < tabs.length - 1 ? [{ label: 'Close tabs to the right', onClick: () => st().closeTabsToRight(id) }] : []),
@@ -125,6 +167,17 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
     })
   }
 
+  // While a page is being picked for a new tab, it shows where the tab will go.
+  const placeholder = (
+    <div key="picking" className="tab picking" title="Click a page on the left to open it here (Esc cancels)">
+      <span className="tab-dot" />
+      <span className="tab-title">Pick a page...</span>
+      <button className="tab-x" title="Cancel (Esc)" onClick={() => st().openNextInNewTab(false)}>
+        <X size={11} />
+      </button>
+    </div>
+  )
+
   return (
     <div className="tabbar">
       <div
@@ -136,8 +189,9 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
         {views.map((v, i) => {
           const prev = views[i - 1]
           const next = views[i + 1]
-          const joinL = Boolean(prev && prev.notebookId === v.notebookId && v.notebookId)
-          const joinR = Boolean(next && next.notebookId === v.notebookId && v.notebookId)
+          // Neighbors from one notebook, in one color, read as a group.
+          const joinL = Boolean(prev && prev.notebookId === v.notebookId && v.notebookId && prev.color === v.color)
+          const joinR = Boolean(next && next.notebookId === v.notebookId && v.notebookId && next.color === v.color)
           const active = v.tab.id === activeTab
           return (
             <div
@@ -220,9 +274,9 @@ export default function TabStrip({ onNewTab }: { onNewTab(): void }) {
               )}
             </div>
           )
-        })}
+        }).flatMap((el, i) => (picking && views[i].tab.id === activeTab ? [el, placeholder] : [el]))}
       </div>
-      <button className="tab-new" title="New tab: pick a page (Ctrl+T)" onClick={onNewTab}>
+      <button className={`tab-new ${picking ? 'on' : ''}`} title={picking ? 'Cancel the new tab (Esc)' : 'New tab: pick a page on the left (Ctrl+T)'} onClick={onNewTab}>
         <Plus size={14} />
       </button>
       {tabs.length > 2 && (

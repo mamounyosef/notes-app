@@ -109,6 +109,8 @@ interface State {
   /** Pages open as tabs in the title bar; the active tab is the page on screen. */
   tabs: PageTab[]
   activeTab: string
+  /** The next page opened goes into a new tab (after the + button or Ctrl+T). */
+  pickingTab: boolean
   dirty: boolean
   zoom: number
   tool: 'select' | 'pen' | 'highlighter' | 'eraser' | 'space'
@@ -183,6 +185,8 @@ interface State {
   duplicateTab(id: string): Promise<void>
   moveTab(id: string, toIndex: number): void
   pinTab(id: string, pinned: boolean): void
+  /** A color for one tab (null: back to its notebook's color). */
+  setTabColor(id: string, color: string | null): void
   /** Remembers where the active tab is scrolled (the canvas calls this as you scroll). */
   noteScroll(): void
   setTool(t: State['tool']): void
@@ -232,6 +236,8 @@ export interface PageTab {
   back: NavEntry[]
   forward: NavEntry[]
   pinned?: boolean
+  /** Your own color for this tab; otherwise it takes its notebook's. */
+  color?: string
   /** Just opened in the background and not visited yet. */
   fresh?: boolean
 }
@@ -241,7 +247,6 @@ const tabId = () => nanoid(8)
 const closedTabs: { tab: PageTab; index: number }[] = []
 /** A tab switch is loading its page: the screen does not show the active tab yet. */
 let tabOpening = 0
-let newTabNext = false
 
 /** Pinned tabs stay at the front, in their order. */
 function pinnedFirst(tabs: PageTab[]) {
@@ -474,6 +479,7 @@ export const useStore = create<State>((set, get) => ({
   navForward: [],
   tabs: [],
   activeTab: '',
+  pickingTab: false,
   dirty: false,
   zoom: 1,
   tool: 'select',
@@ -567,6 +573,7 @@ export const useStore = create<State>((set, get) => ({
         left: Number(t.left) || 0,
         top: Number(t.top) || 0,
         pinned: Boolean(t.pinned),
+        ...(t.color ? { color: t.color } : {}),
         back: (t.back || []).filter((r) => isPage(tree, r.id)),
         forward: (t.forward || []).filter((r) => isPage(tree, r.id)),
       }))
@@ -725,9 +732,9 @@ export const useStore = create<State>((set, get) => ({
   async openPage(id, fromNav = false) {
     const token = ++openToken
     const prevId = get().activePageId
-    if (!fromNav && newTabNext) {
-      // Opened from "new tab": a fresh tab with its own history.
-      newTabNext = false
+    if (!fromNav && get().pickingTab) {
+      // Picked for a new tab (the open page too: two tabs, two scroll spots).
+      set({ pickingTab: false })
       const tabs = captureTab()
       const t: PageTab = { id: tabId(), pageId: id, left: 0, top: 0, back: [], forward: [] }
       const at = tabs.findIndex((x) => x.id === get().activeTab) + 1
@@ -1327,10 +1334,11 @@ export const useStore = create<State>((set, get) => ({
   },
 
   openNextInNewTab(on) {
-    newTabNext = on
+    set({ pickingTab: on })
   },
 
   async switchTab(id) {
+    if (get().pickingTab) set({ pickingTab: false })
     if (id === get().activeTab || !get().tabs.some((t) => t.id === id)) return
     set({ tabs: captureTab() })
     await activateTab(id)
@@ -1410,6 +1418,11 @@ export const useStore = create<State>((set, get) => ({
 
   pinTab(id, pinned) {
     set({ tabs: pinnedFirst(get().tabs.map((t) => (t.id === id ? { ...t, pinned } : t))) })
+    saveTabsSoon()
+  },
+
+  setTabColor(id, color) {
+    set({ tabs: get().tabs.map((t) => (t.id !== id ? t : color ? { ...t, color } : (({ color: _c, ...rest }) => rest)(t))) })
     saveTabsSoon()
   },
 
@@ -1729,10 +1742,22 @@ async function activateTab(id: string) {
   if (useStore.getState().activeTab === id) restoreView(t, useStore.getState().zoom)
 }
 
+// Closing the app: save the tabs now, not after the usual short wait.
+if (typeof window !== 'undefined')
+  window.addEventListener('beforeunload', () => {
+    if (!tabsTimer) return
+    clearTimeout(tabsTimer)
+    tabsTimer = null
+    const tabs = captureTab().map(({ fresh: _f, ...t }) => t)
+    local = { ...local, tabs, activeTab: useStore.getState().activeTab }
+    storage.writeLocal(local).catch(() => {})
+  })
+
 let tabsTimer: any = null
 function saveTabsSoon() {
   clearTimeout(tabsTimer)
   tabsTimer = setTimeout(() => {
+    tabsTimer = null
     const tabs = captureTab().map(({ fresh: _f, ...t }) => t)
     local = { ...local, tabs, activeTab: useStore.getState().activeTab }
     saveLocalSoon()

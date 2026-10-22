@@ -116,7 +116,8 @@ export default function App() {
     if (isResizingRef.current) return
     if (flyoutCloseTimer.current) clearTimeout(flyoutCloseTimer.current)
     flyoutCloseTimer.current = setTimeout(() => {
-      if (!isResizingRef.current) {
+      // Picking a page for a new tab keeps the panes out.
+      if (!isResizingRef.current && !pickingRef.current) {
         setFlyoutOpen(false)
       }
     }, delay)
@@ -240,11 +241,33 @@ export default function App() {
   const pageRoots = useMemo(() => activeSection?.children.filter((c) => c.kind === 'page') ?? [], [activeSection])
 
 
-  /** New tab: pick the page for it in search. */
+  /**
+   * New tab: shows the page panes and the next page clicked opens in a new
+   * tab (the same page again works too). Panes hidden before go back after.
+   */
+  const pickingTab = useStore((s) => s.pickingTab)
+  const pickingRef = useRef(false)
+  pickingRef.current = pickingTab
+  const panesBefore = useRef<{ sidebarVisible: boolean; pagelistVisible: boolean } | null>(null)
   const openNewTab = useCallback(() => {
-    useStore.getState().openNextInNewTab(true)
-    setShowSearch(true)
-  }, [])
+    const st = useStore.getState()
+    if (st.pickingTab) return st.openNextInNewTab(false)
+    st.openNextInNewTab(true)
+    const s = st.settings
+    if (s.autoHidePanes) openFlyout()
+    else if (!s.sidebarVisible || !s.pagelistVisible) {
+      panesBefore.current = { sidebarVisible: s.sidebarVisible, pagelistVisible: s.pagelistVisible }
+      st.setSettings({ sidebarVisible: true, pagelistVisible: true })
+    }
+  }, [openFlyout])
+  useEffect(() => {
+    if (pickingTab) return
+    if (panesBefore.current) {
+      useStore.getState().setSettings(panesBefore.current)
+      panesBefore.current = null
+    }
+    if (useStore.getState().settings.autoHidePanes) setFlyoutOpen(false)
+  }, [pickingTab])
 
   /* ---------- keyboard shortcuts ---------- */
   useEffect(() => {
@@ -471,6 +494,12 @@ export default function App() {
       {settings.pagelistVisible && (
         <>
           <div className="pane pages" style={{ width: settings.pagelistWidth }}>
+            {pickingTab && (
+              <div className="pick-hint">
+                Click a page to open it in a new tab
+                <button onClick={() => useStore.getState().openNextInNewTab(false)}>Cancel (Esc)</button>
+              </div>
+            )}
             <div className="pane-head">
               <Folder size={13} /> {activeSection?.title || 'Pages'}
               <div className="spacer" />
@@ -512,7 +541,7 @@ export default function App() {
   )
 
   return (
-    <div className="app">
+    <div className={`app ${pickingTab ? 'picking-tab' : ''}`}>
       <div className="titlebar">
         <button className="tb-btn" title="Back (Alt+Left, mouse back button)" disabled={!canGoBack} onClick={() => useStore.getState().goBack()}><ArrowLeft /></button>
         <button className="tb-btn" title="Forward (Alt+Right, mouse forward button)" disabled={!canGoForward} onClick={() => useStore.getState().goForward()}><ArrowRight /></button>
@@ -611,10 +640,7 @@ export default function App() {
 
       {showSearch && (
         <SearchModal
-          onClose={() => {
-            setShowSearch(false)
-            useStore.getState().openNextInNewTab(false)
-          }}
+          onClose={() => setShowSearch(false)}
         />
       )}
       {showSettings && <SettingsModal initialTab={settingsTab} onClose={() => setShowSettings(false)} />}

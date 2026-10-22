@@ -77,7 +77,7 @@ if errorlevel 1 (
 )
 
 echo.
-echo   [6/7] Creating the desktop and start menu shortcuts.
+echo   [6/7] Pointing every Notes shortcut (desktop, start menu, taskbar) at this version.
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\make-shortcut.ps1"
 if errorlevel 1 goto failed
 

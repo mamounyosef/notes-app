@@ -36,7 +36,7 @@ export interface LocalState {
   collapsed?: string[]
   zoom?: number
   /** Open page tabs, with scroll spots and back/forward history. */
-  tabs?: { id: string; pageId: string; left: number; top: number; pinned?: boolean; back?: { id: string; left: number; top: number }[]; forward?: { id: string; left: number; top: number }[] }[]
+  tabs?: { id: string; pageId: string; left: number; top: number; pinned?: boolean; color?: string; back?: { id: string; left: number; top: number }[]; forward?: { id: string; left: number; top: number }[] }[]
   activeTab?: string
 }
 
