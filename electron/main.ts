@@ -224,7 +224,9 @@ function createWindow() {
     })
   }
 
+  // Always open maximized, filling the screen.
   if (!TEST_OFFSCREEN) {
+    win.maximize()
     win.show()
     win.focus()
   }
