@@ -18,6 +18,7 @@ import { Extension, Mark, mergeAttributes, Node } from '@tiptap/core'
 import { NodeSelection, Plugin } from '@tiptap/pm/state'
 import { DOMSerializer } from '@tiptap/pm/model'
 import { BlockMath, InlineMath } from './math'
+import { ListAfterBreak } from './listAfterBreak'
 import { htmlToMarkdown, looksLikeMarkdown, markdownToHtml } from './markdown'
 import { latexDocumentToHtml, looksLikeLatexDocument } from './latexDocument'
 import { storage } from '../lib/storage'
@@ -370,6 +371,7 @@ export function buildExtensions(placeholder: string) {
       codeBlock: false,
       history: { depth: 200 },
     }),
+    ListAfterBreak,
     CustomCodeBlockLowlight,
     DraggableHorizontalRule,
     Underline,
