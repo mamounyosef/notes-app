@@ -306,6 +306,21 @@ test('collapsing a folder is not a synced change', () => {
   assert.equal(S.stampWorkspace(ws0, a, 'A', tick()).bumped, false)
 })
 
+test('workspace: same versions in a different order settle on one order (no endless ping-pong)', () => {
+  // Seen for real: each computer kept its own sibling order after a merge and
+  // they sent the tree to each other forever.
+  const n = (id, kind, children = []) => ({ id, kind, title: id, children, createdAt: 1, updatedAt: 1, vv: { A: 1 } })
+  const x = { version: 1, syncV: 1, tree: [n('nb', 'notebook', [n('s', 'section', [n('p1', 'page'), n('p2', 'page'), n('p3', 'page')])])], favorites: [], favVV: {}, tombstones: {} }
+  const y = clone(x)
+  const kids = y.tree[0].children[0].children
+  ;[kids[1], kids[2]] = [kids[2], kids[1]]
+  const order = (w) => w.tree[0].children[0].children.map((c) => c.id).join()
+  const onX = S.mergeWorkspaces(x, y, 'a')
+  const onY = S.mergeWorkspaces(y, x, 'a')
+  assert.equal(order(onX), order(onY))
+  assert.equal(S.stable(S.mergeWorkspaces(onX, onY, 'a')), S.stable(onX))
+})
+
 /* ---------------- settings ---------------- */
 
 test('settings: the newest change to each setting wins', () => {

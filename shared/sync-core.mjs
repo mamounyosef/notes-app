@@ -549,8 +549,13 @@ export function mergeWorkspaces(a, b, primary = 'a') {
       const cmp = vvCompare(ra.vv, rb.vv)
       if (cmp === 'a') r = ra
       else if (cmp === 'b') r = rb
-      else if (cmp === 'equal') r = primary === 'a' ? ra : rb
-      else {
+      else if (cmp === 'equal' && nodeBody(ra) === nodeBody(rb)) r = primary === 'a' ? ra : rb
+      else if (cmp === 'equal') {
+        // Same version, different place: a merge renumbered the siblings. Both
+        // computers must pick the same one, or each keeps its own order and
+        // they send the tree to each other forever.
+        r = hash(nodeBody(ra)) >= hash(nodeBody(rb)) ? ra : rb
+      } else {
         const ta = ra.updatedAt || 0
         const tb = rb.updatedAt || 0
         const win = ta !== tb ? (ta > tb ? ra : rb) : hash(nodeBody(ra)) >= hash(nodeBody(rb)) ? ra : rb
@@ -567,7 +572,12 @@ export function mergeWorkspaces(a, b, primary = 'a') {
   let favorites
   if (fcmp === 'a') favorites = a.favorites || []
   else if (fcmp === 'b') favorites = b.favorites || []
-  else if (fcmp === 'equal') favorites = (primary === 'a' ? a : b).favorites || []
+  else if (fcmp === 'equal') {
+    const fa = a.favorites || []
+    const fb = b.favorites || []
+    // Same version but different: pick the same list on both computers.
+    favorites = stable(fa) === stable(fb) ? (primary === 'a' ? fa : fb) : hash(stable(fa)) >= hash(stable(fb)) ? fa : fb
+  }
   else favorites = [...new Set([...(a.favorites || []), ...(b.favorites || [])])]
   favorites = favorites.filter((id) => out.has(id))
 
