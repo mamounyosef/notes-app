@@ -11,8 +11,14 @@ function KeyRow({ provider, hint }: { provider: Provider; hint: string }) {
   const [busy, setBusy] = useState(false)
 
   const [limits, setLimits] = useState('')
+  const [out, setOut] = useState('')
   const refresh = () => {
     agentApi.keyStatus(provider).then(setStatus)
+    const other = PROVIDER_LABEL[provider === 'ollama' ? 'openrouter' : 'ollama']
+    agentApi.creditStatus().then((list) => {
+      const e = list.find((x) => x.provider === provider)
+      setOut(e ? ` Out of credit: using ${other} until ${new Date(e.retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.` : '')
+    })
     if (provider === 'openrouter')
       agentApi.openrouterLimits().then((l) => setLimits(l.ok && l.freeLimit ? ` Free requests today: ${l.freeUsed ?? 0} of ${l.freeLimit} used.` : ''))
   }
@@ -40,7 +46,7 @@ function KeyRow({ provider, hint }: { provider: Provider; hint: string }) {
         <label>
           {PROVIDER_LABEL[provider]} API key
           <span className="sub">
-            {status?.hasKey ? `Saved on this computer (${status.masked}), encrypted by Windows.${limits}` : `Not set. ${hint}`}
+            {status?.hasKey ? `Saved on this computer (${status.masked}), encrypted by Windows.${limits}${out}` : `Not set. ${hint}`}
           </span>
         </label>
         <div className="row-inline">
@@ -90,7 +96,8 @@ export default function AiSettings() {
       </div>
       <div className="empty-hint" style={{ padding: '6px 0' }}>
         Ctrl+J opens the assistant, Ctrl+L sends the selection to it. Chats sync between your computers through cloud sync.
-        Keys stay on each computer, so enter them on the laptop too.
+        Keys stay on each computer, so enter them on the laptop too. With both keys saved, a model whose service runs
+        out of credit switches to the same model (or Gemma 4 31B) on the other service, and switches back once it has credit again.
       </div>
     </div>
   )

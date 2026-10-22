@@ -75,6 +75,16 @@ Gemma 4 31B through Ollama Cloud.
 
 - **Setup:** Settings, AI. Paste your Ollama API key (ollama.com, Settings,
   Keys). It is stored encrypted on that computer only, so enter it on each one.
+  An OpenRouter key (openrouter.ai, Keys) can be added next to it.
+- **Two keys, automatic switching:** with both keys saved, when a model's
+  service runs out of credit (Ollama plan usage or credit, OpenRouter credit
+  or its daily free allowance), the reply goes to the same model on the other
+  service, or Gemma 4 31B there if it has no twin. The app remembers the
+  service that ran out (OpenRouter's daily allowance until midnight UTC,
+  otherwise 15 minutes, or until you save a new key) and switches back on its
+  own afterwards. A model with no key for its service also uses the other
+  one. Busy models are retried, not switched. Each switched reply is marked
+  in the chat, and its cost is counted for the model that answered.
 - **It sees what you see:** every message carries the open page and its full
   content, the cells and the exact lines on screen, your selection, the caret
   and the mouse position, plus the whole notebook tree.

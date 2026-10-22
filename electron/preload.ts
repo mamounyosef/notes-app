@@ -85,14 +85,15 @@ const api = {
   agent: {
     keyStatus: (provider?: string) => ipcRenderer.invoke('agent:keyStatus', provider) as Promise<{ hasKey: boolean; masked: string }>,
     setKey: (key: string, provider?: string) => ipcRenderer.invoke('agent:setKey', key, provider) as Promise<{ ok: boolean; error?: string }>,
+    creditStatus: () => ipcRenderer.invoke('agent:creditStatus') as Promise<{ provider: string; retryAt: number; detail: string }[]>,
     openrouterLimits: () => ipcRenderer.invoke('agent:openrouterLimits') as Promise<{ ok: boolean; freeUsed?: number | null; freeLimit?: number | null; freeTier?: boolean; error?: string }>,
     chat: (reqId: string, body: unknown) =>
-      ipcRenderer.invoke('agent:chat', reqId, body) as Promise<{ ok: boolean; error?: string; aborted?: boolean }>,
+      ipcRenderer.invoke('agent:chat', reqId, body) as Promise<{ ok: boolean; error?: string; aborted?: boolean; model?: string; switched?: { from: string; to: string; reason: string } }>,
     abort: (reqId: string) => ipcRenderer.invoke('agent:abort', reqId),
     dictate: () => ipcRenderer.invoke('agent:dictate') as Promise<boolean>,
     web: (kind: 'search' | 'fetch', arg: unknown) =>
       ipcRenderer.invoke('agent:web', kind, arg) as Promise<{ ok: boolean; data?: any; error?: string }>,
-    complete: (body: unknown) => ipcRenderer.invoke('agent:complete', body) as Promise<{ ok: boolean; content?: string; error?: string }>,
+    complete: (body: unknown) => ipcRenderer.invoke('agent:complete', body) as Promise<{ ok: boolean; content?: string; error?: string; model?: string; switched?: { from: string; to: string; reason: string } }>,
     renderWidget: (body: { html: string; width?: number }) => ipcRenderer.invoke('agent:renderWidget', body) as Promise<WidgetShot>,
     /** Streamed chunks of a running chat request. Returns an unsubscribe. */
     onChunk: (cb: (reqId: string, chunk: any) => void) => {

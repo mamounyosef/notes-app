@@ -15,7 +15,7 @@ import type { LiveSelection } from './selection'
 import { activePath, messageOrder, PENDING, parentKey, ROOT, tipOf, treeOf } from './branches'
 export { messageOrder }
 
-import { DEFAULT_MODEL, MODELS, VISION_MODEL, modelInfo, thinkValue, costOf } from './models'
+import { DEFAULT_MODEL, MODELS, PROVIDER_LABEL, VISION_MODEL, modelInfo, thinkValue, costOf } from './models'
 import { readVoicePrefs, recordSpeed } from '../voice/voicePrefs'
 export { DEFAULT_MODEL }
 const MAX_STEPS = 30
@@ -462,6 +462,11 @@ export const useAgent = create<AgentState>((set, get) => {
     }
     const off = agentApi.onChunk((rid, chunk) => {
       if (rid !== reqId) return
+      // The model's service is out of credit: the main process moved the request to another service.
+      if (chunk.switched) {
+        setS(id, { activity: `${chunk.switched.reason}: using ${modelInfo(chunk.switched.to).name} on ${PROVIDER_LABEL[modelInfo(chunk.switched.to).provider]}` })
+        return
+      }
       const m = chunk.message || {}
       if (m.thinking) {
         if (!thinkStart) thinkStart = Date.now()
@@ -519,7 +524,7 @@ export const useAgent = create<AgentState>((set, get) => {
         if (msg.content || msg.thinking) pushMsg(id, { ...msg, meta: { stopped: true } })
         return null
       }
-      const err = res.error === 'NO_KEY' ? 'Add your Ollama API key in Settings, AI.' : res.error || 'The model did not answer.'
+      const err = res.error === 'NO_KEY' ? `Add your ${PROVIDER_LABEL[modelInfo(model).provider]} API key (or the other service's) in Settings, Assistant.` : res.error || 'The model did not answer.'
       setS(id, { error: err })
       if (res.error === 'NO_KEY') set({ hasKey: false })
       return null
@@ -528,9 +533,12 @@ export const useAgent = create<AgentState>((set, get) => {
     if (!msg.thinking) delete msg.thinking
     if (!msg.toolCalls?.length) delete msg.toolCalls
     const u = usage as { prompt: number; output: number; cached: number; ms: number } | null
+    // Priced and counted as the model that answered, which differs from the chosen one after a switch.
+    const used = res.model || model
+    if (res.switched) msg.meta = { ...(msg.meta || {}), switched: res.switched }
     if (u) {
-      msg.meta = { ...(msg.meta || {}), usage: { ...u, model } } as any
-      setS(id, { usage: { ...u, model, at: Date.now() } })
+      msg.meta = { ...(msg.meta || {}), usage: { ...u, model: used } } as any
+      setS(id, { usage: { ...u, model: used, at: Date.now() } })
     }
     pushMsg(id, msg)
     return msg
@@ -833,8 +841,9 @@ export const useAgent = create<AgentState>((set, get) => {
 
     hasKey: null,
     async refreshKey() {
-      const s = await agentApi.keyStatus()
-      set({ hasKey: s.hasKey })
+      // Either key will do: a model whose service has no key falls back to the other service.
+      const [ollama, openrouter] = await Promise.all([agentApi.keyStatus('ollama'), agentApi.keyStatus('openrouter')])
+      set({ hasKey: ollama.hasKey || openrouter.hasKey })
     },
 
     chats: [],

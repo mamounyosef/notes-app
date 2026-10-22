@@ -1,7 +1,9 @@
 /**
  * Main process side of the in-app agent:
- *  - keeps the Ollama API key, encrypted by Windows, out of the page,
- *  - streams chat requests to Ollama Cloud and relays the chunks,
+ *  - keeps the Ollama and OpenRouter API keys, encrypted by Windows, out of the page,
+ *  - streams chat requests to Ollama Cloud or OpenRouter and relays the chunks,
+ *  - switches a request to the other service when its own is out of credit
+ *    (or has no key), and remembers that for a while,
  *  - stores chats and their attachments (shared/chat-store.mjs), synced
  *    through Supabase when this computer is signed in.
  */
@@ -36,6 +38,69 @@ function writeKey(key: string, p: Provider = 'ollama') {
 
 const mask = (k: string) => (k ? `${k.slice(0, 4)}...${k.slice(-4)}` : '')
 
+const LABEL: Record<Provider, string> = { ollama: 'Ollama', openrouter: 'OpenRouter' }
+
+/** An HTTP failure from a service, with what it said. */
+class ServiceError extends Error {
+  constructor(public provider: Provider, public status: number, public detail: string) {
+    super(`${provider === 'openrouter' ? 'OpenRouter: ' : ''}${status ? `${status} ` : ''}${detail}`.trim())
+  }
+}
+
+/** The service refused because the key's credit, plan usage or daily free allowance is used up. */
+class OutOfCredit extends Error {
+  constructor(public provider: Provider, public detail: string, public retryAt: number) {
+    super(`${LABEL[provider]} is out of credit: ${detail}`)
+  }
+}
+
+const CREDIT_TEXT = /credit|insufficient|balance|quota|usage limit|limit (?:reached|exceeded)|reached your|exceeded your|upgrade|billing|payment|subscription|free-models-per-day|per[- ]day|daily|weekly|monthly/i
+
+/** Next midnight UTC, when OpenRouter resets the free models' daily allowance. */
+function nextUtcMidnight() {
+  const d = new Date()
+  return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1)
+}
+
+/**
+ * When a failure means the key has run out (credit, plan usage or the daily
+ * free allowance) rather than a passing problem: when to try that service
+ * again, else 0. Status 0 is an error sent inside a stream, judged by its text.
+ *  - 402 is "payment required" on both services.
+ *  - 429 is out of credit only when the text says so (a daily or plan limit);
+ *    otherwise it is a busy model, which is retried, not switched away from.
+ *  - 403 is out of credit when the text says so (OpenRouter's key spending limit).
+ */
+function creditRetryAt(p: Provider, status: number, text: string): number {
+  const credit = status === 402 || ((status === 429 || status === 403 || status === 0) && CREDIT_TEXT.test(text))
+  if (!credit) return 0
+  // The free models' daily allowance comes back at midnight UTC.
+  if (p === 'openrouter' && /free-models-per-day|per[- ]day|daily/i.test(text)) return nextUtcMidnight()
+  // Credit can be topped up or a plan limit can reset at any time: look again after a while.
+  return Date.now() + 15 * 60_000
+}
+
+/** The error text a failed response carried, as one line. */
+async function failureText(p: Provider, res: Response) {
+  if (p === 'openrouter') return (await errorText(res)).replace(/^\d+\s*/, '')
+  const text = await res.text().catch(() => '')
+  try { return String(JSON.parse(text).error || text) } catch { return text }
+}
+
+/** Turns a failed response into the right error: out of credit, or a plain service error. */
+async function failure(p: Provider, res: Response): Promise<Error> {
+  const detail = (await failureText(p, res)).trim() || res.statusText || 'No answer'
+  const retryAt = creditRetryAt(p, res.status, detail)
+  return retryAt ? new OutOfCredit(p, `${res.status} ${detail}`, retryAt) : new ServiceError(p, res.status, detail)
+}
+
+/** One model to try: the one asked for, or one on the other service to fall back to. */
+interface Candidate {
+  model: string
+  provider: Provider
+  think?: boolean | string
+}
+
 export function setupAgent(opts: {
   getWin(): BrowserWindow | null
   device: string
@@ -57,6 +122,14 @@ export function setupAgent(opts: {
 
   /* ---------------- API key ---------------- */
 
+  /** Services that ran out of credit, so requests go to the other one until retryAt. */
+  const exhausted = new Map<Provider, { retryAt: number; detail: string }>()
+  const isExhausted = (p: Provider) => {
+    const e = exhausted.get(p)
+    if (e && e.retryAt <= Date.now()) exhausted.delete(p)
+    return exhausted.has(p)
+  }
+
   ipcMain.handle('agent:keyStatus', (_e, provider?: Provider) => {
     const k = readKey(providerOf(provider))
     return { hasKey: Boolean(k), masked: mask(k) }
@@ -77,7 +150,15 @@ export function setupAgent(opts: {
       /* offline: keep it anyway */
     }
     writeKey(k, p)
+    // A new key may well have credit: stop avoiding this service.
+    exhausted.delete(p)
     return { ok: true }
+  })
+
+  /** Services being avoided because they ran out of credit, and when they are tried again. */
+  ipcMain.handle('agent:creditStatus', () => {
+    const now = Date.now()
+    return [...exhausted].filter(([, v]) => v.retryAt > now).map(([provider, v]) => ({ provider, retryAt: v.retryAt, detail: v.detail }))
   })
 
   /** OpenRouter's free allowance for this key: requests left today. */
@@ -120,9 +201,7 @@ export function setupAgent(opts: {
     return out
   }
 
-  async function post(body: any, signal: AbortSignal) {
-    const key = readKey()
-    if (!key) throw new Error('NO_KEY')
+  function postOllama(key: string, body: any, signal: AbortSignal) {
     return fetch(`${OLLAMA}/chat`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
@@ -131,70 +210,164 @@ export function setupAgent(opts: {
     })
   }
 
+  /**
+   * Runs a request on the model asked for and, if its service is out of
+   * credit or has no key, on the fallbacks the page sent (models on the other
+   * service). A service that ran out is remembered, so later requests go
+   * straight to the other one until it is due to be tried again; if every
+   * service is out, they are all tried anyway, in case one has recovered.
+   * `run` must throw OutOfCredit only before it has sent anything on.
+   */
+  async function withFallback<T>(
+    body: any,
+    signal: AbortSignal,
+    onSwitch: (to: Candidate, reason: string) => void,
+    run: (c: Candidate, key: string, req: any) => Promise<T>,
+  ): Promise<{ result: T; used: Candidate; switched?: { from: string; to: string; reason: string } }> {
+    const { provider, fallbacks, ...rest } = body || {}
+    const first: Candidate = { model: rest.model, provider: providerOf(provider), think: rest.think }
+    const all: Candidate[] = [first]
+    for (const f of Array.isArray(fallbacks) ? fallbacks : []) {
+      const c: Candidate = { model: String(f?.model || ''), provider: providerOf(f?.provider), think: f?.think }
+      if (c.model && !all.some((x) => x.model === c.model && x.provider === c.provider)) all.push(c)
+    }
+    const order = [...all.filter((c) => !isExhausted(c.provider)), ...all.filter((c) => isExhausted(c.provider))]
+    const why: string[] = []
+    // Skipped ahead of time because its service ran out earlier: say so.
+    if (order[0] !== first) {
+      const at = new Date(exhausted.get(first.provider)!.retryAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      why.push(`${LABEL[first.provider]} ran out of credit earlier (tried again after ${at})`)
+    }
+    let lastError: Error | null = null
+    for (const c of order) {
+      if (signal.aborted) throw new Error('aborted')
+      const key = readKey(c.provider)
+      if (!key) {
+        why.push(`no ${LABEL[c.provider]} key`)
+        continue
+      }
+      if (c !== first) {
+        const reason = why.length ? why.join(', ') : `${LABEL[first.provider]} is out of credit`
+        onSwitch(c, reason)
+      }
+      const req: any = { ...rest, model: c.model }
+      if (c.think === undefined) delete req.think
+      else req.think = c.think
+      try {
+        const result = await run(c, key, req)
+        exhausted.delete(c.provider)
+        const switched = c === first ? undefined : { from: first.model, to: c.model, reason: why.join(', ') || `${LABEL[first.provider]} is out of credit` }
+        return { result, used: c, switched }
+      } catch (e: any) {
+        if (signal.aborted || !(e instanceof OutOfCredit)) throw e
+        exhausted.set(c.provider, { retryAt: e.retryAt, detail: e.detail })
+        opts.log('agent: out of credit', c.provider, e.detail)
+        why.push(`${LABEL[c.provider]} is out of credit (${e.detail.slice(0, 160)})`)
+        lastError = e
+      }
+    }
+    if (lastError) throw new Error(why.join('; '))
+    // No service that could run this had a key.
+    throw new Error('NO_KEY')
+  }
+
+  /** Streams one reply from OpenRouter, relayed as Ollama chunks. */
+  async function streamOpenRouter(key: string, req: any, signal: AbortSignal, emit: (chunk: any) => void) {
+    const orReq = toOpenRouter(req, true)
+    let res = await postWithFallback(key, orReq, signal)
+    // Free models are busy at times (429/5xx): try twice more before giving up,
+    // unless the 429 says the credit or the daily free allowance is used up.
+    for (let attempt = 1; attempt <= 2 && (res.status === 429 || res.status >= 500) && !signal.aborted; attempt++) {
+      if (res.status === 429) {
+        const text = await res.clone().text().catch(() => '')
+        if (creditRetryAt('openrouter', 429, text)) break
+      }
+      await res.text().catch(() => '')
+      await new Promise((r) => setTimeout(r, 2500 * attempt))
+      res = await postWithFallback(key, orReq, signal)
+    }
+    if (!res.ok || !res.body) throw await failure('openrouter', res)
+    let sent = false
+    try {
+      await relayStream(res, (chunk) => {
+        sent = true
+        emit(chunk)
+      })
+    } catch (e: any) {
+      // Refused inside the stream before anything came: may still be out of credit.
+      const retryAt = sent ? 0 : creditRetryAt('openrouter', 0, e?.message || '')
+      if (retryAt) throw new OutOfCredit('openrouter', e.message, retryAt)
+      throw e
+    }
+  }
+
+  /** Streams one reply from Ollama Cloud. */
+  async function streamOllama(key: string, req: any, signal: AbortSignal, emit: (chunk: any) => void) {
+    let res = await postOllama(key, req, signal)
+    if (res.status === 400 && req.think !== undefined) {
+      // Some models refuse the think switch: ask again without it.
+      const text = await res.clone().text()
+      if (/think/i.test(text)) {
+        await res.text().catch(() => '')
+        delete req.think
+        res = await postOllama(key, req, signal)
+      }
+    }
+    // Ollama Cloud now and then answers 500/502/503 under load: try twice more before giving up.
+    for (let attempt = 1; attempt <= 2 && res.status >= 500 && !signal.aborted; attempt++) {
+      await res.text().catch(() => '')
+      await new Promise((r) => setTimeout(r, 1500 * attempt))
+      res = await postOllama(key, req, signal)
+    }
+    if (!res.ok || !res.body) throw await failure('ollama', res)
+    let sent = false
+    const handle = (chunk: any) => {
+      if (chunk.error) {
+        const msg = String(chunk.error)
+        const retryAt = sent ? 0 : creditRetryAt('ollama', 0, msg)
+        throw retryAt ? new OutOfCredit('ollama', msg, retryAt) : new Error(msg)
+      }
+      sent = true
+      emit(chunk)
+    }
+    const reader = res.body.getReader()
+    const dec = new TextDecoder()
+    let buf = ''
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += dec.decode(value, { stream: true })
+      let nl
+      while ((nl = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, nl).trim()
+        buf = buf.slice(nl + 1)
+        if (!line) continue
+        let chunk
+        try { chunk = JSON.parse(line) } catch { continue }
+        handle(chunk)
+      }
+    }
+    if (buf.trim()) {
+      let chunk
+      try { chunk = JSON.parse(buf) } catch { /* partial */ }
+      if (chunk) handle(chunk)
+    }
+  }
+
   ipcMain.handle('agent:chat', async (_e, reqId: string, body: any) => {
     const ctrl = new AbortController()
     running.set(reqId, ctrl)
     try {
-      const { provider, ...rest } = body || {}
-      const req = { ...rest, stream: true, messages: await withImages(rest.messages || []) }
-      if (providerOf(provider) === 'openrouter') {
-        const key = readKey('openrouter')
-        if (!key) throw new Error('No OpenRouter API key. Add it in Settings, Assistant.')
-        const orReq = toOpenRouter(req, true)
-        let res = await postWithFallback(key, orReq, ctrl.signal)
-        // Free models are busy at times (429/5xx): try twice more before giving up.
-        for (let attempt = 1; attempt <= 2 && (res.status === 429 || res.status >= 500) && !ctrl.signal.aborted; attempt++) {
-          await res.text().catch(() => '')
-          await new Promise((r) => setTimeout(r, 2500 * attempt))
-          res = await postWithFallback(key, orReq, ctrl.signal)
-        }
-        if (!res.ok || !res.body) throw new Error(`OpenRouter: ${await errorText(res)}`)
-        await relayStream(res, (chunk) => send('agent:chunk', reqId, chunk))
-        return { ok: true }
-      }
-      let res = await post(req, ctrl.signal)
-      if (res.status === 400 && req.think !== undefined) {
-        // Some models refuse the think switch: ask again without it.
-        const text = await res.text()
-        if (/think/i.test(text)) {
-          delete req.think
-          res = await post(req, ctrl.signal)
-        } else throw new Error(text || 'Bad request')
-      }
-      // Ollama Cloud now and then answers 500/502/503 under load: try twice more before giving up.
-      for (let attempt = 1; attempt <= 2 && res.status >= 500 && !ctrl.signal.aborted; attempt++) {
-        await res.text().catch(() => '')
-        await new Promise((r) => setTimeout(r, 1500 * attempt))
-        res = await post(req, ctrl.signal)
-      }
-      if (!res.ok || !res.body) {
-        const text = await res.text().catch(() => '')
-        let msg = text
-        try { msg = JSON.parse(text).error || text } catch { /* plain text */ }
-        throw new Error(`${res.status} ${msg}`.trim())
-      }
-      const reader = res.body.getReader()
-      const dec = new TextDecoder()
-      let buf = ''
-      for (;;) {
-        const { value, done } = await reader.read()
-        if (done) break
-        buf += dec.decode(value, { stream: true })
-        let nl
-        while ((nl = buf.indexOf('\n')) >= 0) {
-          const line = buf.slice(0, nl).trim()
-          buf = buf.slice(nl + 1)
-          if (!line) continue
-          let chunk
-          try { chunk = JSON.parse(line) } catch { continue }
-          if (chunk.error) throw new Error(chunk.error)
-          send('agent:chunk', reqId, chunk)
-        }
-      }
-      if (buf.trim()) {
-        try { send('agent:chunk', reqId, JSON.parse(buf)) } catch { /* partial */ }
-      }
-      return { ok: true }
+      const emit = (chunk: any) => send('agent:chunk', reqId, chunk)
+      const messages = await withImages(body?.messages || [])
+      const { used, switched } = await withFallback(
+        { ...body, messages, stream: true },
+        ctrl.signal,
+        // Lets the page show the switch while the other model starts.
+        (to, reason) => emit({ switched: { from: body?.model, to: to.model, reason } }),
+        (c, key, req) => (c.provider === 'openrouter' ? streamOpenRouter(key, req, ctrl.signal, emit) : streamOllama(key, req, ctrl.signal, emit)),
+      )
+      return { ok: true, model: used.model, switched }
     } catch (e: any) {
       if (ctrl.signal.aborted) return { ok: false, aborted: true }
       const msg = e?.message === 'NO_KEY' ? 'NO_KEY' : e?.message || String(e)
@@ -233,27 +406,30 @@ export function setupAgent(opts: {
     }
   })
 
-  /** One short non streaming call (chat titles). */
+  /** One short non streaming call (chat titles, reading images for models that cannot see). */
   ipcMain.handle('agent:complete', async (_e, body: any) => {
     const ctrl = new AbortController()
     // timeout_ms is ours, not Ollama's: reading a dense image can take a while.
-    const { timeout_ms, provider, ...req } = body || {}
+    const { timeout_ms, ...rest } = body || {}
     const t = setTimeout(() => ctrl.abort(), Math.min(180_000, Number(timeout_ms) || 30_000))
     try {
-      if (providerOf(provider) === 'openrouter') {
-        const key = readKey('openrouter')
-        if (!key) return { ok: false, error: 'No OpenRouter API key.' }
-        const res = await postWithFallback(key, toOpenRouter({ ...req, messages: await withImages(req.messages || []) }, false), ctrl.signal)
-        if (!res.ok) return { ok: false, error: await errorText(res) }
+      const messages = await withImages(rest.messages || [])
+      const { result, used, switched } = await withFallback({ ...rest, messages }, ctrl.signal, () => {}, async (c, key, req) => {
+        if (c.provider === 'openrouter') {
+          const res = await postWithFallback(key, toOpenRouter(req, false), ctrl.signal)
+          if (!res.ok) throw await failure('openrouter', res)
+          const j: any = await res.json()
+          return String(j?.choices?.[0]?.message?.content || '')
+        }
+        const res = await postOllama(key, { ...req, stream: false }, ctrl.signal)
+        if (!res.ok) throw await failure('ollama', res)
         const j: any = await res.json()
-        return { ok: true, content: j?.choices?.[0]?.message?.content || '' }
-      }
-      const res = await post({ ...req, messages: await withImages(req.messages || []), stream: false }, ctrl.signal)
-      if (!res.ok) return { ok: false, error: `${res.status}` }
-      const j: any = await res.json()
-      return { ok: true, content: j?.message?.content || '' }
+        return String(j?.message?.content || '')
+      })
+      return { ok: true, content: result, model: used.model, switched }
     } catch (e: any) {
-      return { ok: false, error: e?.message || String(e) }
+      if (ctrl.signal.aborted) return { ok: false, error: 'Timed out.' }
+      return { ok: false, error: e?.message === 'NO_KEY' ? 'No API key for this service.' : e?.message || String(e) }
     } finally {
       clearTimeout(t)
     }

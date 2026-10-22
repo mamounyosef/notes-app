@@ -67,7 +67,8 @@ async function timeOne(model: string, think: boolean): Promise<{ ms: number | nu
       for (const tc of m.tool_calls || []) calls.push({ name: tc.function?.name, arguments: tc.function?.arguments })
     })
     const timer = setTimeout(() => agentApi.abort(reqId), Math.max(1000, TIMEOUT_MS - (Date.now() - t0)))
-    const res = await agentApi.chat(reqId, { model, messages, tools: TOOL_DEFS, think: thinkValue(model, think), options: { temperature: 0.4 } })
+    // noFallback: a timing must come from the model being timed, never a stand in.
+    const res = await agentApi.chat(reqId, { model, messages, tools: TOOL_DEFS, think: thinkValue(model, think), options: { temperature: 0.4 }, noFallback: true })
     clearTimeout(timer)
     off()
     if (first !== null) break
