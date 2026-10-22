@@ -6,6 +6,8 @@ REM One click setup and update: pulls the latest version, installs what is
 REM needed, builds and packages the app, puts a
 REM Notes icon on the desktop and in the start menu, and starts it.
 REM Run it again any time to update. No admin rights needed.
+REM Settings, Update runs it hidden with NOTES_QUIET=1: it never waits for a
+REM key then, and on a failure it starts the old Notes again.
 
 cd /d "%~dp0"
 
@@ -28,7 +30,7 @@ if errorlevel 1 (
   echo   Node.js could not be installed automatically.
   echo   Install the LTS version from https://nodejs.org and run this file again.
   echo.
-  pause
+  if not defined NOTES_QUIET pause
   exit /b 1
 )
 
@@ -100,5 +102,14 @@ exit /b 0
 echo.
 echo   Something failed above. Copy the message and check it, then run this again.
 echo.
-pause
+if not defined NOTES_QUIET (
+  pause
+  exit /b 1
+)
+REM Started from Settings: Notes was closed for the update, so open what is there again.
+if exist "release\win-unpacked\Notes.exe" (
+  start "" "%~dp0release\win-unpacked\Notes.exe"
+) else (
+  start "" "%~dp0run-notes.bat"
+)
 exit /b 1

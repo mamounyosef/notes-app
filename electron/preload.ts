@@ -82,6 +82,11 @@ const api = {
     maximize: () => ipcRenderer.invoke('win:maximize'),
     close: () => ipcRenderer.invoke('win:close'),
   },
+  update: {
+    check: () => ipcRenderer.invoke('update:check'),
+    run: () => ipcRenderer.invoke('update:run') as Promise<{ ok: boolean; error?: string }>,
+    openLog: () => ipcRenderer.invoke('update:openLog'),
+  },
   agent: {
     keyStatus: (provider?: string) =>
       ipcRenderer.invoke('agent:keyStatus', provider) as Promise<{ hasKey: boolean; masked: string; keys: { masked: string; outUntil: number | null; detail: string; inUse: boolean }[] }>,

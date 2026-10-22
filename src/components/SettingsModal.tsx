@@ -7,6 +7,7 @@ import { X, Plus, Min, Undo } from './Icons'
 import { CloudSyncSection } from './CloudSync'
 import AiSettings from './agent/AiSettings'
 import VoiceSettings from './voice/VoiceSettings'
+import UpdateSettings from './UpdateSettings'
 import { SHORTCUTS, prettyShortcut, shortcutFromEvent, type ShortcutKey } from '../editor/shortcuts'
 
 function getDecimals(step: number): number {
@@ -272,8 +273,8 @@ const FONT_CHOICES = [
   'Cascadia Code, Consolas, monospace',
 ]
 
-type Tab = 'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'ai' | 'voice' | 'storage'
-const TABS: Tab[] = ['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'ai', 'voice', 'storage']
+type Tab = 'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'ai' | 'voice' | 'storage' | 'update'
+const TABS: Tab[] = ['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'ai', 'voice', 'storage', 'update']
 
 export default function SettingsModal({ onClose, initialTab }: { onClose(): void; initialTab?: string }) {
   const settings = useStore((s) => s.settings)
@@ -361,7 +362,7 @@ export default function SettingsModal({ onClose, initialTab }: { onClose(): void
           <div className="theme-chips">
             {TABS.map((t) => (
               <button key={t} className={`theme-chip ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}>
-                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', shortcuts: 'Shortcuts', ai: 'AI', voice: 'Voice', storage: 'Storage' }[t]}
+                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', shortcuts: 'Shortcuts', ai: 'AI', voice: 'Voice', storage: 'Storage', update: 'Update' }[t]}
               </button>
             ))}
           </div>
@@ -511,6 +512,8 @@ export default function SettingsModal({ onClose, initialTab }: { onClose(): void
           {tab === 'ai' && <AiSettings />}
 
           {tab === 'voice' && <VoiceSettings />}
+
+          {tab === 'update' && <UpdateSettings />}
 
           {tab === 'storage' && (
             <div className="set-group">
