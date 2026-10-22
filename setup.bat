@@ -2,8 +2,10 @@
 setlocal
 title Notes setup
 
-REM One click setup: installs what is needed, builds the app, and puts a
-REM Notes icon on the desktop and in the start menu. No admin rights needed.
+REM One click setup and update: pulls the latest version, installs what is
+REM needed, builds and packages the app, puts a
+REM Notes icon on the desktop and in the start menu, and starts it.
+REM Run it again any time to update. No admin rights needed.
 
 cd /d "%~dp0"
 
@@ -30,43 +32,66 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo   [1/5] Installing packages. The first run takes a few minutes.
+REM Latest code first, when this folder is a git checkout. If that changed
+REM anything, start over with the new copy of this file (Windows reads a
+REM running batch file as it goes, so it must not continue on the old one).
+if "%~1"=="pulled" goto pulled
+if not exist ".git" goto pulled
+where git >nul 2>nul
+if errorlevel 1 goto pulled
+echo   [1/7] Getting the latest version.
+for /f %%h in ('git rev-parse HEAD') do set "BEFORE=%%h"
+git pull --ff-only
+if errorlevel 1 echo   Could not pull the latest version. Building what is here.
+for /f %%h in ('git rev-parse HEAD') do set "AFTER=%%h"
+if not "%BEFORE%"=="%AFTER%" (call "%~f0" pulled & exit /b)
+echo.
+:pulled
+
+echo   [2/7] Closing Notes if it is open.
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\close-notes.ps1"
+
+echo.
+echo   [3/7] Installing packages. The first run takes a few minutes.
 call npm install --no-audit --no-fund
 if errorlevel 1 goto failed
 
 echo.
-echo   [2/5] Drawing the app icon.
+echo   [4/7] Drawing the app icon.
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\make-icon.ps1"
 if errorlevel 1 goto failed
 
 echo.
-echo   [3/5] Building the app.
+echo   [5/7] Building the app.
 call npm run build
 if errorlevel 1 goto failed
+REM The packaged app in release\win-unpacked (what a pinned taskbar icon starts).
+REM The old copy goes first, so a failed packaging never leaves a stale app behind.
+if exist "release\win-unpacked" rmdir /s /q "release\win-unpacked"
+call npx electron-builder --win --dir
+if errorlevel 1 (
+  echo   Packaging failed once. Repairing the signing tool cache and trying again.
+  powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\fix-wincodesign.ps1"
+  call npx electron-builder --win --dir
+  if errorlevel 1 echo   Packaging failed. The shortcuts will run Notes from this folder instead.
+)
 
 echo.
-echo   [4/5] Creating the desktop and start menu shortcuts.
+echo   [6/7] Creating the desktop and start menu shortcuts.
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\make-shortcut.ps1"
 if errorlevel 1 goto failed
 
 echo.
-echo   [5/5] Voice mode's speech engine (skipped where the weekly planner has one).
+echo   [7/7] Voice mode's speech engine (skipped where the weekly planner has one).
 powershell -NoProfile -ExecutionPolicy Bypass -File "speech-engine\setup-speech.ps1"
 
 echo.
-echo   Done.
-echo.
-echo   Start Notes from the desktop icon, or from run-notes.bat here.
-echo   Notes live in Documents\MyNotes by default. To sync this machine with
-echo   your other one, open Settings, Storage, and point both at the same
-echo   folder inside OneDrive, Google Drive or Dropbox.
-echo.
-echo   To use it in a browser as well, run serve-notes.bat and open
-echo   http://localhost:5299 . It reads and writes the same notes folder.
-echo.
-choice /c YN /m "   Start Notes now"
-if errorlevel 2 goto done
-start "" "%~dp0run-notes.bat"
+echo   Done. Starting Notes.
+if exist "release\win-unpacked\Notes.exe" (
+  start "" "%~dp0release\win-unpacked\Notes.exe"
+) else (
+  start "" "%~dp0run-notes.bat"
+)
 
 :done
 exit /b 0
