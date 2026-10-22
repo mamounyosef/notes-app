@@ -14,7 +14,8 @@ import { agentInlineToHtml, agentToHtml, htmlToAgent, htmlToText, softenMarks } 
 import { buildContext } from './context'
 import { agentApi, chatApi, type ChatAttachment } from './api'
 import { DEFAULT_MODEL, VISION_MODEL, modelInfo } from './models'
-import { buildWidgetDoc, currentTheme, FENCE_OF, fromBase64, kindOf, type WidgetKind } from '../widgets/widget'
+import { buildWidgetDoc, currentTheme, FENCE_OF, fromBase64, KIND_OF_FENCE, kindOf, toBase64, type WidgetKind } from '../widgets/widget'
+import { describeKmap } from '../widgets/kmap'
 
 const now = () => Date.now()
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
@@ -401,6 +402,16 @@ async function shootDrawing(d: Drawing, cellWidth: number) {
   return agentApi.renderWidget({ html, width: Math.max(260, Math.round(d.width || cellWidth - 28)) })
 }
 
+/** For a K-map: the groups and expression it shows, so the answer written next to it matches. */
+function kmapNote(d: Drawing) {
+  if (d.kind !== 'kmap') return ''
+  try {
+    return ` ${describeKmap(d.src)}.`
+  } catch {
+    return ''
+  }
+}
+
 /**
  * After a cell with drawings is written: draw each one and report errors, so
  * the agent fixes a broken diagram before it says it is done.
@@ -412,8 +423,11 @@ async function drawingReport(cells: { id: string; html: string; w: number }[]): 
       const shot = await shootDrawing(d, c.w).catch((e) => ({ ok: false, error: String(e?.message || e) }) as any)
       const where = `cell ${c.id} drawing ${d.index} (${FENCE_OF[d.kind]})`
       if (!shot.ok) out.push(`${where}: not checked (${shot.error || 'no renderer'})`)
-      else if (shot.errors?.length) out.push(`${where}: FAILED to draw: ${shot.errors.slice(0, 3).join(' | ').slice(0, 600)}. Fix the source and update the cell.`)
-      else out.push(`${where}: drawn OK, ${shot.width}x${shot.height}px. Call check_drawing to see it.`)
+      else if (shot.errors?.length) out.push(`${where}: FAILED to draw: ${shot.errors.slice(0, 3).join(' | ').slice(0, 600)}. Fix the source with update_drawing.`)
+      else {
+        const lint = shot.lint?.length ? ` MEASURED PROBLEMS (fix them with update_drawing): ${shot.lint.join(' ')}` : ' No overlaps or cut off parts measured.'
+        out.push(`${where}: drawn, ${shot.width}x${shot.height}px.${kmapNote(d)}${lint} Call check_drawing to see it.`)
+      }
     }
   }
   return out.length ? out : undefined
@@ -620,12 +634,20 @@ export const TOOL_DEFS = [
       properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } },
     },
   }),
-  fn('check_drawing', 'See a drawing (mermaid, wavedrom, chart or widget block) exactly as the user sees it: it is rendered and a vision model describes what it shows and lists visible problems (overlaps, cut off or unreadable text, tangled lines, drawing errors). Use it once after making or changing a non-trivial drawing, then fix real problems.', {
+  fn('check_drawing', 'See a drawing (mermaid, wavedrom, chart, kmap or widget block) exactly as the user sees it, with measured problems from its real geometry (text on text, lines through text, parts cut off, tiny text). With compare_to, the original photo or sketch is shown next to it to compare part by part. Use it after making or changing a non-trivial drawing, fix what it finds with update_drawing, and check again (up to three rounds).', {
     cell_id: str('Cell with the drawing.'),
     page_id: str('Page of the cell. Omit for the open page.'),
     index: { type: 'number', description: 'Which drawing in the cell, from 1. Default 1.' },
     intended: str('What the drawing should show, in a sentence or two, so missing parts are noticed.'),
+    compare_to: str('The original to match: "attachment:<sha>" of the photo the user sent, or an image URL / asset://local/... path.'),
   }, ['cell_id']),
+  fn('update_drawing', 'Replace the source of one drawing in a cell, leaving the rest of the cell untouched. Use it to fix or change a drawing instead of rewriting the whole cell. The result reports measured problems, like after creating it.', {
+    cell_id: str('Cell with the drawing.'),
+    page_id: str('Page of the cell. Omit for the open page.'),
+    index: { type: 'number', description: 'Which drawing in the cell, from 1. Default 1.' },
+    source: str('The new source, without the ``` fence lines: Mermaid text, WaveDrom JSON, a kmap object, a Chart.js config, or the widget HTML.'),
+    kind: { type: 'string', enum: ['mermaid', 'wavedrom', 'chart', 'kmap', 'widget'], description: 'Change the kind of drawing too. Omit to keep it.' },
+  }, ['cell_id', 'source']),
   fn('insert_image','Put an image into a cell or a new cell: an image the user attached in this chat (source "attachment:<sha>"), a rendered PDF page ("attachment:<sha>" of the page image), an image already in the notes ("asset://local/..."), or a web URL.', {
     source: str('attachment:<sha>, asset://local/<name> or https URL.'),
     page_id: str('Page id. Omit for the open page.'),
@@ -1203,17 +1225,28 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     if (!d) throw new ToolError(`Cell [${c.id}] has ${all.length} drawing(s); index starts at 1.`)
     const shot = await shootDrawing(d, c.w)
     if (!shot.ok || !shot.png) throw new ToolError(`Could not draw it (${shot.error || 'no picture'}).`)
-    const errors = shot.errors?.length ? `\nERRORS while drawing: ${shot.errors.join(' | ')}` : ''
+    const errors =
+      (shot.errors?.length ? `\nERRORS while drawing: ${shot.errors.join(' | ')}` : '') +
+      (shot.lint?.length ? `\nMEASURED PROBLEMS (exact, from the rendered geometry; fix every one): ${shot.lint.join(' ')}` : '\nMeasured: no overlapping text, no lines through text, nothing cut off.') +
+      kmapNote(d)
     const intent = a.intended ? `\nIntended content: ${String(a.intended).slice(0, 1500)}` : ''
+    // The original it should match (a photo of a board or notebook), shown first.
+    const original: string[] = []
+    const cmp = String(a.compare_to || '')
+    if (cmp.startsWith('attachment:')) original.push(`sha:${attachmentSha(cmp.slice('attachment:'.length), env)}`)
+    else if (cmp) original.push(await imageAsBase64(cmp))
+    const compare = original.length
+      ? `\nThe FIRST image is the original it must match, the SECOND is your drawing. Compare them part by part: shapes, layout and positions, every label and symbol, arrows and their directions, groupings, emphasis. List every difference, then fix them.`
+      : ''
     // A model that can see looks at the rendered picture itself.
     if (modelInfo(env.model).vision) {
       return {
         ...ok(
-          `Drawing ${d.index} (${FENCE_OF[d.kind]}) in cell [${c.id}] is rendered (${shot.width}x${shot.height}px) and attached right after this result, exactly as the user sees it. Look at it yourself: check that it shows what you meant${intent ? ' (below)' : ''}, and look for overlapping or cut off text, labels outside their boxes, unreadable contrast, lines through labels, tangled wiring, tiny text or error messages.${errors}${intent}\nFix real problems by updating the source (at most two rounds); ignore nitpicks.`,
+          `Drawing ${d.index} (${FENCE_OF[d.kind]}) in cell [${c.id}] is rendered (${shot.width}x${shot.height}px) and attached right after this result, exactly as the user sees it. Look at it yourself: check that it shows what you meant${intent ? ' (below)' : ''}, and look for overlapping or cut off text, labels outside their boxes, unreadable contrast, lines through labels, tangled wiring, tiny text or error messages.${errors}${intent}${compare}\nFix real problems with update_drawing and check again, up to three rounds; ignore nitpicks.`,
           `Checked the drawing`,
           { pageId: pid, cellId: c.id },
         ),
-        images: await toRefs([shot.png]),
+        images: await toRefs([...original, shot.png]),
       }
     }
     const model = eyesFor(env.model)
@@ -1223,17 +1256,47 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       think: false,
       options: { temperature: 0.1, num_predict: 1800, repeat_penalty: 1.1 },
       timeout_ms: 120_000,
-      messages: [{ role: 'user', content: `${DRAWING_CHECK}${intent}`, images: [shot.png] }],
+      messages: [{ role: 'user', content: `${DRAWING_CHECK}${intent}${compare}`, images: [...original, shot.png] }],
     })
     if (!res.ok || !res.content?.trim()) throw new ToolError(`Could not look at it (${res.error || 'empty answer'}).${errors}`)
     return {
       ...ok(
-        `Drawing ${d.index} (${FENCE_OF[d.kind]}) in cell [${c.id}], ${shot.width}x${shot.height}px, as seen by ${model}:${errors}\n${res.content.trim()}\nFix real problems by updating the source (at most two rounds); ignore nitpicks.`,
+        `Drawing ${d.index} (${FENCE_OF[d.kind]}) in cell [${c.id}], ${shot.width}x${shot.height}px, as seen by ${model}:${errors}\n${res.content.trim()}\nFix real problems with update_drawing and check again, up to three rounds; ignore nitpicks.`,
         `Checked the drawing`,
         { pageId: pid, cellId: c.id },
       ),
       helper: { model: modelInfo(model).name, ms: Date.now() - started, text: res.content.trim() },
     }
+  },
+
+  async update_drawing(a, env) {
+    const pid = await pageOfCell(a.cell_id, a.page_id)
+    const index = Number(a.index) || 1
+    const source = String(a.source ?? '').replace(/^\s*(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n\s*\1\s*$/, '$2')
+    if (!source.trim()) throw new ToolError('Give the new source.')
+    let title = ''
+    let cid = ''
+    let after = null as { id: string; html: string; w: number } | null
+    await editPage(env, pid, (p) => {
+      const c = findCell(p, a.cell_id)
+      cid = c.id
+      title = c.title
+      const doc = new DOMParser().parseFromString(`<body>${c.html || ''}</body>`, 'text/html')
+      const blocks = [...doc.querySelectorAll('div[data-html-embed]')]
+      const el = blocks[index - 1]
+      if (!el) throw new ToolError(`Cell [${c.id}] has ${blocks.length} drawing(s); index starts at 1.`)
+      el.setAttribute('data-html-src', toBase64(source.replace(/\s+$/, '')))
+      if (a.kind) {
+        const k = KIND_OF_FENCE[String(a.kind)] || 'html'
+        if (k === 'html') el.removeAttribute('data-kind')
+        else el.setAttribute('data-kind', k)
+      }
+      const html = doc.body.innerHTML
+      after = { id: c.id, html, w: c.w }
+      return { ...p, cells: p.cells.map((x) => (x.id === c.id ? { ...x, html, updatedAt: now() } : x)) }
+    }, [String(a.cell_id)])
+    const drawings = after ? await drawingReport([after]) : undefined
+    return ok({ updated: cid, drawing: index, ...(drawings ? { drawings } : {}) }, `Updated the drawing in "${title || 'cell'}"`, { pageId: pid, cellId: cid })
   },
 
   async focus(a) {

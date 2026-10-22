@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-type WidgetShot = { ok: boolean; png?: string; width?: number; height?: number; errors?: string[]; done?: boolean; error?: string }
+type WidgetShot = { ok: boolean; png?: string; width?: number; height?: number; errors?: string[]; lint?: string[]; done?: boolean; error?: string }
 
 const api = {
   isDesktop: true,

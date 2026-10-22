@@ -14,9 +14,10 @@
  * Everything is themed from the app's colors and works offline.
  */
 import JSON5 from 'json5'
+import { kmapExpressionTex, renderKmap } from './kmap'
 
-export type WidgetKind = 'html' | 'mermaid' | 'wavedrom' | 'chart'
-export const WIDGET_KINDS: WidgetKind[] = ['html', 'mermaid', 'wavedrom', 'chart']
+export type WidgetKind = 'html' | 'mermaid' | 'wavedrom' | 'chart' | 'kmap'
+export const WIDGET_KINDS: WidgetKind[] = ['html', 'mermaid', 'wavedrom', 'chart', 'kmap']
 
 /** Block sources are stored as base64 (UTF-8 safe). */
 export function toBase64(str: string): string {
@@ -32,14 +33,15 @@ export function fromBase64(b64: string): string {
 export const kindOf = (k: unknown): WidgetKind => (WIDGET_KINDS.includes(k as WidgetKind) ? (k as WidgetKind) : 'html')
 
 /** The Markdown fence name the agent writes for each kind. */
-export const FENCE_OF: Record<WidgetKind, string> = { html: 'widget', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart' }
-export const KIND_OF_FENCE: Record<string, WidgetKind> = { widget: 'html', 'html-widget': 'html', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart', chartjs: 'chart' }
+export const FENCE_OF: Record<WidgetKind, string> = { html: 'widget', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart', kmap: 'kmap' }
+export const KIND_OF_FENCE: Record<string, WidgetKind> = { widget: 'html', 'html-widget': 'html', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart', chartjs: 'chart', kmap: 'kmap', karnaugh: 'kmap' }
 
 export const KIND_LABEL: Record<WidgetKind, string> = {
   html: 'HTML widget',
   mermaid: 'Diagram',
   wavedrom: 'Logic / timing',
   chart: 'Chart',
+  kmap: 'K-map',
 }
 
 /* ------------------------------------------------------------------ theme */
@@ -330,6 +332,7 @@ a{color:var(--accent)}
 code,pre{font-family:var(--mono)}
 svg{max-width:100%;height:auto}
 .w-diagram{display:flex;justify-content:center;margin:4px 0}
+.w-kmap-expr{text-align:center;font-size:17px;margin:2px 0 6px}
 .w-diagram>svg{max-width:100%;height:auto}
 .w-chart-box{position:relative;width:100%}
 table{border-collapse:collapse;margin:6px 0}
@@ -387,6 +390,74 @@ const RUNTIME = String.raw`(async function () {
   }
   try { if (document.fonts) await document.fonts.ready } catch (e) {}
   await new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r) }) });
+  // Measured problems in the drawings, for the agent's check (window.__lint()):
+  // text on text, a line or shape running through text, parts cut off, tiny text.
+  window.__lint = function () {
+    var out = [], seen = {};
+    function name(el) { var t = (el.textContent || '').trim().replace(/\s+/g, ' '); return t ? '"' + t.slice(0, 30) + '"' : '<' + el.nodeName.toLowerCase() + '>' }
+    function add(k, msg) { if (!seen[k] && out.length < 20) { seen[k] = 1; out.push(msg) } }
+    function area(a) { return Math.max(0, a.right - a.left) * Math.max(0, a.bottom - a.top) }
+    function inter(a, b) { var w = Math.min(a.right, b.right) - Math.max(a.left, b.left), h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top); return w > 0 && h > 0 ? w * h : 0 }
+    function shown(el) { var cs = getComputedStyle(el); return cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity !== 0 }
+    // Laid out by Mermaid or WaveDrom (not a K-map, which is checked fully): only some checks apply.
+    function lib(el) { var d = el.closest('.w-diagram'); return Boolean(d) && !el.closest('.w-kmap') }
+    var texts = [].slice.call(document.querySelectorAll('svg text')).filter(function (el) { return shown(el) && (el.textContent || '').trim() }).slice(0, 200).map(function (el) { return { el: el, r: el.getBoundingClientRect() } });
+    var i, j, k;
+    for (i = 0; i < texts.length; i++) {
+      var fs = parseFloat(getComputedStyle(texts[i].el).fontSize) || 0, sc = texts[i].el.getScreenCTM(), px = fs * (sc ? Math.abs(sc.a) : 1);
+      if (/[\u0304\u0305\u0332\u0333]/.test(texts[i].el.textContent || '')) add('comb' + i, 'Text ' + name(texts[i].el) + ' uses a combining bar or underline character, which draws through or beside the letter: write <tspan text-decoration="overline">Z</tspan> for a bar over a letter (underline for a line under it).');
+      if (px && px < 10) {
+        if (lib(texts[i].el)) add('tinylib', 'Text such as ' + name(texts[i].el) + ' shows at only ' + px.toFixed(1) + 'px: the diagram is wider than the cell, so it is scaled down. Make the cell wider, use fewer columns or steps, or split it.');
+        else add('tiny' + i, 'Text ' + name(texts[i].el) + ' is tiny (' + px.toFixed(1) + 'px); make it at least 12px.');
+      }
+      for (j = i + 1; j < texts.length; j++) {
+        var a = texts[i].r, b = texts[j].r, o = inter(a, b);
+        if (o > 0.2 * Math.min(area(a), area(b))) add('tt' + i + '_' + j, 'Text ' + name(texts[i].el) + ' overlaps text ' + name(texts[j].el) + '.');
+      }
+    }
+    // Inner part of each text box: a line through it crosses the letters.
+    var cores = texts.map(function (t) { var r = t.r, w = r.right - r.left, h = r.bottom - r.top; return { left: r.left + w * 0.12, right: r.right - w * 0.12, top: r.top + h * 0.3, bottom: r.bottom - h * 0.22 } });
+    var shapes = [].slice.call(document.querySelectorAll('svg path, svg line, svg polyline, svg polygon, svg rect, svg circle, svg ellipse')).filter(function (el) {
+      // A library's lines often run behind filled boxes under their labels.
+      if (el.closest('defs, clipPath, mask, marker, pattern, symbol') || lib(el)) return false;
+      var cs = getComputedStyle(el); return shown(el) && cs.stroke && cs.stroke !== 'none' && parseFloat(cs.strokeWidth) > 0;
+    }).slice(0, 400);
+    shapes.forEach(function (el, si) {
+      var len = 0; try { len = el.getTotalLength() } catch (e) {}
+      var m = el.getScreenCTM(); if (!len || !m) return;
+      // A clipped shape only shows inside its clip.
+      var clip = null, cp = /url\(["']?#([^"')]+)/.exec(el.getAttribute('clip-path') || '');
+      if (cp) { var ce = document.getElementById(cp[1]); clip = ce && ce.firstElementChild ? ce.firstElementChild.getBoundingClientRect() : null }
+      var steps = Math.min(500, Math.ceil(len / 3));
+      for (k = 0; k <= steps; k++) {
+        var p = el.getPointAtLength(len * k / steps), x = m.a * p.x + m.c * p.y + m.e, y = m.b * p.x + m.d * p.y + m.f;
+        if (clip && (x < clip.left || x > clip.right || y < clip.top || y > clip.bottom)) continue;
+        for (i = 0; i < cores.length; i++) {
+          var c = cores[i];
+          if (x > c.left && x < c.right && y > c.top && y < c.bottom) add('st' + si + '_' + i, 'A <' + el.nodeName.toLowerCase() + '> line runs through text ' + name(texts[i].el) + ': move the text or the line.');
+        }
+      }
+    });
+    // Cut off: drawn outside its svg's box or the page.
+    var vw = document.documentElement.clientWidth;
+    [].slice.call(document.querySelectorAll('svg')).forEach(function (svg) {
+      if (svg.parentNode && svg.parentNode.closest && svg.parentNode.closest('svg')) return;
+      // Laid out by Mermaid or WaveDrom: their edges are theirs, not something the source can fix.
+      if (svg.closest('.w-diagram') && !svg.classList.contains('w-kmap')) return;
+      var sr = svg.getBoundingClientRect();
+      [].slice.call(svg.querySelectorAll('text, path, line, polyline, polygon, rect, circle, ellipse')).forEach(function (el, ei) {
+        if (el.closest('defs, clipPath, mask, marker, pattern, symbol') || el.hasAttribute('clip-path') || !shown(el)) return;
+        var r = el.getBoundingClientRect(); if (r.width < 1 && r.height < 1) return;
+        // Text and shapes count at once; a bare line or path only when well outside (diagram libraries let lines run to the edge).
+        var tol = /^(line|path|polyline)$/i.test(el.nodeName) ? 8 : 2, sides = [];
+        if (r.left < sr.left - tol) sides.push('left'); if (r.right > sr.right + tol) sides.push('right');
+        if (r.top < sr.top - tol) sides.push('top'); if (r.bottom > sr.bottom + tol) sides.push('bottom');
+        if (sides.length) add('cut' + ei, name(el) + ' is cut off at the ' + sides.join(' and ') + ' edge of its svg: enlarge the viewBox or move it in.');
+        else if (r.right > vw + 2) add('page' + ei, name(el) + ' runs past the right edge of the block.');
+      });
+    });
+    return out;
+  };
   var last = -1, lastW = -1, lastCw = -1;
   // The real extent of what is drawn. Page boxes that stretch to the frame
   // (height:100%, 100vh, centering) would report the frame's own size, so
@@ -490,6 +561,13 @@ export async function buildWidgetDoc(kind: WidgetKind, src: string, t: WidgetThe
     } catch (e) {
       body = errorBox('WaveDrom figure', String((e as Error).message || e))
     }
+  } else if (kind === 'kmap') {
+    try {
+      const tex = kmapExpressionTex(src)
+      body = `<div class="w-diagram">${renderKmap(src, { text: t.text, dim: t.dim, line: t.line, font: t.font, palette: t.palette })}</div>` + (tex ? `<div class="w-kmap-expr">$${tex}$</div>` : '')
+    } catch (e) {
+      body = errorBox('K-map', String((e as Error).message || e))
+    }
   } else if (kind === 'chart') {
     body = `<script type="application/json" class="w-chart">${src.replace(/<\/script/gi, '<\\/script')}</script>`
   } else {
@@ -498,7 +576,7 @@ export async function buildWidgetDoc(kind: WidgetKind, src: string, t: WidgetThe
 
   const full = kind === 'html' && looksLikeHtmlDocument(body)
   const needChart = kind === 'chart' || /\bnew\s+Chart\s*\(|\bChart\./.test(body)
-  const needMath = MATH_RE.test(kind === 'html' ? body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, '') : '')
+  const needMath = MATH_RE.test(kind === 'html' || kind === 'kmap' ? body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, '') : '')
   const libs = [needChart ? inlineScript(await loadChart()) : '', needMath ? inlineScript(await loadKatex()) : ''].join('')
   const theme = { dark: t.dark, bg: t.bg, text: t.text, dim: t.dim, line: t.line, accent: t.accent, palette: t.palette, font: t.font }
   const setup = inlineScript(

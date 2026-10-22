@@ -1,0 +1,15 @@
+{
+  "fresh": true,
+  "setup": "setup-blank.js",
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b' }); return 'gemma4:31b' })()"
+  ],
+  "prompts": [
+    "Add a cell titled Example 4 with F(x,y,z) = Σm(0,2,4,6): select the K-map, fill it, group it, and write the answer under it.",
+    "Now add a cell titled Example 5 with the 4 variable K-map for F(A,B,C,D) = Σm(0,2,5,7,8,10,13,15) and the simplified answer."
+  ],
+  "eval": [
+    "(() => __notesDebug.useAgent.getState().chat.messages.filter(m => m.role === 'tool').map(m => m.toolName + ':\\n' + m.content).join('\\n\\n'))()",
+    "(() => __notesDebug.useStore.getState().page.cells.map(c => c.title + ': ' + (c.html.match(/data-kind=\"(\\w+)\"/g) || []).join(',')).join(' | '))()"
+  ]
+}

@@ -626,8 +626,10 @@ export function setupAgent(opts: {
       const height = Math.max(40, Math.min(3000, Math.ceil(info?.h || 400) + 4))
       win.setContentSize(width, height)
       await new Promise((r) => setTimeout(r, 350))
+      // Measured problems (overlaps, lines through text, parts cut off), at the final size.
+      const lint = await win.webContents.executeJavaScript('window.__lint ? window.__lint() : []', true).catch(() => [])
       const img = await win.webContents.capturePage()
-      return { ok: true, png: img.toPNG().toString('base64'), width, height, errors: info?.errors || [], done: Boolean(info?.done) }
+      return { ok: true, png: img.toPNG().toString('base64'), width, height, errors: info?.errors || [], lint: Array.isArray(lint) ? lint : [], done: Boolean(info?.done) }
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) }
     } finally {

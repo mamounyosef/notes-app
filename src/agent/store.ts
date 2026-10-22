@@ -1157,6 +1157,7 @@ function labelFor(name: string, chatModel: string) {
     recent_notes: 'Looking at recent notes',
     view_image: 'Reading the image',
     check_drawing: 'Looking at the drawing',
+    update_drawing: 'Fixing the drawing',
     create_cells: 'Adding cells',
     update_cell: 'Updating a cell',
     edit_cell_text: 'Editing text',

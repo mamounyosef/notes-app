@@ -171,7 +171,7 @@ export const agentApi = {
   complete: (body: unknown): Promise<{ ok: boolean; content?: string; error?: string; switched?: KeySwitch }> =>
     desk?.agent ? desk.agent.complete(withProvider(body)) : Promise.resolve({ ok: false }),
   /** Draws an HTML block off screen: a PNG (base64) of it, its size and the errors it reported. */
-  renderWidget: (body: { html: string; width?: number }): Promise<{ ok: boolean; png?: string; width?: number; height?: number; errors?: string[]; done?: boolean; error?: string }> =>
+  renderWidget: (body: { html: string; width?: number }): Promise<{ ok: boolean; png?: string; width?: number; height?: number; errors?: string[]; lint?: string[]; done?: boolean; error?: string }> =>
     desk?.agent?.renderWidget ? desk.agent.renderWidget(body) : Promise.resolve({ ok: false, error: 'Checking a drawing needs the desktop app.' }),
   onChunk: (cb: (reqId: string, chunk: any) => void): (() => void) => (desk?.agent ? desk.agent.onChunk(cb) : () => {}),
   web: (kind: 'search' | 'fetch', arg: unknown): Promise<{ ok: boolean; data?: any; error?: string }> =>

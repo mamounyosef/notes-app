@@ -170,7 +170,7 @@ function unescapeNewlines(s: string) {
  * become HTML blocks. Optional settings after the name: width=600 height=300
  * align=center (height left out = fit the content).
  */
-const WIDGET_FENCE = /^([ \t]*)(`{3,}|~{3,})[ \t]*(mermaid|wavedrom|chartjs|chart|html-widget|widget)\b([^\n]*)\n([\s\S]*?)\n[ \t]*\2[ \t]*$/gm
+const WIDGET_FENCE = /^([ \t]*)(`{3,}|~{3,})[ \t]*(mermaid|wavedrom|chartjs|chart|html-widget|widget|kmap|karnaugh)\b([^\n]*)\n([\s\S]*?)\n[ \t]*\2[ \t]*$/gm
 
 function widgetBlock(lang: string, opts: string, body: string) {
   const kind = KIND_OF_FENCE[lang] || 'html'

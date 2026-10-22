@@ -1,0 +1,13 @@
+{
+  "fresh": true,
+  "setup": "setup-blank.js",
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b' }); return 'gemma4:31b' })()"
+  ],
+  "prompts": [
+    "Add three cells: a flowchart of how a microcontroller handles an interrupt, a timing diagram of an SPI byte transfer (SCLK, MOSI, CS), and a drawing of a 7 segment display with its segments a to g labeled."
+  ],
+  "eval": [
+    "(() => __notesDebug.useAgent.getState().chat.messages.filter(m => m.role === 'tool').map(m => m.toolName + ':\\n' + m.content).join('\\n\\n'))()"
+  ]
+}
