@@ -33,3 +33,7 @@ export function rebaseWorkspace<W>(cur: W, sent: W, result: W): W
 export function stampSettings<S>(base: S | null, cur: S, now: number): { settings: S; bumped: boolean }
 export function mergeSettings<S>(a: S | null, b: S | null, primary?: 'a' | 'b'): S
 export function rebaseSettings<S>(cur: S, sent: S, result: S): S
+
+export type DocKind = 'page' | 'workspace' | 'settings'
+export function syncView<T>(kind: DocKind, data: T): T
+export function mergeSettled<T>(kind: DocKind, local: T | null, remote: T | null, onUnsettled?: () => void): T

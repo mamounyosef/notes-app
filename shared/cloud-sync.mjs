@@ -30,20 +30,12 @@ const FILE_ROOTS = ['assets', 'artifacts']
 
 const sha1 = (data) => crypto.createHash('sha1').update(data).digest('hex')
 const docHash = (data) => sha1(core.stable(data))
-/** Fields each computer sets by itself: measured sizes and save times. */
-const SELF_SET = new Set(['x', 'y', 'w', 'h', 'z', 'updatedAt'])
 /**
- * What decides whether a note needs pushing. For pages it leaves out what each
- * computer measures or stamps on its own: a deliberate move or resize bumps
- * the cell's version, which is still in here. Otherwise two computers that
- * measure a cell differently keep pushing their own copy to each other forever.
+ * What decides whether a note needs pushing (core.syncView). Otherwise two
+ * computers that measure a cell differently keep pushing their own copy to
+ * each other forever.
  */
-const syncHash = (kind, data) => {
-  if (kind !== 'page' || !data) return docHash(data)
-  const strip = (c) => Object.fromEntries(Object.entries(c).filter(([k]) => !SELF_SET.has(k)))
-  const { updatedAt: _u, ...page } = data
-  return 'v2:' + docHash({ ...page, cells: (data.cells || []).map(strip) })
-}
+const syncHash = (kind, data) => (kind === 'page' && data ? 'v2:' : '') + docHash(core.syncView(kind, data))
 /** The stored hash still matches this note (also accepts hashes saved before syncHash). */
 const unchanged = (kind, data, st) => Boolean(st?.hash) && (syncHash(kind, data) === st.hash || docHash(data) === st.hash)
 const keyOf = (kind, id) => `${kind}:${id || ''}`

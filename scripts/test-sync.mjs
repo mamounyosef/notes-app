@@ -321,6 +321,18 @@ test('workspace: same versions in a different order settle on one order (no endl
   assert.equal(S.stable(S.mergeWorkspaces(onX, onY, 'a')), S.stable(onX))
 })
 
+test('workspace: same version with different save times settles on one (no endless ping-pong)', () => {
+  // Seen for real: one section differed only in updatedAt, each computer kept
+  // its own and they uploaded the workspace to each other forever.
+  const n = (updatedAt) => ({ id: 's', kind: 'section', title: 's', children: [], createdAt: 1, updatedAt, vv: { A: 1 } })
+  const x = { version: 1, syncV: 1, tree: [n(536)], favorites: [], favVV: {}, tombstones: {} }
+  const y = { ...clone(x), tree: [n(743)] }
+  const onX = S.mergeWorkspaces(x, y, 'a')
+  const onY = S.mergeWorkspaces(y, x, 'a')
+  assert.equal(S.stable(onX), S.stable(onY))
+  assert.equal(onX.tree[0].updatedAt, 743)
+})
+
 /* ---------------- settings ---------------- */
 
 test('settings: the newest change to each setting wins', () => {

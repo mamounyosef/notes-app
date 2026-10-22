@@ -377,7 +377,11 @@ export class VaultSync {
       }
       const journal = await this.readJournal(kind, id)
       let merged = remote
-      if (disk.data) merged = k.merge(k.adopt(disk.data, journal, now), merged, 'a')
+      if (disk.data) {
+        merged = core.mergeSettled(kind, k.adopt(disk.data, journal, now), merged, () =>
+          this.log('sync: merge depended on the order, settled on one copy', kind, id || ''),
+        )
+      }
       if (journal) merged = k.merge(merged, journal, 'a')
       const text = JSON.stringify(merged, null, 2)
       if (text !== disk.text) await this.writeText(file, text)

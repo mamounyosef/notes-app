@@ -66,6 +66,15 @@ stays saved on the computer and the sync button shows why. A nightly job
 deletes history older than 30 days. After updating the app, run
 `supabase/schema.sql` again to get these.
 
+Loops are also prevented at the source: every merge rule breaks a tie (same
+version, same time) the same way on every computer, never "keep my own copy",
+and a note from the cloud is merged both ways round, so even a rule that gets
+this wrong still settles on one copy (the debug log then says "merge depended
+on the order"). `scripts/test-sync-converge.mjs` checks this on thousands of
+random pairs of notes, workspaces, settings and chats; run `npm run test:sync`
+after changing any merge rule. Every computer needs the fixed version: an old
+copy of the app can still keep a loop going, which the guards above then stop.
+
 ## Assistant
 
 A chat panel on the right (**Ctrl+J**, or the Assistant button) that can do

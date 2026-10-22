@@ -58,7 +58,10 @@ export function mergeChats(a, b) {
   for (const m of a.messages || []) byId.set(m.id, m)
   for (const m of b.messages || []) byId.set(m.id, byId.has(m.id) ? newer(byId.get(m.id), m) : m)
   const messages = [...byId.values()].sort(messageOrder)
-  const titled = (a.titleAt || 0) >= (b.titleAt || 0) ? a : b
+  // Ties go the same way on every computer, or each keeps its own forever.
+  const ta = a.titleAt || 0
+  const tb = b.titleAt || 0
+  const titled = ta !== tb ? (ta > tb ? a : b) : String(a.title ?? '') >= String(b.title ?? '') ? a : b
   return {
     id: a.id,
     title: titled.title,
@@ -75,7 +78,11 @@ export function mergeChats(a, b) {
 /** Branch choices: per fork, the most recent choice wins. */
 function mergeChosen(a, b) {
   const out = { ...(a || {}) }
-  for (const [k, v] of Object.entries(b || {})) if (!out[k] || (v?.at || 0) > (out[k].at || 0)) out[k] = v
+  for (const [k, v] of Object.entries(b || {})) {
+    const ta = out[k]?.at || 0
+    const tb = v?.at || 0
+    if (!out[k] || tb > ta || (tb === ta && stable(v) > stable(out[k]))) out[k] = v
+  }
   return out
 }
 

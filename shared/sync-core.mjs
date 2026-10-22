@@ -151,11 +151,17 @@ function mergeCell(a, b, primary) {
   if (cmp === 'b') return { cell: b }
   // Same version but different text means someone edited without versions
   // (an older copy of this app). Treat it like a concurrent edit: keep both.
-  if (cmp === 'equal' && cellContent(a) === cellContent(b)) return { cell: primary === 'a' ? a : b }
+  // `primary` only keeps this computer's own measured layout; anything else
+  // that differs is decided the same way on every computer (newerFirst), or
+  // each keeps its own and they send the page to each other forever.
+  if (cmp === 'equal' && cellContent(a) === cellContent(b)) {
+    if (cellAttrs(a) === cellAttrs(b)) return { cell: primary === 'a' ? a : b }
+    return { cell: newerFirst(a, b)[0] }
+  }
 
   const vv = vvJoin(a.vv, b.vv)
-  if (cellBody(a) === cellBody(b)) return { cell: { ...(primary === 'a' ? a : b), vv } }
   const [win, lose] = newerFirst(a, b)
+  if (cellBody(a) === cellBody(b)) return { cell: { ...win, vv } }
   if (cellContent(a) === cellContent(b)) {
     // Only position, size or look differ: the newer one wins, nothing is lost.
     return { cell: { ...win, vv } }
@@ -297,7 +303,8 @@ export function mergePages(a, b, primary = 'a') {
   let meta
   if (cmp === 'a') meta = a
   else if (cmp === 'b') meta = b
-  else if (cmp === 'equal') meta = primary === 'a' ? a : b
+  else if (cmp === 'equal' && pageMeta(a) === pageMeta(b)) meta = primary === 'a' ? a : b
+  else if (cmp === 'equal') meta = hash(pageMeta(a)) >= hash(pageMeta(b)) ? a : b
   else {
     const [win] = (a.updatedAt || 0) === (b.updatedAt || 0)
       ? (hash(pageMeta(a)) >= hash(pageMeta(b)) ? [a] : [b])
@@ -305,6 +312,7 @@ export function mergePages(a, b, primary = 'a') {
     meta = { ...win, strokes: unionStrokes(a.strokes, b.strokes) }
   }
 
+  const made = [a.createdAt, b.createdAt].filter((t) => typeof t === 'number' && t > 0)
   const out = {
     ...(primary === 'a' ? a : b),
     id: a.id || b.id,
@@ -315,7 +323,8 @@ export function mergePages(a, b, primary = 'a') {
     cells,
     tombstones: tomb,
     metaVV: vvJoin(a.metaVV, b.metaVV),
-    createdAt: Math.min(...[a.createdAt, b.createdAt].filter((t) => typeof t === 'number' && t > 0), Date.now()),
+    // Never "now": a value that changes on every merge never settles.
+    createdAt: made.length ? Math.min(...made) : (a.createdAt ?? b.createdAt),
     updatedAt: Math.max(a.updatedAt || 0, b.updatedAt || 0),
     syncV: 1,
   }
@@ -549,8 +558,11 @@ export function mergeWorkspaces(a, b, primary = 'a') {
       const cmp = vvCompare(ra.vv, rb.vv)
       if (cmp === 'a') r = ra
       else if (cmp === 'b') r = rb
-      else if (cmp === 'equal' && nodeBody(ra) === nodeBody(rb)) r = primary === 'a' ? ra : rb
-      else if (cmp === 'equal') {
+      else if (cmp === 'equal' && nodeBody(ra) === nodeBody(rb)) {
+        // Same node, only the save time differs: take the newer one on both
+        // computers, or each keeps its own and they send the tree back and forth.
+        r = (ra.updatedAt || 0) === (rb.updatedAt || 0) ? (primary === 'a' ? ra : rb) : (ra.updatedAt || 0) > (rb.updatedAt || 0) ? ra : rb
+      } else if (cmp === 'equal') {
         // Same version, different place: a merge renumbered the siblings. Both
         // computers must pick the same one, or each keeps its own order and
         // they send the tree to each other forever.
@@ -578,7 +590,12 @@ export function mergeWorkspaces(a, b, primary = 'a') {
     // Same version but different: pick the same list on both computers.
     favorites = stable(fa) === stable(fb) ? (primary === 'a' ? fa : fb) : hash(stable(fa)) >= hash(stable(fb)) ? fa : fb
   }
-  else favorites = [...new Set([...(a.favorites || []), ...(b.favorites || [])])]
+  else {
+    // Both changed them: keep all, in an order that does not depend on which side merges.
+    const fa = a.favorites || []
+    const fb = b.favorites || []
+    favorites = [...new Set(hash(stable(fa)) >= hash(stable(fb)) ? [...fa, ...fb] : [...fb, ...fa])]
+  }
   favorites = favorites.filter((id) => out.has(id))
 
   return {
@@ -664,12 +681,55 @@ export function mergeSettings(a, b, primary = 'a') {
     if (k === '_t') continue
     const ta = a._t?.[k] || 0
     const tb = b._t?.[k] || 0
-    const pickA = ta !== tb ? ta > tb : primary === 'a'
+    // Same time (often 0, never changed) but different values: pick the same
+    // one on every computer, or each keeps its own and they swap forever.
+    const sa = stable(a[k])
+    const sb = stable(b[k])
+    const pickA = ta !== tb ? ta > tb : sa === sb ? primary === 'a' : k in a && (!(k in b) || hash(sa) >= hash(sb))
     const src = pickA ? (k in a ? a : b) : (k in b ? b : a)
     out[k] = src[k]
     out._t[k] = Math.max(ta, tb)
   }
   return out
+}
+
+/* ------------------------------------------------------------------ *
+ * Settling: two computers must end up with the same copy
+ * ------------------------------------------------------------------ */
+
+const MERGERS = { page: mergePages, workspace: mergeWorkspaces, settings: mergeSettings }
+/** Fields each computer sets by itself: measured sizes and save times. */
+const SELF_SET = new Set(['x', 'y', 'w', 'h', 'z', 'updatedAt'])
+
+/**
+ * What decides whether two copies of a note are the same for syncing. For
+ * pages it leaves out what each computer measures or stamps on its own: a
+ * deliberate move or resize bumps the cell's version, which is still in here.
+ */
+export function syncView(kind, data) {
+  if (kind !== 'page' || !data) return data
+  const { updatedAt: _u, ...page } = data
+  return { ...page, cells: (data.cells || []).map((c) => omit(c, SELF_SET)) }
+}
+
+/**
+ * Merges a copy that came from another computer into this one. That computer
+ * merges the same two copies with the roles swapped, so if the rules ever
+ * gave a different result depending on the order (each computer keeping its
+ * own copy of something), they would send the note to each other forever.
+ * Here both computers then pick the same of the two results instead.
+ * `onUnsettled` reports it, since it means a merge rule needs fixing.
+ */
+export function mergeSettled(kind, local, remote, onUnsettled) {
+  const merge = MERGERS[kind]
+  const mine = merge(local, remote, 'a')
+  if (!local || !remote) return mine
+  const theirs = merge(remote, local, 'a')
+  const sm = stable(syncView(kind, mine))
+  const st = stable(syncView(kind, theirs))
+  if (sm === st) return mine
+  onUnsettled?.()
+  return hash(sm) <= hash(st) ? mine : theirs
 }
 
 export function rebaseSettings(cur, sent, result) {
