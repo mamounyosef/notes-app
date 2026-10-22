@@ -325,9 +325,31 @@ export const wordCount = (s: string) => s.trim().split(/\s+/).filter((w) => /[a-
 
 // ---------------------------------------------------------------- settings
 
-export type PauseLength = 'quick' | 'balanced' | 'patient'
+/** One-tap pause lengths, in milliseconds. */
+export const PAUSE_PRESETS = [
+  { label: 'Quick', ms: 500 },
+  { label: 'Balanced', ms: 800 },
+  { label: 'Patient', ms: 1100 },
+  { label: 'Relaxed', ms: 2000 },
+  { label: 'Slow', ms: 3500 },
+  { label: 'Unhurried', ms: 5500 },
+  { label: 'Take your time', ms: 9000 },
+]
 
-/** How much silence ends a turn. The engine stretches it after "and", "um"... */
-export function endpointMs(p: PauseLength | string | null | undefined): number {
-  return p === 'quick' ? 500 : p === 'patient' ? 1150 : 750
+/** What the engine itself waits before it writes down what it heard; it allows at most 2 s, and the rest is waited here. */
+export const engineEndpointMs = (pauseMs: number) => Math.max(350, Math.min(2000, Math.round(pauseMs)))
+
+/** Words (or a comma) people trail off on mid thought: the same list the engine uses. */
+const TRAIL_OFF = /(\b(and|but|or|so|because|then|also|like|um|uh|er|the|a|an|to|for|with|at|on|in|of|my|is|are|if|when|that|which|maybe|actually)|,|-)\s*$/i
+
+/**
+ * How much silence ends the turn after hearing `text`: the pause, times the
+ * trail off factor after "and", "um", a comma..., or times the mid-sentence
+ * factor when it does not end like a finished sentence.
+ */
+export function turnWaitMs(text: string, p: { pauseMs: number; trailMult: number; midMult: number }): number {
+  const t = text.trim()
+  if (TRAIL_OFF.test(t)) return p.pauseMs * p.trailMult
+  if (!/[.?!]["')\]]*$/.test(t)) return p.pauseMs * p.midMult
+  return p.pauseMs
 }

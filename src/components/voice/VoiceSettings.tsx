@@ -11,15 +11,11 @@ import { agentApi } from '../../agent/api'
 import { fmtSec, useSpeeds, useVoicePrefs, type ModelSpeed } from '../../voice/voicePrefs'
 import { fetchVoices, previewVoice, stopPreview, voiceApi, type VoiceInfo, type VoiceStatus } from '../../voice/voiceSession'
 import { cancelSpeedTest, runSpeedTest, useSpeedTest } from '../../voice/speedTest'
-import type { PauseLength } from '../../voice/speechText'
+import { PAUSE_PRESETS } from '../../voice/speechText'
 import { Check, Play, StopI, Gauge, Folder, Power } from '../Icons'
 import { formatVram } from './VoiceEngineChip'
 
-const PAUSES: Array<{ id: PauseLength; label: string; desc: string }> = [
-  { id: 'quick', label: 'Quick', desc: 'Answers half a second after you stop. Snappy, may cut in.' },
-  { id: 'balanced', label: 'Balanced', desc: 'Three quarters of a second. Right for most people.' },
-  { id: 'patient', label: 'Patient', desc: 'Over a second. For thinking out loud.' },
-]
+const sec = (ms: number) => `${(ms / 1000).toFixed(1)} s`
 
 const SAMPLE = (name: string) => `Hi, I'm ${name}. I made the key terms on this page bold, and the formula reads x squared over two.`
 
@@ -205,23 +201,33 @@ export default function VoiceSettings() {
       </div>
 
       <h3>Conversation</h3>
-      <div className="set-row column">
-        <label>
-          Pause before it answers
-          <span className="sub">When you trail off on "and", "um" or "so", it waits longer on its own.</span>
-        </label>
-        <div className="vs-pauses">
-          {PAUSES.map((p) => (
-            <button key={p.id} className={`vs-pause ${prefs.pause === p.id ? 'sel' : ''}`} onClick={() => update({ pause: p.id })}>
-              <b>{p.label}</b>
-              <span>{p.desc}</span>
+      <div className="empty-hint" style={{ padding: '0 0 8px' }}>How it takes turns with you.</div>
+      <div className="vs-slider">
+        <div className="vs-slider-head"><b>Pause before it answers</b><span>{sec(prefs.pauseMs)}</span></div>
+        <input type="range" min={500} max={12000} step={100} value={prefs.pauseMs} onChange={(e) => update({ pauseMs: Number(e.target.value) })} />
+        <div className="vs-slider-desc">How much silence ends your turn. Quick starts at about half a second; thinking out loud needs 3 seconds or more.</div>
+        <div className="vs-chips">
+          {PAUSE_PRESETS.map((p) => (
+            <button key={p.ms} className={`vs-chip ${prefs.pauseMs === p.ms ? 'sel' : ''}`} onClick={() => update({ pauseMs: p.ms })}>
+              {p.label} {p.ms / 1000} s
             </button>
           ))}
         </div>
       </div>
+      <div className="vs-slider">
+        <div className="vs-slider-head"><b>Extra wait when you trail off</b><span>{prefs.trailMult.toFixed(1)}x ({sec(prefs.pauseMs * prefs.trailMult)})</span></div>
+        <input type="range" min={1} max={3} step={0.05} value={prefs.trailMult} onChange={(e) => update({ trailMult: Number(e.target.value) })} />
+        <div className="vs-slider-desc">After "and", "um", "so", "the" or a comma, the pause is multiplied by this. 1.0x turns it off.</div>
+      </div>
+      <div className="vs-slider">
+        <div className="vs-slider-head"><b>Extra wait mid-sentence</b><span>{prefs.midMult.toFixed(2)}x ({sec(prefs.pauseMs * prefs.midMult)})</span></div>
+        <input type="range" min={1} max={2} step={0.05} value={prefs.midMult} onChange={(e) => update({ midMult: Number(e.target.value) })} />
+        <div className="vs-slider-desc">When what it heard does not end like a finished sentence, the pause is multiplied by this. 1.00x turns it off.</div>
+      </div>
+      <div className="vs-slider-desc" style={{ padding: '2px 0 10px' }}>Press Enter, or the done button, to end your turn at once.</div>
       <Toggle on={prefs.interrupt} onChange={(v) => update({ interrupt: v })} title="Let me talk over it" desc="Start talking while it speaks and it stops to listen. A quick 'mm-hm' does not stop it. Turn off if your speakers echo into the mic." />
-      <Toggle on={prefs.follow} onChange={(v) => update({ follow: v })} title="Follow along in the chat" desc="The sentence being spoken lights up in the chat, and the chat scrolls with it." />
       <Toggle on={prefs.sounds} onChange={(v) => update({ sounds: v })} title="Soft sounds" desc="A gentle tone when voice mode starts, when it has heard you, and when it ends." />
+      <Toggle on={prefs.follow} onChange={(v) => update({ follow: v })} title="Follow along in the chat" desc="The sentence being spoken lights up in the chat, and the chat scrolls with it." />
 
       <h3>Voice model</h3>
       <div className="empty-hint" style={{ padding: '0 0 8px' }}>

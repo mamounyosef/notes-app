@@ -4,15 +4,18 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import { MODELS } from '../agent/models'
-import type { PauseLength } from './speechText'
 
 export interface VoicePrefs {
   /** A Kokoro voice id, e.g. "af_heart". */
   voice: string
   /** 0.8 to 1.3. */
   speed: number
-  /** How long a pause ends your turn. */
-  pause: PauseLength
+  /** How much silence ends your turn, in milliseconds. */
+  pauseMs: number
+  /** The pause is multiplied by this after "and", "um", a comma... (1 turns it off). */
+  trailMult: number
+  /** ...and by this when what was heard does not end like a finished sentence. */
+  midMult: number
   /** Talking over the assistant stops it. */
   interrupt: boolean
   /** Soft tones when voice mode starts, hears you out, and ends. */
@@ -30,7 +33,9 @@ export interface VoicePrefs {
 export const DEFAULT_VOICE_PREFS: VoicePrefs = {
   voice: 'af_heart',
   speed: 1.0,
-  pause: 'balanced',
+  pauseMs: 6300,
+  trailMult: 1.9,
+  midMult: 1.35,
   interrupt: true,
   sounds: true,
   volume: 0.9,
@@ -53,7 +58,9 @@ export function coerceVoicePrefs(raw: unknown): VoicePrefs {
   return {
     voice: typeof r.voice === 'string' && /^[a-z]{2}_[a-z]+$/.test(r.voice) ? r.voice : d.voice,
     speed: Math.round(num(r.speed, 0.8, 1.3, d.speed) * 100) / 100,
-    pause: r.pause === 'quick' || r.pause === 'patient' || r.pause === 'balanced' ? r.pause : d.pause,
+    pauseMs: Math.round(num(r.pauseMs, 500, 12000, d.pauseMs) / 100) * 100,
+    trailMult: Math.round(num(r.trailMult, 1, 3, d.trailMult) * 20) / 20,
+    midMult: Math.round(num(r.midMult, 1, 2, d.midMult) * 20) / 20,
     interrupt: bool(r.interrupt, d.interrupt),
     sounds: bool(r.sounds, d.sounds),
     volume: Math.round(num(r.volume, 0, 1, d.volume) * 100) / 100,

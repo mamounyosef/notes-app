@@ -21,7 +21,7 @@ import { useAgent } from '../agent/store'
 import { activePath } from '../agent/branches'
 import { canUndo } from '../agent/tools'
 import { useStore, walk } from '../store'
-import { BACKCHANNEL, SentenceSplitter, askSpeech, endpointMs, isUndoCommand, speakable, wordCount } from './speechText'
+import { BACKCHANNEL, SentenceSplitter, askSpeech, engineEndpointMs, isUndoCommand, speakable, turnWaitMs, wordCount } from './speechText'
 import { VoiceSession, voiceApi, type VoicePhase } from './voiceSession'
 import { readVoicePrefs, type VoicePrefs } from './voicePrefs'
 
@@ -102,6 +102,15 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
   /** ...and the reply being written then, in case its stamp runs ahead of this clock. */
   const silencedIds = useRef(new Set<string>())
   const heardTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /**
+   * What was heard but not sent yet: the engine stops listening after at most
+   * 2 s of silence, and the rest of the pause (longer after "and", a comma or
+   * an unfinished sentence) is waited here. Speaking again adds to it.
+   */
+  const held = useRef<{ text: string; timer: ReturnType<typeof setTimeout> | null } | null>(null)
+  const [holding, setHolding] = useState(false)
+  /** Done was pressed while still speaking: send as soon as that is written down. */
+  const sendNext = useRef(false)
   const sendingRef = useRef<Promise<void>>(Promise.resolve())
 
   const say = useCallback((text: string) => {
@@ -171,6 +180,47 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
     [say, silenceReply],
   )
 
+  /** Sends what is held now. */
+  const flushHeld = useCallback(() => {
+    const h = held.current
+    if (!h) return
+    if (h.timer) clearTimeout(h.timer)
+    held.current = null
+    setHolding(false)
+    handleFinal(h.text)
+  }, [handleFinal])
+
+  /** Waits out the rest of the pause for what is held (from the end of the engine's own wait). */
+  const armHeld = useCallback(
+    (fullWait: boolean) => {
+      const h = held.current
+      if (!h) return
+      if (h.timer) clearTimeout(h.timer)
+      const p = prefsRef.current
+      const wait = turnWaitMs(h.text, p) - (fullWait ? 0 : engineEndpointMs(p.pauseMs))
+      if (wait <= 0) return flushHeld()
+      h.timer = setTimeout(flushHeld, wait)
+    },
+    [flushHeld],
+  )
+
+  /** Something was written down: hold it for the rest of the pause, unless it must go now. */
+  const onHeard = useCallback(
+    (text: string) => {
+      const ag = useAgent.getState()
+      // "Mm-hm" over a reply is handled at once (it keeps the reply going).
+      if (bargeRef.current !== null && ag.busy && BACKCHANNEL.test(text.trim())) return handleFinal(text)
+      held.current = { text: held.current ? `${held.current.text} ${text}` : text, timer: held.current?.timer ?? null }
+      setHolding(true)
+      if (sendNext.current) {
+        sendNext.current = false
+        return flushHeld()
+      }
+      armHeld(false)
+    },
+    [handleFinal, flushHeld, armHeld],
+  )
+
   // ---- the reply, spoken as it streams ----
   useEffect(() => {
     if (!active) return
@@ -231,6 +281,11 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
     setSaying('')
     setHeard('')
     bargeRef.current = null
+    // Voice mode ended mid pause: what was held is dropped with it.
+    if (held.current?.timer) clearTimeout(held.current.timer)
+    held.current = null
+    sendNext.current = false
+    setHolding(false)
     useAgent.getState().setVoiceOn(false)
   }, [])
 
@@ -246,9 +301,8 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
     setSaying('')
     const ag = useAgent.getState()
     ag.setVoiceOn(true)
-    // Carry on the open chat if it is a spoken one or still empty; otherwise a fresh voice chat.
-    if (!ag.chat || (!ag.chat.voice && ag.chat.messages.length)) ag.newChat()
-    else if (!ag.chat.voice && !ag.chat.messages.length) useAgent.setState({ chat: { ...ag.chat, voice: true } })
+    // Carry on the open chat, typed or spoken: voice just continues the conversation. A new chat only if none is open.
+    if (!ag.chat) ag.newChat()
     interruptedRef.current = false
     silencedAt.current = 0
     if (!voiceApi.available) {
@@ -261,7 +315,7 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
       {
         voice: p.voice,
         speed: p.speed,
-        endpointMs: endpointMs(p.pause),
+        endpointMs: engineEndpointMs(p.pauseMs),
         interrupt: p.interrupt,
         volume: p.volume,
         sounds: p.sounds,
@@ -275,6 +329,11 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
       {
         onPhase: setPhase,
         onSpeechStart: (utt, whilePlaying) => {
+          // Talking again: keep what is held and wait for the rest.
+          if (held.current?.timer) {
+            clearTimeout(held.current.timer)
+            held.current.timer = null
+          }
           setHeard('')
           setHeardFinal(false)
           if (heardTimer.current) clearTimeout(heardTimer.current)
@@ -293,7 +352,7 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
           setHeardFinal(true)
           if (heardTimer.current) clearTimeout(heardTimer.current)
           heardTimer.current = setTimeout(() => setHeard(''), 6000)
-          handleFinal(text)
+          onHeard(text)
         },
         onDiscard: (utt) => {
           if (bargeRef.current === utt) {
@@ -301,6 +360,12 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
             sessionRef.current?.duck(false)
           }
           setHeard('')
+          // Only noise: wait the whole pause again for what is held.
+          if (held.current && !held.current.timer) armHeld(true)
+          if (sendNext.current && held.current) {
+            sendNext.current = false
+            flushHeld()
+          }
         },
         onSaying: (_id, text) => setSaying(text),
         onQuiet: () => setSaying(''),
@@ -325,14 +390,14 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
       setActive(false)
       setPhase('error')
     }
-  }, [handleFinal, silenceReply])
+  }, [onHeard, armHeld, flushHeld, silenceReply])
 
   // Settings changed while talking: apply at once.
   useEffect(() => {
     sessionRef.current?.configure({
       voice: prefs.voice,
       speed: prefs.speed,
-      endpointMs: endpointMs(prefs.pause),
+      endpointMs: engineEndpointMs(prefs.pauseMs),
       interrupt: prefs.interrupt,
       volume: prefs.volume,
       sounds: prefs.sounds,
@@ -358,8 +423,16 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
     if (s?.isPlaying()) silenceReply()
   }, [silenceReply])
 
-  const finishTurn = useCallback(() => sessionRef.current?.finishTurn(), [])
+  /** Done: what is held goes now; if still speaking, it goes as soon as that is written down. */
+  const finishTurn = useCallback(() => {
+    if (phase === 'hearing') {
+      sendNext.current = true
+      sessionRef.current?.finishTurn()
+    } else flushHeld()
+  }, [phase, flushHeld])
   const levels = useCallback(() => sessionRef.current?.levels() ?? { mic: 0, out: 0 }, [])
 
-  return { active, phase, muted, heard, heardFinal, saying, error, done, start, stop, setMuted, interrupt, finishTurn, levels }
+  // Still the user's turn while the rest of the pause runs: the orb and the done button say so.
+  const shownPhase = holding && phase === 'listening' ? 'hearing' : phase
+  return { active, phase: shownPhase, muted, heard, heardFinal, saying, error, done, start, stop, setMuted, interrupt, finishTurn, levels }
 }
