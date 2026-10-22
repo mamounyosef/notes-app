@@ -14,9 +14,28 @@ declare module '@tiptap/core' {
   }
 }
 
+/**
+ * Drops the math delimiters people paste along with the formula: $$...$$,
+ * $...$, \[...\] and \(...\), only when one pair wraps the whole text
+ * (so "$a$ and $b$" is left alone). KaTeX would show them as an error.
+ */
+export function stripMathDelimiters(latex: string): string {
+  let t = (latex || '').trim()
+  for (;;) {
+    const m =
+      t.match(/^\$\$([\s\S]*)\$\$$/) ||
+      t.match(/^\\\[([\s\S]*)\\\]$/) ||
+      t.match(/^\\\(([\s\S]*)\\\)$/) ||
+      t.match(/^\$([\s\S]*)\$$/)
+    // The inside must not hold an unescaped $ of its own: then the pair did not wrap it all.
+    if (!m || /(^|[^\\])\$/.test(m[1])) return t
+    t = m[1].trim()
+  }
+}
+
 function render(el: HTMLElement, latex: string, display: boolean) {
   el.innerHTML = ''
-  const trimmed = (latex || '').trim()
+  const trimmed = stripMathDelimiters(latex)
   if (!trimmed) {
     const emptySpan = document.createElement('span')
     emptySpan.className = 'math-empty'
@@ -147,7 +166,7 @@ function makeNodeView(display: boolean) {
 
         const commit = () => {
           if (!editing) return
-          const latex = textarea.value.trim()
+          const latex = stripMathDelimiters(textarea.value)
           finish()
           const pos = typeof getPos === 'function' ? getPos() : null
           if (pos !== null && pos !== undefined) {
@@ -284,7 +303,7 @@ function makeNodeView(display: boolean) {
 
         const commit = () => {
           if (!editing) return
-          const latex = input.value.trim()
+          const latex = stripMathDelimiters(input.value)
           finish()
           const pos = typeof getPos === 'function' ? getPos() : null
           if (pos !== null && pos !== undefined) {
@@ -409,7 +428,7 @@ export const InlineMath = Node.create({
       insertInlineMath:
         (latex = '') =>
         ({ commands }: any) =>
-          commands.insertContent({ type: this.name, attrs: { latex, autoEdit: true } }),
+          commands.insertContent({ type: this.name, attrs: { latex: stripMathDelimiters(latex), autoEdit: true } }),
     } as any
   },
   addInputRules() {
@@ -441,7 +460,7 @@ export const BlockMath = Node.create({
       insertBlockMath:
         (latex = '') =>
         ({ commands }: any) =>
-          commands.insertContent({ type: this.name, attrs: { latex, autoEdit: true } }),
+          commands.insertContent({ type: this.name, attrs: { latex: stripMathDelimiters(latex), autoEdit: true } }),
     } as any
   },
   addInputRules() {
