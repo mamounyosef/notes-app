@@ -43,3 +43,4 @@ Thumbs.db
 *.tmp-*
 credentials.txt
 demo-shots/
+scripts/diagram-bench/refs/

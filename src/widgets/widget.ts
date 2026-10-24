@@ -16,8 +16,10 @@
 import JSON5 from 'json5'
 import { kmapExpressionTex, renderKmap } from './kmap'
 
-export type WidgetKind = 'html' | 'mermaid' | 'wavedrom' | 'chart' | 'kmap'
-export const WIDGET_KINDS: WidgetKind[] = ['html', 'mermaid', 'wavedrom', 'chart', 'kmap']
+export type WidgetKind = 'html' | 'mermaid' | 'wavedrom' | 'chart' | 'kmap' | 'graphviz' | 'tikz'
+export const WIDGET_KINDS: WidgetKind[] = ['html', 'mermaid', 'wavedrom', 'chart', 'kmap', 'graphviz', 'tikz']
+/** Drawn by the main process (Graphviz and TeX run in Node). */
+const MAIN_KINDS = new Set<WidgetKind>(['graphviz', 'tikz'])
 
 /** Block sources are stored as base64 (UTF-8 safe). */
 export function toBase64(str: string): string {
@@ -33,8 +35,8 @@ export function fromBase64(b64: string): string {
 export const kindOf = (k: unknown): WidgetKind => (WIDGET_KINDS.includes(k as WidgetKind) ? (k as WidgetKind) : 'html')
 
 /** The Markdown fence name the agent writes for each kind. */
-export const FENCE_OF: Record<WidgetKind, string> = { html: 'widget', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart', kmap: 'kmap' }
-export const KIND_OF_FENCE: Record<string, WidgetKind> = { widget: 'html', 'html-widget': 'html', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart', chartjs: 'chart', kmap: 'kmap', karnaugh: 'kmap' }
+export const FENCE_OF: Record<WidgetKind, string> = { html: 'widget', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart', kmap: 'kmap', graphviz: 'graphviz', tikz: 'tikz' }
+export const KIND_OF_FENCE: Record<string, WidgetKind> = { widget: 'html', 'html-widget': 'html', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart', chartjs: 'chart', kmap: 'kmap', karnaugh: 'kmap', graphviz: 'graphviz', dot: 'graphviz', tikz: 'tikz' }
 
 export const KIND_LABEL: Record<WidgetKind, string> = {
   html: 'HTML widget',
@@ -42,6 +44,8 @@ export const KIND_LABEL: Record<WidgetKind, string> = {
   wavedrom: 'Logic / timing',
   chart: 'Chart',
   kmap: 'K-map',
+  graphviz: 'Graphviz',
+  tikz: 'TikZ figure',
 }
 
 /* ------------------------------------------------------------------ theme */
@@ -352,6 +356,80 @@ ${always}</style>`
 
 const MATH_RE = /\$\$|\\\(|\\\[|\$[^\s$][^$\n]*?\$/
 
+/**
+ * connect(from, to, options) for widgets: arrows between HTML elements, from
+ * where they really are after layout (HTML has no connectors of its own).
+ * from / to: an element or a CSS selector. Options:
+ *   from, to   side to leave / enter: 'top' 'bottom' 'left' 'right' (default: facing sides)
+ *   route      'straight' (default), 'elbow' (right angles), 'around-left' / 'around-right'
+ *              (a skip connection that goes out to the side and back in)
+ *   gap        how far an 'around' route stays out from the boxes, px (default 24)
+ *   label      text at the middle; bus: '64' draws a slash with that width; dashed, dotted
+ *   color      (default the theme's dim color); head: false for a plain line; both: true for two heads
+ * Drawn on a layer over the page and redrawn whenever the layout changes.
+ */
+const WIRES = String.raw`(function () {
+  var list = [], last = '';
+  window.connect = function (a, b, o) { list.push({ a: a, b: b, o: o || {} }); if (window.__wires) requestAnimationFrame(window.__wires) };
+  function el(x) { return typeof x === 'string' ? document.querySelector(x) : x }
+  function box(e) { var r = e.getBoundingClientRect(); return { l: r.left + scrollX, t: r.top + scrollY, r: r.right + scrollX, b: r.bottom + scrollY, cx: (r.left + r.right) / 2 + scrollX, cy: (r.top + r.bottom) / 2 + scrollY } }
+  function at(B, side) { return side === 'top' ? [B.cx, B.t] : side === 'bottom' ? [B.cx, B.b] : side === 'left' ? [B.l, B.cy] : [B.r, B.cy] }
+  function facing(A, B) {
+    if (B.b <= A.t) return ['top', 'bottom']; if (B.t >= A.b) return ['bottom', 'top'];
+    return B.l >= A.r ? ['right', 'left'] : ['left', 'right'];
+  }
+  var NS = 'http://www.w3.org/2000/svg';
+  function mk(tag, attrs) { var n = document.createElementNS(NS, tag); for (var k in attrs) n.setAttribute(k, attrs[k]); return n }
+  window.__wires = function () {
+    var items = list.map(function (w) { var A = el(w.a), B = el(w.b); return A && B ? { w: w, A: box(A), B: box(B) } : null }).filter(Boolean);
+    var sig = JSON.stringify(items.map(function (i) { return [i.A, i.B] }));
+    if (sig === last && document.querySelector('svg.w-wires')) return; last = sig;
+    var old = document.querySelector('svg.w-wires'); if (old) old.remove();
+    if (!items.length) return;
+    var svg = mk('svg', { class: 'w-wires', width: '1', height: '1', style: 'position:absolute;left:0;top:0;overflow:visible;pointer-events:none;z-index:5' });
+    var T = window.__theme || {};
+    items.forEach(function (it) {
+      var o = it.w.o, A = it.A, B = it.B, f = facing(A, B), route = o.route || 'straight', gap = o.gap == null ? 24 : o.gap;
+      var sa = o.from || (route === 'around-right' ? 'right' : route === 'around-left' ? 'left' : f[0]);
+      var sb = o.to || (route === 'around-right' ? 'right' : route === 'around-left' ? 'left' : f[1]);
+      var p = at(A, sa), q = at(B, sb), pts = [p];
+      if (route === 'around-right' || route === 'around-left') {
+        var x = route === 'around-right' ? Math.max(A.r, B.r) + gap : Math.min(A.l, B.l) - gap;
+        var vert = sa === 'top' || sa === 'bottom';
+        if (vert) pts.push([p[0], p[1] + (sa === 'top' ? -gap / 2 : gap / 2)], [x, p[1] + (sa === 'top' ? -gap / 2 : gap / 2)]); else pts.push([x, p[1]]);
+        if (sb === 'top' || sb === 'bottom') pts.push([x, q[1] + (sb === 'top' ? -gap / 2 : gap / 2)], [q[0], q[1] + (sb === 'top' ? -gap / 2 : gap / 2)]); else pts.push([x, q[1]]);
+      } else if (route === 'elbow') {
+        var va = sa === 'top' || sa === 'bottom', vb = sb === 'top' || sb === 'bottom';
+        if (va && vb) { var my = (p[1] + q[1]) / 2; pts.push([p[0], my], [q[0], my]) }
+        else if (!va && !vb) { var mx = (p[0] + q[0]) / 2; pts.push([mx, p[1]], [mx, q[1]]) }
+        else if (va) pts.push([p[0], q[1]]); else pts.push([q[0], p[1]]);
+      }
+      pts.push(q);
+      var color = o.color || T.dim || '#999', d = 'M' + pts.map(function (s) { return s[0].toFixed(1) + ' ' + s[1].toFixed(1) }).join(' L');
+      svg.appendChild(mk('path', { d: d, fill: 'none', stroke: color, 'stroke-width': o.width || 1.6, 'stroke-dasharray': o.dotted ? '2 4' : o.dashed ? '6 4' : '' }));
+      function head(tip, from) {
+        var dx = tip[0] - from[0], dy = tip[1] - from[1], L = Math.hypot(dx, dy) || 1, ux = dx / L, uy = dy / L, s = 8;
+        svg.appendChild(mk('polygon', { points: [tip, [tip[0] - ux * s - uy * s * 0.45, tip[1] - uy * s + ux * s * 0.45], [tip[0] - ux * s + uy * s * 0.45, tip[1] - uy * s - ux * s * 0.45]].map(function (v) { return v[0].toFixed(1) + ',' + v[1].toFixed(1) }).join(' '), fill: color }));
+      }
+      if (o.head !== false) head(q, pts[pts.length - 2]);
+      if (o.both) head(p, pts[1]);
+      // Middle of the longest segment carries the label and the bus mark.
+      var k = 0, best = -1;
+      for (var i = 0; i < pts.length - 1; i++) { var len = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1]); if (len > best) { best = len; k = i } }
+      var m = [(pts[k][0] + pts[k + 1][0]) / 2, (pts[k][1] + pts[k + 1][1]) / 2], horiz = Math.abs(pts[k + 1][0] - pts[k][0]) > Math.abs(pts[k + 1][1] - pts[k][1]);
+      if (o.bus != null) svg.appendChild(mk('line', { x1: m[0] - 5, y1: m[1] + 5, x2: m[0] + 5, y2: m[1] - 5, stroke: color, 'stroke-width': 1.4 }));
+      var text = o.label != null ? String(o.label) : o.bus != null ? String(o.bus) : '';
+      if (text) {
+        var t = mk('text', { x: horiz ? m[0] : m[0] + 9, y: horiz ? m[1] - 7 : m[1], 'text-anchor': horiz ? 'middle' : 'start', 'dominant-baseline': horiz ? 'auto' : 'central', fill: o.labelColor || T.text || 'currentColor', 'font-size': o.fontSize || 12, 'font-family': T.font || 'sans-serif' });
+        t.textContent = text; svg.appendChild(t);
+      }
+    });
+    document.body.appendChild(svg);
+  };
+  addEventListener('load', function () { window.__wires() });
+  addEventListener('resize', function () { window.__wires() });
+})();`
+
 /** Runs in the block: charts, math, then reports size, errors and "done". */
 const RUNTIME = String.raw`(async function () {
   var T = window.__theme, errs = window.__errors, id = window.name;
@@ -390,6 +468,43 @@ const RUNTIME = String.raw`(async function () {
   }
   try { if (document.fonts) await document.fonts.ready } catch (e) {}
   await new Promise(function (r) { requestAnimationFrame(function () { requestAnimationFrame(r) }) });
+  // Arrows made with connect(), now that the boxes are where they will stay.
+  if (window.__wires) window.__wires();
+  // Readable labels in every theme: a diagram's own fills (pastel boxes on a dark
+  // page, dark boxes on a light one) can match the theme's text color, so each
+  // label takes dark or light text from whatever is drawn under it.
+  (function () {
+    function lum(c) { var m = /rgba?\(([^)]+)\)/.exec(c || ''); if (!m) return null; var p = m[1].split(',').map(parseFloat); if (p.length > 3 && p[3] < 0.5) return null; return (0.2126 * p[0] + 0.7152 * p[1] + 0.0722 * p[2]) / 255 }
+    var page = lum(getComputedStyle(document.body).backgroundColor); if (page === null) page = T.dark ? 0.1 : 0.95;
+    // The smallest filled shape of the same svg around the label's center (hit
+    // testing would miss whatever lies below the frame's first screenful).
+    function under(lab) {
+      var r = lab.getBoundingClientRect(); if (r.width < 1 || r.height < 1) return null;
+      var x = r.left + r.width / 2, y = r.top + r.height / 2, svg = lab.ownerSVGElement || lab.closest('svg');
+      while (svg && svg.parentNode && svg.parentNode.closest && svg.parentNode.closest('svg')) svg = svg.parentNode.closest('svg');
+      var best = null, bestA = Infinity;
+      [].slice.call(svg ? svg.querySelectorAll('rect, path, polygon, ellipse, circle') : []).forEach(function (el) {
+        if (el.closest('defs, marker, clipPath, mask, pattern, text, foreignObject')) return;
+        var v = lum(getComputedStyle(el).fill); if (v === null) return;
+        var b = el.getBoundingClientRect(), a = b.width * b.height;
+        if (x > b.left && x < b.right && y > b.top && y < b.bottom && a < bestA) { best = v; bestA = a }
+      });
+      if (best !== null) return best;
+      for (var p = svg && svg.parentElement; p; p = p.parentElement) { var v = lum(getComputedStyle(p).backgroundColor); if (v !== null) return v }
+      return page;
+    }
+    function fix(lab, prop, targets) {
+      var bg = under(lab); if (bg === null) return;
+      var fg = lum(getComputedStyle(lab)[prop]); if (fg === null || Math.abs(bg - fg) >= 0.4) return;
+      var c = bg > 0.5 ? '#1e1e1e' : '#f2f2f2';
+      targets.forEach(function (t) { t.style.setProperty(prop, c, 'important') });
+    }
+    document.querySelectorAll('.w-diagram svg text').forEach(function (tx) { fix(tx, 'fill', [tx].concat([].slice.call(tx.querySelectorAll('tspan')))) });
+    document.querySelectorAll('.w-diagram svg foreignObject').forEach(function (fo) {
+      var inner = [].slice.call(fo.querySelectorAll('*')).filter(function (e) { return (e.textContent || '').trim() });
+      if (inner.length) fix(inner[inner.length - 1], 'color', inner);
+    });
+  })();
   // Measured problems in the drawings, for the agent's check (window.__lint()):
   // text on text, a line or shape running through text, parts cut off, tiny text.
   window.__lint = function () {
@@ -400,18 +515,20 @@ const RUNTIME = String.raw`(async function () {
     function inter(a, b) { var w = Math.min(a.right, b.right) - Math.max(a.left, b.left), h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top); return w > 0 && h > 0 ? w * h : 0 }
     function shown(el) { var cs = getComputedStyle(el); return cs.display !== 'none' && cs.visibility !== 'hidden' && +cs.opacity !== 0 }
     // Laid out by Mermaid or WaveDrom (not a K-map, which is checked fully): only some checks apply.
-    function lib(el) { var d = el.closest('.w-diagram'); return Boolean(d) && !el.closest('.w-kmap') }
+    function lib(el) { var d = el.closest('.w-diagram'); return Boolean(d) && !el.closest('.w-kmap, .w-own') }
     var texts = [].slice.call(document.querySelectorAll('svg text')).filter(function (el) { return shown(el) && (el.textContent || '').trim() }).slice(0, 200).map(function (el) { return { el: el, r: el.getBoundingClientRect() } });
     var i, j, k;
     for (i = 0; i < texts.length; i++) {
       var fs = parseFloat(getComputedStyle(texts[i].el).fontSize) || 0, sc = texts[i].el.getScreenCTM(), px = fs * (sc ? Math.abs(sc.a) : 1);
       if (/[\u0304\u0305\u0332\u0333]/.test(texts[i].el.textContent || '')) add('comb' + i, 'Text ' + name(texts[i].el) + ' uses a combining bar or underline character, which draws through or beside the letter: write <tspan text-decoration="overline">Z</tspan> for a bar over a letter (underline for a line under it).');
       if (px && px < 10) {
-        if (lib(texts[i].el)) add('tinylib', 'Text such as ' + name(texts[i].el) + ' shows at only ' + px.toFixed(1) + 'px: the diagram is wider than the cell, so it is scaled down. Make the cell wider, use fewer columns or steps, or split it.');
+        if (lib(texts[i].el) || texts[i].el.closest('.w-tikz')) add('tinylib', 'Text such as ' + name(texts[i].el) + ' shows at only ' + px.toFixed(1) + 'px: the diagram is wider than the cell, so it is scaled down. Make the cell wider, use fewer columns or steps, or split it.');
         else add('tiny' + i, 'Text ' + name(texts[i].el) + ' is tiny (' + px.toFixed(1) + 'px); make it at least 12px.');
       }
       for (j = i + 1; j < texts.length; j++) {
         var a = texts[i].r, b = texts[j].r, o = inter(a, b);
+        // TeX splits a word into pieces at kerns: neighbours on one baseline touch by a pixel or two.
+        if (texts[i].el.closest('.w-tikz') && Math.abs(a.bottom - b.bottom) < 1.5 && Math.min(a.right, b.right) - Math.max(a.left, b.left) < 3) continue;
         if (o > 0.2 * Math.min(area(a), area(b))) add('tt' + i + '_' + j, 'Text ' + name(texts[i].el) + ' overlaps text ' + name(texts[j].el) + '.');
       }
     }
@@ -442,8 +559,10 @@ const RUNTIME = String.raw`(async function () {
     var vw = document.documentElement.clientWidth;
     [].slice.call(document.querySelectorAll('svg')).forEach(function (svg) {
       if (svg.parentNode && svg.parentNode.closest && svg.parentNode.closest('svg')) return;
+      // The connect() layer is a point the arrows draw out from.
+      if (svg.classList.contains('w-wires')) return;
       // Laid out by Mermaid or WaveDrom: their edges are theirs, not something the source can fix.
-      if (svg.closest('.w-diagram') && !svg.classList.contains('w-kmap')) return;
+      if (svg.closest('.w-diagram') && !svg.classList.contains('w-kmap') && !svg.closest('.w-own')) return;
       var sr = svg.getBoundingClientRect();
       [].slice.call(svg.querySelectorAll('text, path, line, polyline, polygon, rect, circle, ellipse')).forEach(function (el, ei) {
         if (el.closest('defs, clipPath, mask, marker, pattern, symbol') || el.hasAttribute('clip-path') || !shown(el)) return;
@@ -527,6 +646,8 @@ const RUNTIME = String.raw`(async function () {
   var pending = 0;
   function send() {
     pending = 0;
+    // The layout moved: arrows follow (a no-op when nothing they join moved).
+    if (window.__wires) window.__wires();
     var m = measure(), h = Math.max(20, m.h), w = m.w;
     window.__widget = { done: true, h: h, w: w, cw: m.cw, errors: errs.slice() };
     if (Math.abs(h - last) > 2 || Math.abs(w - lastW) > 2 || Math.abs(m.cw - lastCw) > 2) { last = h; lastW = w; lastCw = m.cw; post({ type: 'size', h: h, w: w, cw: m.cw, vw: document.documentElement.clientWidth }) }
@@ -568,6 +689,19 @@ export async function buildWidgetDoc(kind: WidgetKind, src: string, t: WidgetThe
     } catch (e) {
       body = errorBox('K-map', String((e as Error).message || e))
     }
+  } else if (MAIN_KINDS.has(kind)) {
+    const theme = { dark: t.dark, bg: t.bg, text: t.text, dim: t.dim, line: t.line, font: t.font, palette: t.palette }
+    const desk = (window as any).notes
+    const r: { ok: boolean; svg?: string; error?: string } = desk?.diagram
+      ? await desk.diagram.render(kind, src, theme).catch((e: any) => ({ ok: false, error: String(e?.message || e) }))
+      : { ok: false, error: 'Only the desktop app can draw this.' }
+    // A TikZ picture is placed by its author, so it gets every layout check (like a K-map),
+    // and it is drawn as on paper, on a white card.
+    body = r.ok
+      ? kind === 'tikz'
+        ? `<div class="w-diagram w-own w-tikz"><div style="background:#fff;border-radius:8px;padding:14px;max-width:100%">${r.svg}</div></div>`
+        : `<div class="w-diagram">${r.svg}</div>`
+      : errorBox(KIND_LABEL[kind], r.error || 'unknown error')
   } else if (kind === 'chart') {
     body = `<script type="application/json" class="w-chart">${src.replace(/<\/script/gi, '<\\/script')}</script>`
   } else {
@@ -577,7 +711,8 @@ export async function buildWidgetDoc(kind: WidgetKind, src: string, t: WidgetThe
   const full = kind === 'html' && looksLikeHtmlDocument(body)
   const needChart = kind === 'chart' || /\bnew\s+Chart\s*\(|\bChart\./.test(body)
   const needMath = MATH_RE.test(kind === 'html' || kind === 'kmap' ? body.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/gi, '') : '')
-  const libs = [needChart ? inlineScript(await loadChart()) : '', needMath ? inlineScript(await loadKatex()) : ''].join('')
+  const needWires = kind === 'html' && /\bconnect\s*\(/.test(body)
+  const libs = [needChart ? inlineScript(await loadChart()) : '', needMath ? inlineScript(await loadKatex()) : '', needWires ? inlineScript(WIRES) : ''].join('')
   const theme = { dark: t.dark, bg: t.bg, text: t.text, dim: t.dim, line: t.line, accent: t.accent, palette: t.palette, font: t.font }
   const setup = inlineScript(
     `window.__theme=${JSON.stringify(theme)};window.__errors=[];` +

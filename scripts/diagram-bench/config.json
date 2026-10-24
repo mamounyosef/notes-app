@@ -1,0 +1,37 @@
+{
+  "out": "C:/Users/mamou/Downloads/Diagram engine test 2026-10-23",
+  "parallel": 3,
+  "timeoutMin": 10,
+  "theme": "dark",
+  "engines": [
+    { "id": "mermaid", "name": "1 Mermaid" },
+    { "id": "graphviz", "name": "2 Graphviz" },
+    { "id": "d2", "name": "3 D2", "retired": true },
+    { "id": "tikz", "name": "4 TikZ" },
+    { "id": "widget", "name": "5 HTML-SVG widget" }
+  ],
+  "tasks": [
+    { "id": "transformer", "order": 1, "name": "Transformer (Attention Is All You Need)", "ref": "refs/transformer.png" },
+    { "id": "llama3", "order": 2, "name": "Llama 3 8B architecture", "ref": "refs/llama3.png" },
+    { "id": "des", "order": 3, "name": "DES encryption overview", "ref": "refs/des.png" },
+    { "id": "deepseek", "order": 4, "name": "DeepSeek V4-Flash architecture", "ref": "refs/deepseek-v4.png" },
+    { "id": "webapp", "order": 5, "name": "Web app architecture (text prompt)", "prompt": "Draw the architecture of a typical scalable web application: users' browsers, a CDN for static files, a load balancer, three application servers, a Redis cache, a primary database with two read replicas (replication arrows), a message queue and two background workers, and an object storage bucket. Group them into tiers and label every connection with what flows over it." },
+    { "id": "tcp", "order": 6, "name": "TCP connection lifecycle (text prompt)", "prompt": "Draw the full TCP connection lifecycle between a client and a server: the three way handshake (SYN, SYN-ACK, ACK with sequence numbers), a data transfer with acknowledgements, and the four way close (FIN, ACK, FIN, ACK), with each side's state (CLOSED, SYN_SENT, LISTEN, SYN_RCVD, ESTABLISHED, FIN_WAIT_1, FIN_WAIT_2, CLOSE_WAIT, LAST_ACK, TIME_WAIT) shown as time goes down." }
+  ],
+  "models": [
+    { "id": "gemma4:31b", "name": "Gemma 4 31B (Ollama)" },
+    { "id": "nemotron-3-ultra", "name": "Nemotron 3 Ultra (Ollama)" },
+    { "id": "beam", "name": "Beam (Ollama)" },
+    { "id": "nemotron-3-super", "name": "Nemotron 3 Super (Ollama)" },
+    { "id": "gpt-oss:120b", "name": "gpt-oss 120B (Ollama)" },
+    { "id": "nemotron-3-nano:30b", "name": "Nemotron 3 Nano 30B (Ollama)" },
+    { "id": "gpt-oss:20b", "name": "gpt-oss 20B (Ollama)", "tasks": ["transformer", "llama3"] },
+    { "id": "dots-studio/dots-3-note-preview:free", "name": "Dots3-Note Preview (OpenRouter free)", "tasks": ["transformer", "llama3"] },
+    { "id": "nvidia/nemotron-3.5-super-vl:free", "name": "Nemotron 3.5 Super VL (OpenRouter free)", "tasks": ["transformer", "llama3"] },
+    { "id": "poolside/laguna-s-2.1:free", "name": "Laguna S 2.1 (OpenRouter free)", "tasks": ["transformer", "llama3"] },
+    { "id": "google/gemma-4-26b-a4b-it:free", "name": "Gemma 4 26B (OpenRouter free)", "tasks": ["transformer"] },
+    { "id": "xingchen-agi/xing4.0-29b-a4b:free", "name": "Xing4.0 29B (OpenRouter free)", "tasks": ["transformer"] },
+    { "id": "nvidia/nemotron-3.5-lightning:free", "name": "Nemotron 3.5 Lightning (OpenRouter free)", "tasks": ["transformer"] },
+    { "id": "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free", "name": "Nemotron 3 Nano Omni (OpenRouter free)", "tasks": ["transformer"] }
+  ]
+}

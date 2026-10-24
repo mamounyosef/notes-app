@@ -634,7 +634,7 @@ export const TOOL_DEFS = [
       properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' } },
     },
   }),
-  fn('check_drawing', 'See a drawing (mermaid, wavedrom, chart, kmap or widget block) exactly as the user sees it, with measured problems from its real geometry (text on text, lines through text, parts cut off, tiny text). With compare_to, the original photo or sketch is shown next to it to compare part by part. Use it after making or changing a non-trivial drawing, fix what it finds with update_drawing, and check again (up to three rounds).', {
+  fn('check_drawing', 'See a drawing (mermaid, wavedrom, chart, kmap, graphviz, tikz or widget block) exactly as the user sees it, with measured problems from its real geometry (text on text, lines through text, parts cut off, tiny text). With compare_to, the original photo or sketch is shown next to it to compare part by part. Use it after making or changing a non-trivial drawing, fix what it finds with update_drawing, and check again (up to three rounds).', {
     cell_id: str('Cell with the drawing.'),
     page_id: str('Page of the cell. Omit for the open page.'),
     index: { type: 'number', description: 'Which drawing in the cell, from 1. Default 1.' },
@@ -645,8 +645,8 @@ export const TOOL_DEFS = [
     cell_id: str('Cell with the drawing.'),
     page_id: str('Page of the cell. Omit for the open page.'),
     index: { type: 'number', description: 'Which drawing in the cell, from 1. Default 1.' },
-    source: str('The new source, without the ``` fence lines: Mermaid text, WaveDrom JSON, a kmap object, a Chart.js config, or the widget HTML.'),
-    kind: { type: 'string', enum: ['mermaid', 'wavedrom', 'chart', 'kmap', 'widget'], description: 'Change the kind of drawing too. Omit to keep it.' },
+    source: str('The new source, without the ``` fence lines: Mermaid text, WaveDrom JSON, a kmap object, a Chart.js config, Graphviz DOT, a TikZ picture, or the widget HTML.'),
+    kind: { type: 'string', enum: ['mermaid', 'wavedrom', 'chart', 'kmap', 'graphviz', 'tikz', 'widget'], description: 'Change the kind of drawing too. Omit to keep it.' },
   }, ['cell_id', 'source']),
   fn('insert_image','Put an image into a cell or a new cell: an image the user attached in this chat (source "attachment:<sha>"), a rendered PDF page ("attachment:<sha>" of the page image), an image already in the notes ("asset://local/..."), or a web URL.', {
     source: str('attachment:<sha>, asset://local/<name> or https URL.'),
@@ -1220,7 +1220,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const pid = await pageOfCell(a.cell_id, a.page_id)
     const c = findCell(await loadPage(pid), a.cell_id)
     const all = drawingsIn(c.html)
-    if (!all.length) throw new ToolError(`Cell [${c.id}] has no drawing (no mermaid, wavedrom, chart or widget block).`)
+    if (!all.length) throw new ToolError(`Cell [${c.id}] has no drawing (no mermaid, wavedrom, chart, kmap, graphviz, tikz or widget block).`)
     const d = all[(Number(a.index) || 1) - 1]
     if (!d) throw new ToolError(`Cell [${c.id}] has ${all.length} drawing(s); index starts at 1.`)
     const shot = await shootDrawing(d, c.w)

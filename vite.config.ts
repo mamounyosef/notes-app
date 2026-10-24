@@ -22,7 +22,8 @@ export default defineConfig({
         vite: {
           build: {
             outDir: 'dist-electron',
-            rollupOptions: { external: ['electron'] },
+            // Diagram engines load their WebAssembly from their own folders at run time.
+            rollupOptions: { external: ['electron', 'node-tikzjax', '@hpcc-js/wasm-graphviz'] },
           },
         },
       },

@@ -121,6 +121,9 @@ const api = {
       ipcRenderer.invoke('voice:preview', body) as Promise<{ ok: boolean; wav?: string; error?: string }>,
     chooseEngine: () => ipcRenderer.invoke('voice:chooseEngine') as Promise<{ ok: boolean; engineDir?: string; error?: string; canceled?: boolean }>,
   },
+  diagram: {
+    render: (kind: string, src: string, theme: unknown) => ipcRenderer.invoke('diagram:render', kind, src, theme) as Promise<{ ok: boolean; svg?: string; error?: string }>,
+  },
   chats: {
     list: () => ipcRenderer.invoke('chats:list'),
     get: (id: string) => ipcRenderer.invoke('chats:get', id),

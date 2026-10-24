@@ -1,0 +1,40 @@
+{
+  "out": "C:/Users/mamou/Downloads/Diagram engine test 2026-10-23/After prompt update",
+  "parallel": 3,
+  "timeoutMin": 10,
+  "theme": "dark",
+  "engines": [
+    {
+      "id": "tikz",
+      "name": "4 TikZ"
+    },
+    {
+      "id": "widget",
+      "name": "5 HTML-SVG widget"
+    }
+  ],
+  "tasks": [
+    {
+      "id": "transformer",
+      "order": 1,
+      "name": "Transformer (Attention Is All You Need)",
+      "ref": "refs/transformer.png"
+    },
+    {
+      "id": "deepseek",
+      "order": 4,
+      "name": "DeepSeek V4-Flash architecture",
+      "ref": "refs/deepseek-v4.png"
+    }
+  ],
+  "models": [
+    {
+      "id": "nemotron-3-ultra",
+      "name": "Nemotron 3 Ultra (Ollama)"
+    },
+    {
+      "id": "beam",
+      "name": "Beam (Ollama)"
+    }
+  ]
+}

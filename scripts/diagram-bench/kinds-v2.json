@@ -1,0 +1,12 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "../agent-e2e/setup-blank.js",
+  "prompts": [],
+  "eval": [
+    "(async () => { const D = __notesDebug; const env = { rec: new D.TurnRecorder(), attachments: new Map(), ask: async () => '' }; const r = await D.runTool('create_cells', { cells: [ { title: 'TikZ broken', x: 40, y: 120, w: 500, content: '```tikz\\n\\\\begin{tikzpicture}\\n\\\\node[draw, fancy=3] (a) {A};\\n\\\\node[draw, below=of a] (b) {B};\\n\\\\end{tikzpicture}\\n```' }, { title: 'TikZ styled', x: 40, y: 330, w: 560, content: '```tikz\\n\\\\begin{tikzpicture}[node distance=7mm and 12mm, font=\\\\sffamily\\\\small, box/.style={draw, rounded corners=3pt, minimum width=34mm, minimum height=7mm, align=center, fill=#1}, box/.default=black!6, op/.style={draw, circle, inner sep=0pt, minimum size=5mm}, arr/.style={-{Stealth[length=2.2mm]}, thick}]\\n\\\\node[box=orange!20] (attn) {Multi-Head\\\\\\\\Attention};\\n\\\\node[box=yellow!25, above=of attn] (norm) {Add \\\\& Norm};\\n\\\\node[op, below=6mm of attn] (in) {$+$};\\n\\\\draw[arr] (in) -- (attn);\\n\\\\draw[arr] (attn) -- (norm);\\n\\\\draw[arr] (in.east) -- ++(10mm,0) |- (norm.east);\\n\\\\begin{scope}[on background layer]\\\\node[draw, rounded corners=6pt, fill=black!4, fit=(attn)(norm), inner sep=4mm] (blk) {};\\\\end{scope}\\n\\\\node[left=2mm of blk] {$N\\\\times$};\\n\\\\end{tikzpicture}\\n```' }, { title: 'Widget connect', x: 640, y: 120, w: 520, content: '```widget\\n<div class=\"wrap\"><div class=\"col\"><div class=\"blk\" id=\"add\">+</div><div class=\"blk\" id=\"ffn\">Feed forward</div><div class=\"blk\" id=\"norm\">RMSNorm</div></div><div class=\"blk side\" id=\"k\">K1</div></div><style>.wrap{display:flex;gap:70px;align-items:center;justify-content:center;padding:10px 40px}.col{display:flex;flex-direction:column;align-items:center;gap:26px}.blk{padding:6px 14px;border:1px solid var(--line);border-radius:6px;background:var(--soft)}</style><script>connect(\"#norm\",\"#ffn\",{bus:4096});connect(\"#ffn\",\"#add\");connect(\"#norm\",\"#add\",{route:\"around-left\"});connect(\"#k\",\"#ffn\",{label:\"key\",dashed:true})</script>\\n```' } ] }, env); return r.content })()"
+  ],
+  "finalShots": [
+    { "eval": "(async()=>{const S=__notesDebug.useStore.getState();S.setZoom(0.9);document.querySelector('.agent-panel')&&__notesDebug.useAgent.getState().toggle(false);await new Promise(r=>setTimeout(r,7000));return 1})()", "name": "v2" }
+  ]
+}

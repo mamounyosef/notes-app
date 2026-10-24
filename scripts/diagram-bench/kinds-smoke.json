@@ -1,0 +1,12 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "../agent-e2e/setup-blank.js",
+  "prompts": [],
+  "eval": [
+    "(async () => { const D = __notesDebug; const env = { rec: new D.TurnRecorder(), attachments: new Map(), ask: async () => '' }; const r = await D.runTool('create_cells', { cells: [ { title: 'Graphviz', x: 40, y: 120, w: 520, content: '```graphviz\\ndigraph { rankdir=BT; node [shape=box, style=rounded]; subgraph cluster_b { label=\"32x\"; style=\"rounded,dashed\"; n1 [label=\"RMSNorm 1\"]; at [label=\"Attention\"]; add [shape=circle, label=\"+\", width=0.35, fixedsize=true]; n1 -> at -> add } emb [label=\"Token embedding\"]; emb -> n1; emb -> add [constraint=false] }\\n```' }, { title: 'D2', x: 600, y: 120, w: 520, content: '```d2\\ndirection: up\\nemb: Token embedding\\nblock: \"Transformer block (32x)\" { n1: RMSNorm 1; at: Attention; add: \"+\" { shape: circle }; n1 -> at -> add }\\nemb -> block.n1\\nemb -> block.add: residual\\n```' }, { title: 'TikZ', x: 40, y: 700, w: 620, content: '```tikz\\n\\\\begin{tikzpicture}[box/.style={draw, rounded corners=3pt, minimum width=30mm, minimum height=7mm, fill=blue!15}]\\n\\\\node[box] (ip) {Initial Permutation};\\n\\\\node[box, below=8mm of ip] (r1) {Round 1};\\n\\\\node[box, right=14mm of r1, fill=black!10] (pc) {Permuted Choice 2};\\n\\\\draw[-{Stealth}] (ip) -- node[pos=.5]{/} node[right, font=\\\\small]{64} (r1);\\n\\\\draw[-{Stealth}] (pc) -- node[above, font=\\\\small]{$K_1$} (r1);\\n\\\\end{tikzpicture}\\n```' } ] }, env); return r.content })()"
+  ],
+  "finalShots": [
+    { "eval": "(async()=>{const S=__notesDebug.useStore.getState();S.setZoom(0.8);document.querySelector('.agent-panel')&&__notesDebug.useAgent.getState().toggle(false);await new Promise(r=>setTimeout(r,6000));return 1})()", "name": "kinds" }
+  ]
+}

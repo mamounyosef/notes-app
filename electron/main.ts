@@ -12,6 +12,7 @@ import { pageIndex, searchPages } from '../shared/search-core.mjs'
 import { setupAgent } from './agent'
 import { setupVoice } from './voice'
 import { setupUpdate } from './update'
+import { setupDiagrams } from './diagrams'
 
 // Disable hardware acceleration and sandbox to prevent Chromium GPU/D3D11 crash (0xC0000005) on Windows 11
 app.disableHardwareAcceleration()
@@ -597,6 +598,7 @@ const agent = setupAgent({
 
 setupVoice({ getWin: () => win, log: (...a) => debugLog(...a) })
 setupUpdate({ log: (...a) => debugLog(...a) })
+setupDiagrams()
 
 ipcMain.handle('asset:save', async (_e, dataUrl: string) => {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl)
