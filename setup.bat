@@ -43,8 +43,18 @@ where git >nul 2>nul
 if errorlevel 1 goto pulled
 echo   [1/7] Getting the latest version.
 for /f %%h in ('git rev-parse HEAD') do set "BEFORE=%%h"
+REM npm install can rewrite package-lock.json, which would block the pull.
+REM This setup made that change, so it is safe to drop it.
+git diff --quiet -- package-lock.json
+if errorlevel 1 git checkout -- package-lock.json
 git pull --ff-only
-if errorlevel 1 echo   Could not pull the latest version. Building what is here.
+if errorlevel 1 (
+  echo   Could not pull the latest version. git status:
+  git status --short --branch
+  REM From Settings, Update: building the old version again would only look like an update.
+  if defined NOTES_QUIET goto failed
+  echo   Building what is here.
+)
 for /f %%h in ('git rev-parse HEAD') do set "AFTER=%%h"
 if not "%BEFORE%"=="%AFTER%" (call "%~f0" pulled & exit /b)
 echo.

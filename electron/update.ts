@@ -49,6 +49,8 @@ function writeLauncher(root: string) {
     'setlocal',
     'set "NOTES_QUIET=1"',
     'set "ELECTRON_RUN_AS_NODE="',
+    // Set by some terminals (Claude Code among them); it stops cmd finding programs in the current folder.
+    'set "NoDefaultCurrentDirectoryInExePath="',
     // Never wait on a git password prompt nobody can see.
     'set "GIT_TERMINAL_PROMPT=0"',
     `cd /d ${cmdPath(root)}`,
