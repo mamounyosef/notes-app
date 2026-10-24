@@ -34,8 +34,10 @@ for (const sha of scenario.blobs || []) {
 }
 
 const PORT = 9333
-const exe = path.join(PROJECT, 'node_modules/electron/dist/electron.exe')
-const app = spawn(exe, ['.', `--user-data-dir=${UD}`, `--remote-debugging-port=${PORT}`], {
+// NOTES_E2E_EXE runs a packaged build (release/win-unpacked/Notes.exe) instead of the sources.
+const packaged = process.env.NOTES_E2E_EXE || ''
+const exe = packaged || path.join(PROJECT, 'node_modules/electron/dist/electron.exe')
+const app = spawn(exe, [...(packaged ? [] : ['.']), `--user-data-dir=${UD}`, `--remote-debugging-port=${PORT}`], {
   cwd: PROJECT,
   env: { ...process.env, NOTES_TEST_OFFSCREEN: '1' },
   stdio: 'ignore',
