@@ -11,6 +11,7 @@ import { useRunsSummary } from './components/agent/Sessions'
 import SettingsModal from './components/SettingsModal'
 import LinkModal from './components/LinkModal'
 import ArtifactModal from './components/ArtifactModal'
+import { NoteImageHost } from './components/NoteImages'
 import SyncPanel from './components/SyncPanel'
 import { useCloudProblem } from './components/CloudSync'
 import AgentPanel from './components/agent/AgentPanel'
@@ -655,6 +656,7 @@ export default function App() {
       {showKeys && <ShortcutSheet onClose={() => setShowKeys(false)} />}
       {linkModalOpen && <LinkModal onClose={() => setLinkModalOpen(false)} />}
       {artifactModalOpen && <ArtifactModal onClose={() => setArtifactModalOpen(false)} />}
+      <NoteImageHost />
       {toast && <div className="toast">{toast}</div>}
     </div>
   )

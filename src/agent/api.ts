@@ -198,9 +198,24 @@ export const chatApi = {
 /** Small cache of attachment data URLs, so images do not load twice. */
 const urlCache = new Map<string, Promise<string | null>>()
 
+/** A picture key that is already a link (a note's picture) rather than a blob sha. */
+export const isLink = (key: string) => /^(asset:|data:|blob:|https?:|\/)/i.test(key)
+
 export function blobUrl(sha: string, mime: string): Promise<string | null> {
   const key = `${sha}|${mime}`
   let p = urlCache.get(key)
+  if (!p && isLink(sha)) {
+    // Fetched into a blob so canvases that draw it can still be copied and saved.
+    p = fetch(sha)
+      .then((r) => (r.ok ? r.blob() : null))
+      .then((b) => (b ? URL.createObjectURL(b) : null))
+      .catch(() => null)
+      .then((u) => {
+        if (!u) urlCache.delete(key)
+        return u
+      })
+    urlCache.set(key, p)
+  }
   if (!p) {
     p = chatApi.getBlob(sha).then((b64) => {
       if (!b64) {

@@ -124,12 +124,17 @@ export function ImageEditor({
   onApply,
   onRemove,
   onClose,
+  save = applyEdit,
+  sizeTitle = 'Size the assistant will get',
 }: {
   items: ChatAttachment[]
   index: number
   onApply(changes: { from: string; to: ChatAttachment }[]): void
   onRemove?(sha: string): void
   onClose(): void
+  /** Bakes an edit into a picture; chat pictures go to the blob store by default. */
+  save?(att: ChatAttachment, e: ImageEdit): Promise<ChatAttachment>
+  sizeTitle?: string
 }) {
   const [list, setList] = useState(items)
   const [i, setI] = useState(Math.min(index, items.length - 1))
@@ -354,7 +359,7 @@ export function ImageEditor({
     setError(null)
     try {
       const out: { from: string; to: ChatAttachment }[] = []
-      for (const a of changed) out.push({ from: a.sha, to: await applyEdit(a, drafts[a.sha].edit) })
+      for (const a of changed) out.push({ from: a.sha, to: await save(a, drafts[a.sha].edit) })
       onApply(out)
       onClose()
     } catch (err) {
@@ -452,7 +457,7 @@ export function ImageEditor({
         <span className="lb-name" title={att.name}>{att.name}</span>
         {list.length > 1 && <span className="lb-count">{i + 1} / {list.length}</span>}
         {outSize && (
-          <span className="lb-count" title="Size the assistant will get">
+          <span className="lb-count" title={sizeTitle}>
             {outSize.ow} x {outSize.oh}
             {(outSize.w !== outSize.ow || outSize.h !== outSize.oh) && <> → <b>{outSize.w} x {outSize.h}</b></>}
           </span>

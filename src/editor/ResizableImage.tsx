@@ -1,6 +1,7 @@
 import React, { useRef, useState, useCallback, useEffect } from 'react'
 import { NodeViewWrapper, NodeViewProps } from '@tiptap/react'
-import { Copy, Grip } from '../components/Icons'
+import { Copy, CropI, FitI, Grip } from '../components/Icons'
+import { editImage, viewImage } from '../components/NoteImages'
 
 /** Writes the image's pixels to the system clipboard as a PNG. */
 export async function copyImageToClipboard(img: HTMLImageElement): Promise<boolean> {
@@ -122,6 +123,11 @@ export function ResizableImageNode(props: NodeViewProps) {
           alt={node.attrs.alt}
           title={node.attrs.title}
           draggable={false}
+          onDoubleClick={(e) => {
+            e.preventDefault()
+            e.stopPropagation()
+            if (imgRef.current) viewImage(imgRef.current)
+          }}
           style={{
             display: 'block',
             width: width ? `${width}px` : 'auto',
@@ -178,6 +184,38 @@ export function ResizableImageNode(props: NodeViewProps) {
             >
               <Copy size={16} />
               {copied && <span style={{ paddingRight: 4 }}>Copied</span>}
+            </div>
+
+            <div style={{ position: 'absolute', bottom: 8, right: 8, zIndex: 10, display: 'flex', gap: 4 }}>
+              {[
+                { title: 'View full screen (double click the image)', icon: <FitI size={16} />, run: viewImage },
+                { title: 'Crop, rotate, flip or fix the light', icon: <CropI size={16} />, run: editImage },
+              ].map((b) => (
+                <div
+                  key={b.title}
+                  onMouseDown={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                  }}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    if (imgRef.current) b.run(imgRef.current)
+                  }}
+                  style={{
+                    cursor: 'pointer',
+                    background: 'var(--surface-2, rgba(0,0,0,0.5))',
+                    borderRadius: 4,
+                    padding: '4px',
+                    color: 'white',
+                    display: 'flex',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.3)',
+                  }}
+                  title={b.title}
+                >
+                  {b.icon}
+                </div>
+              ))}
             </div>
 
             {(['tl', 'tr', 'bl', 'br'] as const).map(corner => {

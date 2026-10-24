@@ -37,6 +37,10 @@ const BAR_H = 26
 const MAX_NATURAL_W = 1000
 /** Never shrink content below this; past it the block scrolls sideways. */
 const MIN_SCALE = 0.3
+/** A figure with room to spare grows up to this much, so a fresh diagram is not small in a wide cell. */
+const FIGURE_GROW = 1.4
+/** How far a figure can be enlarged by dragging its edge. */
+const FIGURE_MAX = 3
 
 type Drag = 'e' | 'w' | 's' | 'se' | 'sw'
 
@@ -74,13 +78,24 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
   // A width saved by the old Center button (the whole cell) on content narrower than that: fit the content instead.
   const staleW = storedW != null && natW > 0 && natW < storedW - 8 && room > 0 && storedW >= room - 4
   const boxW = drag?.w ?? (staleW ? null : storedW) ?? null
-  const wantW = boxW ?? (natW ? Math.min(natW, MAX_NATURAL_W) : null)
   const avail = Math.max(120, boxW ?? (room || 600))
-  const scale = natW > avail + 2 ? Math.max(MIN_SCALE, avail / natW) : 1
-  const innerW = scale < 1 ? natW : null
+  // Static figures zoom themselves inside the frame so small text stays sharp,
+  // which also lets them grow; live pages and charts are scaled from outside,
+  // as their own pointer and canvas code expects, and only ever shrink.
+  const selfZoom = kind !== 'html' && kind !== 'chart'
+  const fitScale = natW > avail + 2 ? Math.max(MIN_SCALE, avail / natW) : 1
+  const scale = !selfZoom || !natW
+    ? fitScale
+    : boxW != null
+      ? Math.min(FIGURE_MAX, Math.max(MIN_SCALE, boxW / natW))
+      : fitScale === 1 && room > 0
+        ? Math.max(1, Math.min(FIGURE_GROW, (room - 4) / natW))
+        : fitScale
+  const wantW = boxW ?? (natW ? (scale > 1 ? Math.floor(natW * scale) : Math.min(natW, MAX_NATURAL_W)) : null)
+  const innerW = scale !== 1 ? natW : null
   const contentH = natural?.h ?? (doc ? 120 : 80)
   const displayH = drag?.h ?? storedH ?? Math.ceil(contentH * scale)
-  const frameH = Math.ceil(displayH / scale)
+  const frameH = selfZoom ? displayH : Math.ceil(displayH / scale)
 
   let justifyContent = 'flex-start'
   if (textAlign === 'center') justifyContent = 'center'
@@ -149,6 +164,10 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     window.addEventListener('message', onMsg)
     return () => window.removeEventListener('message', onMsg)
   }, [frameId])
+
+  useEffect(() => {
+    if (selfZoom) iframeRef.current?.contentWindow?.postMessage({ __zoom: scale }, '*')
+  }, [selfZoom, scale, doc])
 
   /** Measure again from scratch (after "fit" or a theme change). */
   const remeasure = () => {
@@ -274,10 +293,11 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
               srcDoc={doc}
               sandbox="allow-scripts"
               title={KIND_LABEL[kind]}
+              onLoad={() => selfZoom && iframeRef.current?.contentWindow?.postMessage({ __zoom: scale }, '*')}
               style={{
                 height: frameH,
-                width: innerW ? `${innerW}px` : '100%',
-                transform: scale < 1 ? `scale(${scale})` : undefined,
+                width: innerW ? `${selfZoom ? innerW * scale : innerW}px` : '100%',
+                transform: scale < 1 && !selfZoom ? `scale(${scale})` : undefined,
                 transformOrigin: '0 0',
                 pointerEvents: drag ? 'none' : undefined,
               }}

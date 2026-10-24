@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { blobUrl, type ChatAttachment } from '../../agent/api'
-import { ArrowLeft, ArrowRight, Copy, Download, FitI, RotateI, X, ZoomIn, ZoomOut } from '../Icons'
+import { ArrowLeft, ArrowRight, Copy, CropI, Download, FitI, RotateI, X, ZoomIn, ZoomOut } from '../Icons'
 import { Menu, type MenuItem } from '../Menu'
 import { clearHover, copyImage, hoverCopy, saveImage } from './imageCopy'
 
@@ -72,9 +72,10 @@ function StripThumb({ item, active, onClick }: { item: LightboxItem; active: boo
 /**
  * Full screen image viewer. Wheel zooms toward the cursor, drag pans at any
  * zoom, double click toggles fit and 2x at the clicked point, R rotates,
- * 1 shows actual pixels, arrows move between images.
+ * 1 shows actual pixels, arrows move between images. With `onEdit`, E opens
+ * the picture in the editor.
  */
-export function Lightbox({ items, index, onClose }: { items: LightboxItem[]; index: number; onClose(): void }) {
+export function Lightbox({ items, index, onClose, onEdit }: { items: LightboxItem[]; index: number; onClose(): void; onEdit?(index: number): void }) {
   const [i, setI] = useState(index)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
@@ -141,6 +142,7 @@ export function Lightbox({ items, index, onClose }: { items: LightboxItem[]; ind
       else if (e.key === '0') reset()
       else if (e.key === '1') zoomTo(actualZoom())
       else if (e.key === 'r' || e.key === 'R') setRot((v) => v + (e.shiftKey ? -90 : 90))
+      else if ((e.key === 'e' || e.key === 'E') && onEdit) onEdit(i)
       else return
       e.preventDefault()
       e.stopPropagation()
@@ -198,6 +200,9 @@ export function Lightbox({ items, index, onClose }: { items: LightboxItem[]; ind
         {items.length > 1 && <span className="lb-count">{i + 1} / {items.length}</span>}
         {natural && <span className="lb-count">{natural.w} x {natural.h}</span>}
         <div className="spacer" />
+        {onEdit && (
+          <button className="lb-btn ie-mode" onClick={() => onEdit(i)} title="Crop, turn, mirror or fix the light (E)"><CropI size={16} /><span>Edit</span></button>
+        )}
         <button className="lb-btn" onClick={() => saveImage(item)} title="Save image as (Ctrl+S)"><Download size={16} /></button>
         <button className="lb-btn" onClick={onClose} title="Close (Esc)"><X /></button>
       </div>
@@ -263,7 +268,7 @@ export function Lightbox({ items, index, onClose }: { items: LightboxItem[]; ind
           <span className="lb-sep" />
           <button className={`lb-btn pct ${zoom === 1 ? 'on' : ''}`} onClick={reset} title="Fit to screen (0)"><FitI size={16} /><span>{pct}%</span></button>
           <button className="lb-btn txt" onClick={() => zoomTo(actualZoom())} title="Actual size (1)">1:1</button>
-          <button className="lb-btn" onClick={() => setRot((v) => v + 90)} title="Turn the view (R). To send a picture turned, edit it before sending."><RotateI size={16} /></button>
+          <button className="lb-btn" onClick={() => setRot((v) => v + 90)} title={onEdit ? 'Turn the view (R). To turn the picture itself, use Edit.' : 'Turn the view (R). To send a picture turned, edit it before sending.'}><RotateI size={16} /></button>
           <span className="lb-sep" />
           <button className="lb-btn" onClick={() => copyImage(item)} title="Copy image (Ctrl+C)"><Copy size={16} /></button>
         </div>

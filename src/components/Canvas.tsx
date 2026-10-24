@@ -4,7 +4,10 @@ import Minimap from './Minimap'
 import { Menu, type MenuItem } from './Menu'
 import { canvasView, markTouched, useStore } from '../store'
 import type { Cell, Stroke } from '../types'
-import { Copy, Layers, Trash, SpaceI, Plus, ArtifactI, AssistantMark } from './Icons'
+import { Copy, Layers, Trash, SpaceI, Plus, ArtifactI, AssistantMark, CropI, FitI, FlipHI, FlipVI, RotateI, RotateLeftI, Download } from './Icons'
+import { editImage, isEditedImage, quickImageEdit, resetImageSize, viewImage } from './NoteImages'
+import { saveImage } from './agent/imageCopy'
+import { copyImageToClipboard } from '../editor/ResizableImage'
 import { askAboutSelection } from '../agent/selection'
 import { columnLineMenu } from '../editor/columns'
 import { flashSearchMatches } from '../editor/searchHighlight'
@@ -405,7 +408,33 @@ export default function Canvas() {
   const cellMenu = (cell: Cell, e: React.MouseEvent): MenuItem[] => {
     const ids = selection.includes(cell.id) ? selection : [cell.id]
     const st = store.getState()
+    const img = (e.target as HTMLElement).closest('.resizable-image')?.querySelector('img') ?? null
+    const imageItems: MenuItem[] = img
+      ? [
+          { title: 'Image' },
+          { label: 'View full screen', hint: 'Double click', icon: <FitI />, onClick: () => viewImage(img) },
+          { label: 'Edit: crop, rotate, light...', icon: <CropI />, onClick: () => editImage(img) },
+          { label: 'Rotate right', icon: <RotateI />, onClick: () => quickImageEdit(img, 'cw') },
+          { label: 'Rotate left', icon: <RotateLeftI />, onClick: () => quickImageEdit(img, 'ccw') },
+          { label: 'Flip horizontally', icon: <FlipHI />, onClick: () => quickImageEdit(img, 'h') },
+          { label: 'Flip vertically', icon: <FlipVI />, onClick: () => quickImageEdit(img, 'v') },
+          ...(isEditedImage(img) ? [{ label: 'Restore original image', onClick: () => quickImageEdit(img, 'reset') }] : []),
+          { label: 'Reset size', onClick: () => resetImageSize(img, settings.maxImageWidth || 800) },
+          { label: 'Copy image', icon: <Copy />, onClick: () => void copyImageToClipboard(img) },
+          {
+            label: 'Save image as...',
+            icon: <Download />,
+            onClick: () => {
+              const src = img.getAttribute('src') || ''
+              const ext = /\.(\w+)(?:[?#].*)?$/.exec(src)?.[1]?.toLowerCase()
+              saveImage({ sha: src, mime: ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg' : 'image/png', name: cell.title || 'image' })
+            },
+          },
+          { separator: true },
+        ]
+      : []
     return [
+      ...imageItems,
       { label: 'Ask the assistant about this', hint: 'Ctrl+L', icon: <AssistantMark />, onClick: () => askAboutSelection(ids) },
       { separator: true },
       { label: 'Duplicate', hint: 'Ctrl+D', icon: <Copy />, onClick: () => st.duplicateCells(ids) },

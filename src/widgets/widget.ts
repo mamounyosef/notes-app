@@ -577,7 +577,7 @@ const RUNTIME = String.raw`(async function () {
     });
     return out;
   };
-  var last = -1, lastW = -1, lastCw = -1;
+  var last = -1, lastW = -1, lastCw = -1, Z = 1;
   // The real extent of what is drawn. Page boxes that stretch to the frame
   // (height:100%, 100vh, centering) would report the frame's own size, so
   // for the moment of measuring they go back to fitting their content.
@@ -611,10 +611,11 @@ const RUNTIME = String.raw`(async function () {
       if (r.right + sx > right) right = r.right + sx;
     }
     var br = b.getBoundingClientRect(), bs = getComputedStyle(b);
-    var bodyBottom = br.bottom + sy + (parseFloat(bs.marginBottom) || 0);
-    var bodyRight = br.right + sx + (parseFloat(bs.marginRight) || 0);
+    // Rects come back zoomed (see __zoom below), styles and scrollWidth do not: count all of it zoomed.
+    var bodyBottom = br.bottom + sy + (parseFloat(bs.marginBottom) || 0) * Z;
+    var bodyRight = br.right + sx + (parseFloat(bs.marginRight) || 0) * Z;
     var h, w;
-    if (top === Infinity) { h = bodyBottom; w = de.scrollWidth }
+    if (top === Infinity) { h = bodyBottom; w = de.scrollWidth * Z }
     else {
       // Content pushed above or left of the frame (centered and overflowing) still counts.
       h = Math.max(bottom, bodyBottom) - Math.min(0, top);
@@ -636,12 +637,13 @@ const RUNTIME = String.raw`(async function () {
     if (!flexible) {
       set(de, 'width', 'max-content'); set(b, 'width', 'max-content');
       var mr = b.getBoundingClientRect();
-      cw = mr.width + (parseFloat(bs.marginLeft) || 0) + (parseFloat(bs.marginRight) || 0);
+      cw = mr.width + ((parseFloat(bs.marginLeft) || 0) + (parseFloat(bs.marginRight) || 0)) * Z;
     }
     for (i = undo.length - 1; i >= 0; i--) { var u = undo[i]; if (u[2]) u[0].style.setProperty(u[1], u[2], u[3]); else u[0].style.removeProperty(u[1]) }
     // The style changes above were only for measuring: not news.
     if (mo) mo.takeRecords();
-    return { h: Math.ceil(h), w: Math.ceil(w), cw: Math.ceil(cw) };
+    // Reported at the content's own size, whatever it is zoomed to.
+    return { h: Math.ceil(h / Z), w: Math.ceil(w / Z), cw: Math.ceil(cw / Z) };
   }
   var pending = 0;
   function send() {
@@ -650,7 +652,7 @@ const RUNTIME = String.raw`(async function () {
     if (window.__wires) window.__wires();
     var m = measure(), h = Math.max(20, m.h), w = m.w;
     window.__widget = { done: true, h: h, w: w, cw: m.cw, errors: errs.slice() };
-    if (Math.abs(h - last) > 2 || Math.abs(w - lastW) > 2 || Math.abs(m.cw - lastCw) > 2) { last = h; lastW = w; lastCw = m.cw; post({ type: 'size', h: h, w: w, cw: m.cw, vw: document.documentElement.clientWidth }) }
+    if (Math.abs(h - last) > 2 || Math.abs(w - lastW) > 2 || Math.abs(m.cw - lastCw) > 2) { last = h; lastW = w; lastCw = m.cw; post({ type: 'size', h: h, w: w, cw: m.cw, vw: Math.round(document.documentElement.getBoundingClientRect().width / Z) }) }
   }
   function soon() { if (!pending) pending = requestAnimationFrame(send) }
   send();
@@ -659,6 +661,13 @@ const RUNTIME = String.raw`(async function () {
   try { mo = new MutationObserver(soon); mo.observe(document.body, { childList: true, subtree: true, attributes: true, characterData: true }) } catch (e) {}
   addEventListener('load', soon);
   addEventListener('message', function (e) { if (e.data && e.data.__measure) { last = -1; send() } });
+  // A figure shown smaller than its own size is zoomed here rather than scaled
+  // by the page around it, so its text is drawn at the size it shows, sharp.
+  addEventListener('message', function (e) {
+    var z = e.data && e.data.__zoom;
+    if (typeof z !== 'number' || !(z > 0) || Math.abs(z - Z) < 0.001) return;
+    Z = z; document.documentElement.style.zoom = z === 1 ? '' : String(z); soon();
+  });
   [150, 450, 1000, 2500].forEach(function (t) { setTimeout(send, t) });
 })();`
 

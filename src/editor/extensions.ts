@@ -273,6 +273,15 @@ export const ResizableImage = Image.extend({
           return { height: attributes.height }
         },
       },
+      /** Crop, turn and light changes plus the original picture, as JSON (see NoteImages). */
+      edit: {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-edit'),
+        renderHTML: (attributes) => {
+          if (!attributes.edit) return {}
+          return { 'data-edit': attributes.edit }
+        },
+      },
     }
   },
   addNodeView() {
