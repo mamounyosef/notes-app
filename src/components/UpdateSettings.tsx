@@ -6,7 +6,7 @@ import React, { useEffect, useState } from 'react'
 import { askConfirm } from '../lib/confirm'
 
 type Commit = { hash: string; subject: string; date: string }
-type Last = { at: number; result: 'ok' | 'failed' | 'unknown'; tail: string } | null
+type Last = { at: number; result: 'ok' | 'failed' | 'unknown' | 'running'; tail: string } | null
 type Check = { ok: boolean; error?: string; current?: Commit; behind?: number; commits?: Commit[]; canRun?: boolean; last?: Last }
 
 const desk = (window as any).notes
@@ -29,6 +29,7 @@ export default function UpdateSettings() {
   }, [])
 
   const run = async () => {
+    if (starting) return
     if (!(await askConfirm('Notes will close, update and open again by itself in a few minutes. Your notes are saved first.', 'Update now'))) return
     setStarting(true)
     const r = await desk.update.run()
@@ -40,6 +41,7 @@ export default function UpdateSettings() {
 
   const last = info?.last
   const behind = info?.behind ?? 0
+  const running = starting || last?.result === 'running'
   return (
     <div className="set-group">
       <h3>Update</h3>
@@ -53,8 +55,8 @@ export default function UpdateSettings() {
         <div className="row-inline">
           <button className="btn" disabled={checking || starting} onClick={check}>Check again</button>
           {info?.ok && info.canRun && (
-            <button className={`btn ${behind ? 'primary' : ''}`} disabled={checking || starting} onClick={run} title="Runs setup.bat in the background">
-              {starting ? 'Updating...' : behind ? 'Update now' : 'Rebuild anyway'}
+            <button className={`btn ${behind ? 'primary' : ''}`} disabled={checking || running} onClick={run} title="Runs setup.bat in the background">
+              {running ? 'Updating...' : behind ? 'Update now' : 'Rebuild anyway'}
             </button>
           )}
         </div>
@@ -72,8 +74,8 @@ export default function UpdateSettings() {
       {last && (
         <div className="set-row">
           <label>
-            Last update: {last.result === 'ok' ? 'finished' : last.result === 'failed' ? 'failed' : 'did not finish'} ({when(last.at)})
-            {last.result !== 'ok' && <span className="sub" style={{ whiteSpace: 'pre-wrap' }}>{last.tail}</span>}
+            Last update: {last.result === 'ok' ? 'finished' : last.result === 'failed' ? 'failed' : last.result === 'running' ? 'in progress' : 'did not finish'} ({when(last.at)})
+            {last.result !== 'ok' && last.result !== 'running' && <span className="sub" style={{ whiteSpace: 'pre-wrap' }}>{last.tail}</span>}
           </label>
           <div className="row-inline">
             <button className="btn" onClick={() => desk?.update?.openLog()}>Open log</button>
