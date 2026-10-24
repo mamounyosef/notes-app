@@ -70,13 +70,11 @@ if errorlevel 1 goto failed
 REM The packaged app in release\win-unpacked (what a pinned taskbar icon starts).
 REM The old copy goes first, so a failed packaging never leaves a stale app behind.
 if exist "release\win-unpacked" rmdir /s /q "release\win-unpacked"
+REM Its signing tool cache first: unpacked by electron-builder itself it fails
+REM without admin rights or developer mode.
+powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\fix-wincodesign.ps1"
 call npx electron-builder --win --dir
-if errorlevel 1 (
-  echo   Packaging failed once. Repairing the signing tool cache and trying again.
-  powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\fix-wincodesign.ps1"
-  call npx electron-builder --win --dir
-  if errorlevel 1 echo   Packaging failed. The shortcuts will run Notes from this folder instead.
-)
+if errorlevel 1 echo   Packaging failed. The shortcuts will run Notes from this folder instead.
 
 echo.
 echo   [6/7] Pointing every Notes shortcut (desktop, start menu, taskbar) at this version.
