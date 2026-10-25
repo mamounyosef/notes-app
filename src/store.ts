@@ -111,6 +111,8 @@ interface State {
   activeTab: string
   /** The next page opened goes into a new tab (after the + button or Ctrl+T). */
   pickingTab: boolean
+  /** A page just created: its title gets focused and selected once it shows. */
+  titleFocus: string | null
   dirty: boolean
   zoom: number
   tool: 'select' | 'pen' | 'highlighter' | 'eraser' | 'space'
@@ -480,6 +482,7 @@ export const useStore = create<State>((set, get) => ({
   tabs: [],
   activeTab: '',
   pickingTab: false,
+  titleFocus: null,
   dirty: false,
   zoom: 1,
   tool: 'select',
@@ -842,7 +845,10 @@ export const useStore = create<State>((set, get) => ({
     set({ workspace: ws })
     wsDirty = true
     await get().saveWorkspace()
-    if (kind === 'page') await get().openPage(node.id)
+    if (kind === 'page') {
+      await get().openPage(node.id)
+      set({ titleFocus: node.id })
+    }
     return node.id
   },
 

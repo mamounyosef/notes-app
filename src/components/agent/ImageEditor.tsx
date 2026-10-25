@@ -153,6 +153,7 @@ export function ImageEditor({
   const [error, setError] = useState<string | null>(null)
   const [spaceDown, setSpaceDown] = useState(false)
   const stage = useRef<HTMLDivElement>(null)
+  const emptyDown = useRef<{ x: number; y: number } | null>(null)
   const frame = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
 
@@ -482,8 +483,16 @@ export function ImageEditor({
         ref={stage}
         className={`lb-stage ie-stage ${list.length > 1 ? 'with-strip' : ''} ${action ? `doing-${action}` : ''} ${spaceDown ? 'space' : ''}`}
         onPointerDown={(e) => {
+          emptyDown.current = null
           if (e.target !== e.currentTarget) return
           if (zoom > 1 || e.button === 1 || spaceDown) startPan(e)
+          else if (e.button === 0) emptyDown.current = { x: e.clientX, y: e.clientY }
+        }}
+        onPointerUp={(e) => {
+          // A plain click on the empty space around the picture closes, like the Close button.
+          const d = emptyDown.current
+          emptyDown.current = null
+          if (d && e.target === e.currentTarget && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 5) finish()
         }}
         onDoubleClick={(e) => e.target === e.currentTarget && resetView()}
       >
