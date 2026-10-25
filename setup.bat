@@ -6,8 +6,8 @@ REM One click setup and update: pulls the latest version, installs what is
 REM needed, builds and packages the app, puts a
 REM Notes icon on the desktop and in the start menu, and starts it.
 REM Run it again any time to update. No admin rights needed.
-REM Settings, Update runs it hidden with NOTES_QUIET=1: it never waits for a
-REM key then, and on a failure it starts the old Notes again.
+REM Settings, Update runs it hidden with NOTES_QUIET=1 (scripts\update-runner.mjs):
+REM it never waits for a key then, and the runner starts Notes again after.
 
 cd /d "%~dp0"
 
@@ -96,11 +96,14 @@ echo   [7/7] Voice mode's speech engine (skipped where the weekly planner has on
 powershell -NoProfile -ExecutionPolicy Bypass -File "speech-engine\setup-speech.ps1"
 
 echo.
+REM From Settings, Update: scripts\update-runner.mjs starts Notes when this ends.
+if defined NOTES_QUIET (
+  echo   Done.
+  exit /b 0
+)
 echo   Done. Starting Notes.
 if exist "release\win-unpacked\Notes.exe" (
   start "" "%~dp0release\win-unpacked\Notes.exe"
-) else if defined NOTES_QUIET (
-  powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -WindowStyle Hidden -FilePath '%~dp0run-notes.bat'"
 ) else (
   start "" "%~dp0run-notes.bat"
 )
@@ -112,14 +115,5 @@ exit /b 0
 echo.
 echo   Something failed above. Copy the message and check it, then run this again.
 echo.
-if not defined NOTES_QUIET (
-  pause
-  exit /b 1
-)
-REM Started from Settings: Notes was closed for the update, so open what is there again.
-if exist "release\win-unpacked\Notes.exe" (
-  start "" "%~dp0release\win-unpacked\Notes.exe"
-) else (
-  powershell -NoProfile -WindowStyle Hidden -Command "Start-Process -WindowStyle Hidden -FilePath '%~dp0run-notes.bat'"
-)
+if not defined NOTES_QUIET pause
 exit /b 1

@@ -4,15 +4,16 @@
  * Notes, builds, packages and starts the new version). Its output goes to
  * update.log in the app data folder, read back after the restart.
  *
- * setup.bat runs in one hidden console that every step (git, npm, node,
- * powershell, electron-builder) shares. Started without a console at all, each
- * of those would open a terminal window of its own. It is started through
- * PowerShell's Start-Process so it is not a child of Notes, which it closes.
+ * scripts/update-runner.mjs runs it, started detached with the system's node so
+ * it outlives Notes. It gives setup.bat one console with no window that every
+ * step shares (no terminal per step), and starts Notes again when it ends.
+ * Not a launcher .cmd started hidden through PowerShell: antivirus (Avast)
+ * takes that for malware, quarantines it and kills the update.
  */
 import { app, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import fs from 'node:fs'
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
 
 /** The folder with setup.bat: the app's own folder in development, three up from the packaged app's resources. */
 function repoRoot(): string | null {
@@ -23,9 +24,8 @@ function repoRoot(): string | null {
 }
 
 const logFile = () => path.join(app.getPath('userData'), 'update.log')
-/** There while an update runs; the launcher removes it when setup.bat ends. */
+/** There while an update runs; the runner removes it when setup.bat ends. */
 const lockFile = () => path.join(app.getPath('userData'), 'update.lock')
-const launcherFile = () => path.join(app.getPath('userData'), 'update-run.cmd')
 /** A lock older than this is from an update that was cut off (power loss, say). */
 const STALE_LOCK_MS = 45 * 60_000
 
@@ -37,42 +37,28 @@ function updateRunning() {
   }
 }
 
-/** For a .cmd file: quoted, with % doubled so cmd does not expand it. */
-const cmdPath = (p: string) => `"${p.replace(/%/g, '%%')}"`
-/** For a PowerShell single quoted string. */
-const psQuote = (s: string) => `'${s.replace(/'/g, "''")}'`
-
-/** The batch file that runs setup.bat with its output in the log and clears the lock after. */
-function writeLauncher(root: string) {
-  const lines = [
-    '@echo off',
-    'setlocal',
-    'set "NOTES_QUIET=1"',
-    'set "ELECTRON_RUN_AS_NODE="',
-    // Set by some terminals (Claude Code among them); it stops cmd finding programs in the current folder.
-    'set "NoDefaultCurrentDirectoryInExePath="',
-    // Never wait on a git password prompt nobody can see.
-    'set "GIT_TERMINAL_PROMPT=0"',
-    `cd /d ${cmdPath(root)}`,
-    `call ${cmdPath(path.join(root, 'setup.bat'))} >> ${cmdPath(logFile())} 2>&1`,
-    'set "CODE=%ERRORLEVEL%"',
-    `>> ${cmdPath(logFile())} echo Update exited with code %CODE%.`,
-    `del /f /q ${cmdPath(lockFile())} >nul 2>nul`,
-    'exit /b %CODE%',
-  ]
-  fs.writeFileSync(launcherFile(), lines.join('\r\n') + '\r\n')
-}
-
-/** Starts the launcher in its own hidden console, detached from Notes. Resolves once it is running. */
-function startHidden(root: string): Promise<void> {
-  const command = `Start-Process -FilePath ${psQuote(launcherFile())} -WorkingDirectory ${psQuote(root)} -WindowStyle Hidden`
+/**
+ * Starts scripts/update-runner.mjs with the system's node (setup.bat needs it
+ * anyway), detached so it is not closed with Notes. Detached means no console,
+ * and node opens none; the runner gives setup.bat its windowless one.
+ * Resolves once it is running.
+ */
+function startRunner(root: string): Promise<void> {
+  const env: Record<string, string | undefined> = { ...process.env }
+  delete env.ELECTRON_RUN_AS_NODE
   return new Promise((resolve, reject) => {
-    execFile(
-      'powershell.exe',
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-Command', command],
-      { cwd: root, timeout: 30_000, windowsHide: true },
-      (err, _out, errOut) => (err ? reject(new Error(String(errOut || err.message).trim())) : resolve()),
-    )
+    const child = spawn('node', [path.join(root, 'scripts', 'update-runner.mjs'), root, logFile(), lockFile()], {
+      cwd: root,
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true,
+      env,
+    })
+    child.once('error', (e: any) => reject(e?.code === 'ENOENT' ? new Error('Node.js was not found. Run setup.bat once by hand.') : e))
+    child.once('spawn', () => {
+      child.unref()
+      resolve()
+    })
   })
 }
 
@@ -137,8 +123,7 @@ export function setupUpdate(opts: { log(...a: unknown[]): void }) {
       fs.mkdirSync(path.dirname(logFile()), { recursive: true })
       fs.writeFileSync(lockFile(), String(Date.now()))
       fs.writeFileSync(logFile(), `Update started ${new Date().toLocaleString()}\r\n`)
-      writeLauncher(root)
-      await startHidden(root)
+      await startRunner(root)
       opts.log('update started from settings')
       return { ok: true }
     } catch (e: any) {
