@@ -51,7 +51,8 @@ const out = fs.openSync(log, 'a')
 // /s takes the outer quotes off, leaving the path quoted.
 const child = spawn('cmd.exe', ['/d', '/s', '/c', `""${path.join(root, 'setup.bat')}""`], {
   cwd: root,
-  env: { ...clean, NOTES_QUIET: '1', GIT_TERMINAL_PROMPT: '0' },
+  // NOTES_RUNNER: this starts Notes after, so setup.bat does not.
+  env: { ...clean, NOTES_QUIET: '1', NOTES_RUNNER: '1', GIT_TERMINAL_PROMPT: '0' },
   stdio: ['ignore', out, out],
   windowsHide: true,
   windowsVerbatimArguments: true,

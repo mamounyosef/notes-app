@@ -97,11 +97,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "speech-engine\setup-speech.
 
 echo.
 REM From Settings, Update: scripts\update-runner.mjs starts Notes when this ends.
-if defined NOTES_QUIET (
+if defined NOTES_RUNNER (
   echo   Done.
   exit /b 0
 )
 echo   Done. Starting Notes.
+REM The Update button of an older Notes (no runner): it ran this hidden and
+REM starts nothing after, so Notes starts here, with its own empty handles.
+if defined NOTES_QUIET if exist "release\win-unpacked\Notes.exe" (
+  start "" "%~dp0release\win-unpacked\Notes.exe" <nul >nul 2>nul
+  exit /b 0
+)
 if exist "release\win-unpacked\Notes.exe" (
   start "" "%~dp0release\win-unpacked\Notes.exe"
 ) else (
@@ -116,4 +122,6 @@ echo.
 echo   Something failed above. Copy the message and check it, then run this again.
 echo.
 if not defined NOTES_QUIET pause
+REM An older Notes' Update button: Notes was closed for the update, so open what is there again.
+if defined NOTES_QUIET if not defined NOTES_RUNNER if exist "release\win-unpacked\Notes.exe" start "" "%~dp0release\win-unpacked\Notes.exe" <nul >nul 2>nul
 exit /b 1
