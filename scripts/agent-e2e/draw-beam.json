@@ -3,7 +3,7 @@
   "theme": "dark",
   "setup": "setup-blank.js",
   "before": [
-    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'beam', think: true }); return 'beam' })()"
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'beam' }); return 'beam' })()"
   ],
   "prompts": [
     "Draw a timing diagram of one SPI transfer: CS goes low, SCLK runs 8 cycles, MOSI sends 0xA5 bit by bit, then CS goes high.",

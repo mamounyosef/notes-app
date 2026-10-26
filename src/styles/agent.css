@@ -1860,44 +1860,222 @@
   border-color: var(--text-faint);
 }
 
-.ag-think-toggle {
+/* ---------- thinking dial ---------- */
+
+/* How hard it thinks, as a colour: grey when off, the accent at the usual depth, warming to violet at the top. */
+.tk-chip, .tk-seg-light, .tk-bars { --tk: var(--text-faint); }
+/* Always thinks: amber, mixed toward the text colour so it reads on light themes too. */
+.tk-pop, .mp-think, .tk-chip { --tk-warm: color-mix(in srgb, #d19a66 75%, var(--text)); }
+:is(.tk-chip, .tk-seg-light, .tk-bars).d1 { --tk: color-mix(in srgb, var(--accent) 70%, var(--text-dim)); }
+:is(.tk-chip, .tk-seg-light, .tk-bars).d2 { --tk: var(--accent); }
+:is(.tk-chip, .tk-seg-light, .tk-bars).d3 { --tk: color-mix(in srgb, var(--accent) 60%, #c678dd); }
+:is(.tk-chip, .tk-seg-light, .tk-bars).d4 { --tk: color-mix(in srgb, var(--accent) 25%, #c678dd); }
+
+.tk { position: static; }
+
+.tk-bars rect { fill: currentColor; opacity: 0.28; transition: opacity 0.2s, fill 0.2s; }
+.tk-bars rect.lit { fill: var(--tk); opacity: 1; }
+
+.tk-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   height: 26px;
-  padding: 0 9px 0 5px;
+  padding: 0 8px 0 7px;
   margin-left: 4px;
   border-radius: 13px;
   font-size: 12px;
   color: var(--text-faint);
+  transition: color 0.15s, background 0.15s, box-shadow 0.2s;
+}
+.tk-chip:hover, .tk-chip.open { color: var(--text); background: var(--bg-3); }
+.tk-chip:not(.d0) { color: var(--text-dim); }
+.tk-chip:not(.d0):hover, .tk-chip:not(.d0).open { color: var(--text); }
+.tk-chip.d4 { box-shadow: 0 0 0 1px color-mix(in srgb, var(--tk) 28%, transparent), 0 0 14px -4px var(--tk); }
+
+.tk-chip-lv {
+  font-style: normal;
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 8px;
+  color: var(--tk);
+  background: color-mix(in srgb, var(--tk) 15%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Models that cannot stop thinking: a small ring on the bars. */
+.tk-chip.always .tk-bars { filter: drop-shadow(0 0 2px color-mix(in srgb, var(--tk) 60%, transparent)); }
+
+.tk-pop {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  bottom: calc(100% - 2px);
+  max-width: 380px;
+  background: var(--bg-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.4);
+  padding: 10px 12px 8px;
+  z-index: 20;
+  animation: ag-fade 0.14s ease-out;
+}
+
+.tk-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 10px; }
+.tk-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-faint); }
+.tk-model { font-size: 12px; color: var(--text); font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tk-model em { font-style: normal; font-weight: 400; color: var(--text-faint); }
+
+.tk-always {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  font-size: 10.5px;
+  padding: 1px 7px;
+  border-radius: 8px;
+  color: var(--tk-warm);
+  background: color-mix(in srgb, #d19a66 15%, transparent);
+}
+.tk-always i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: tk-pulse 1.8s ease-in-out infinite;
+}
+@keyframes tk-pulse { 50% { opacity: 0.35; transform: scale(0.75); } }
+
+/* The segmented dial, with a light that slides to the pick. */
+.tk-seg {
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(var(--n), 1fr);
+  padding: 3px;
+  border-radius: 10px;
+  background: var(--bg-1);
+  box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+.tk-seg-light {
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: calc(3px + (100% - 6px) * var(--i) / var(--n));
+  width: calc((100% - 6px) / var(--n));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--tk) 16%, var(--bg-3));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tk) 45%, transparent), 0 2px 10px -3px color-mix(in srgb, var(--tk) 55%, transparent);
+  transition: left 0.28s cubic-bezier(.3, 1.3, .5, 1), background 0.2s, box-shadow 0.2s;
+}
+.tk-stop {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 6px 2px 5px;
+  border-radius: 7px;
+  font-size: 11px;
+  color: var(--text-faint);
   transition: color 0.15s;
 }
-
-.ag-think-toggle .track {
-  width: 24px;
-  height: 14px;
-  border-radius: 7px;
-  background: var(--bg-4);
-  position: relative;
-  transition: background 0.18s;
-}
-
-.ag-think-toggle .track i {
+.tk-stop:hover { color: var(--text); }
+.tk-stop.on { color: var(--text); font-weight: 600; }
+.tk-stop:focus-visible { outline: 2px solid var(--ag-ring); outline-offset: -2px; }
+/* The service's own default: a dot under its stop. */
+.tk-def {
   position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 10px;
-  height: 10px;
+  bottom: 1px;
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
-  background: var(--text-dim);
-  transition: transform 0.18s cubic-bezier(.3, 1.4, .5, 1), background 0.18s;
+  background: var(--text-faint);
 }
 
-.ag-think-toggle.on { color: var(--text); }
+.tk-seg.compact { min-width: 200px; }
+.tk-seg.compact .tk-stop { flex-direction: row; justify-content: center; gap: 4px; padding: 4px 6px; }
 
-.ag-think-toggle.on .track { background: var(--accent); }
-.ag-think-toggle.on .track i { transform: translateX(10px); background: #fff; }
-.ag-think-toggle:hover { color: var(--text); }
+.tk-scale {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 4px 0;
+  font-size: 10px;
+  color: var(--text-faint);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.tk-scale-line {
+  flex: 1;
+  height: 2px;
+  border-radius: 1px;
+  background: linear-gradient(90deg, var(--bg-4), var(--accent), #c678dd);
+  opacity: 0.6;
+}
+
+.tk-desc { display: flex; flex-direction: column; gap: 2px; margin: 10px 2px 2px; font-size: 12px; color: var(--text-dim); line-height: 1.4; }
+.tk-desc b { font-size: 12.5px; color: var(--text); }
+
+.tk-budget { margin: 12px 2px 2px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.tk-budget.off { opacity: 0.45; }
+.tk-budget-head { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-dim); margin-bottom: 6px; }
+.tk-budget-head b { color: var(--text); font-variant-numeric: tabular-nums; }
+.tk-budget input[type='range'] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), color-mix(in srgb, var(--accent) 40%, #c678dd) var(--pct), var(--bg-4) var(--pct));
+  outline: none;
+  cursor: pointer;
+}
+.tk-budget input[type='range']::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 55%, transparent), 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.15s;
+}
+.tk-budget input[type='range']:active::-webkit-slider-thumb { transform: scale(1.15); }
+.tk-budget input[type='range']:disabled { cursor: default; }
+.tk-ticks { display: flex; justify-content: space-between; margin-top: 4px; font-size: 9.5px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+.tk-note { margin-top: 6px; font-size: 11px; color: var(--text-faint); }
+
+.tk-foot { margin-top: 10px; padding-top: 6px; border-top: 1px solid var(--line-soft); font-size: 10.5px; color: var(--text-faint); }
+
+.tk-seg.muted .tk-seg-light { opacity: 0.35; }
+
+/* The model card's thinking row: each level it takes, the service default ringed. */
+.mp-think {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px;
+  margin: 2px 0 1px;
+  font-size: 10.5px;
+  --tk-c: var(--accent);
+}
+.mp-think.always { --tk-c: var(--tk-warm); }
+.mp-think-label { color: var(--text-faint); margin-right: 3px; }
+.mp-think.always .mp-think-label { color: var(--tk-c); }
+.mp-think-lv {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0 5px;
+  height: 16px;
+  border-radius: 5px;
+  color: var(--text-dim);
+  background: var(--bg-3);
+}
+.mp-think-lv .tk-bars { --tk: var(--tk-c); }
+.mp-think-lv.def { color: var(--tk-c); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tk-c) 50%, transparent); background: color-mix(in srgb, var(--tk-c) 10%, transparent); }
+.mp-think-lv.budget { color: var(--tk-c); background: color-mix(in srgb, var(--tk-c) 10%, transparent); }
 
 .ag-model-name {
   font-size: 11.5px;

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { agentApi, type KeyInfo } from '../../agent/api'
-import { useAgent } from '../../agent/store'
-import { MODELS, DEFAULT_MODEL, PROVIDER_LABEL, modelInfo, fmtCtx, paramsLabel, type Provider } from '../../agent/models'
+import { thinkSettingOf, useAgent } from '../../agent/store'
+import { MODELS, DEFAULT_MODEL, PROVIDER_LABEL, canStopThinking, modelInfo, fmtCtx, paramsLabel, type Provider } from '../../agent/models'
+import { ThinkLevels } from './ThinkControl'
 
 const timeOf = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -117,10 +118,12 @@ export default function AiSettings() {
       </div>
       <div className="set-row">
         <label>
-          Think before answering
-          <span className="sub">Slower, but better at multi step changes.</span>
+          Thinking
+          <span className="sub">
+            {canStopThinking(modelInfo(prefs.model).think) ? 'Deeper is slower, but better at multi step changes.' : `${modelInfo(prefs.model).name} always thinks on ${PROVIDER_LABEL[modelInfo(prefs.model).provider]}.`} Kept per model. Also in the chat box.
+          </span>
         </label>
-        <input type="checkbox" checked={prefs.think} onChange={(e) => setPrefs({ think: e.target.checked })} />
+        <ThinkLevels compact spec={modelInfo(prefs.model).think} value={thinkSettingOf(prefs, prefs.model).level} onPick={(level) => useAgent.getState().setThink(prefs.model, { level })} />
       </div>
       <div className="set-row">
         <label>

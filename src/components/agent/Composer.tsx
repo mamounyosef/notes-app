@@ -4,6 +4,7 @@ import { agentApi } from '../../agent/api'
 import { useStore, walk, pathTo } from '../../store'
 import { AttachmentTray, useAddFiles } from './AttachmentTray'
 import ModelPicker from './ModelPicker'
+import ThinkControl from './ThinkControl'
 import QueueDeck from './QueueDeck'
 import { Send, StopI, Mic, Plus, X, AtI, File as FileIcon, Book, Folder, Bolt, QueueI, AudioLines } from '../Icons'
 import { warmVoice } from '../../voice/voiceSession'
@@ -227,16 +228,7 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onVoice?(): voi
               <AudioLines size={15} />
             </button>
           )}
-          <button
-            className={`ag-think-toggle ${prefs.think ? 'on' : ''}`}
-            role="switch"
-            aria-checked={prefs.think}
-            title={prefs.think ? 'Thinking on: better at multi step edits. Click for faster replies.' : 'Thinking off: faster replies. Click to think first.'}
-            onClick={() => useAgent.getState().setPrefs({ think: !prefs.think })}
-          >
-            <span className="track"><i /></span>
-            Think
-          </button>
+          <ThinkControl />
           <ModelPicker />
           {selection && selection.key !== dismissed && (
             <span className="ag-sel" title={`${selection.cellTitle ? `In "${selection.cellTitle}": ` : ''}${selection.text.slice(0, 600)}`}>

@@ -15,7 +15,7 @@ import type { LiveSelection } from './selection'
 import { activePath, messageOrder, PENDING, parentKey, ROOT, tipOf, treeOf } from './branches'
 export { messageOrder }
 
-import { DEFAULT_MODEL, MODELS, PROVIDER_LABEL, VISION_MODEL, modelInfo, thinkValue, costOf, type Provider } from './models'
+import { DEFAULT_MODEL, MODELS, PROVIDER_LABEL, VISION_MODEL, modelInfo, thinkFields, thinkValue, resolveThink, startLevel, lightestLevel, costOf, type Provider, type ThinkSetting } from './models'
 import { readVoicePrefs, recordSpeed } from '../voice/voicePrefs'
 export { DEFAULT_MODEL }
 const MAX_STEPS = 30
@@ -34,15 +34,20 @@ export interface Prefs {
   /** Position and size of the floating panel, in window pixels. */
   float?: { x: number; y: number; w: number; h: number }
   model: string
-  think: boolean
+  /** Thinking picked per model; a model not in here starts at startLevel(). */
+  thinkBy: Record<string, ThinkSetting>
   showThinking: boolean
 }
 
-const defaultPrefs: Prefs = { open: false, mode: 'pane', width: 400, model: DEFAULT_MODEL, think: true, showThinking: true }
+const defaultPrefs: Prefs = { open: false, mode: 'pane', width: 400, model: DEFAULT_MODEL, thinkBy: {}, showThinking: true }
 
 function loadPrefs(): Prefs {
   try {
-    const p: Prefs = { ...defaultPrefs, ...JSON.parse(localStorage.getItem(PREFS_KEY) || '{}') }
+    const raw = JSON.parse(localStorage.getItem(PREFS_KEY) || '{}')
+    const p: Prefs = { ...defaultPrefs, ...raw, thinkBy: { ...(raw.thinkBy || {}) } }
+    // The old single switch, turned off: every model starts as light as it goes.
+    if (raw.think === false && !raw.thinkBy) for (const m of MODELS) p.thinkBy[m.id] = { level: lightestLevel(m.id) }
+    delete (p as any).think
     // A model that was taken off the list falls back to the default.
     if (!MODELS.some((m) => m.id === p.model)) p.model = DEFAULT_MODEL
     return p
@@ -101,6 +106,8 @@ interface AgentState {
 
   prefs: Prefs
   setPrefs(p: Partial<Prefs>): void
+  /** Remembers how hard a model thinks in the chat. */
+  setThink(model: string, s: ThinkSetting): void
   toggle(open?: boolean): void
 
   hasKey: boolean | null
@@ -185,11 +192,20 @@ export interface RunInfo {
 }
 
 /** The model and thinking a reply uses right now: voice mode has its own pick. */
-export function activeModel(s: { prefs: Prefs; voiceOn: boolean }): { model: string; think: boolean } {
-  if (!s.voiceOn) return { model: s.prefs.model || DEFAULT_MODEL, think: s.prefs.think }
+export function activeModel(s: { prefs: Prefs; voiceOn: boolean }): { model: string; think: boolean; setting: ThinkSetting } {
+  const model = s.prefs.model || DEFAULT_MODEL
+  if (!s.voiceOn) {
+    const setting = thinkSettingOf(s.prefs, model)
+    return { model, think: setting.level !== 'off', setting }
+  }
   const v = readVoicePrefs()
-  // Voice continues the conversation on the chat's own model; only thinking is set for voice.
-  return { model: s.prefs.model || DEFAULT_MODEL, think: v.think }
+  // Voice continues the conversation on the chat's own model; only thinking is set for voice (a plain switch, for speed).
+  return { model, think: v.think, setting: { level: v.think ? startLevel(model) : lightestLevel(model) } }
+}
+
+/** The chat's thinking pick for a model, checked against what it takes. */
+export function thinkSettingOf(prefs: Prefs, model: string): ThinkSetting {
+  return resolveThink(model, prefs.thinkBy?.[model])
 }
 
 let lastStamp = 0
@@ -452,7 +468,7 @@ export const useAgent = create<AgentState>((set, get) => {
   async function streamOnce(id: string, noThink = false): Promise<ChatMessage | null> {
     const s = sessions.get(id)!
     const voice = get().voiceOn && id === openId
-    const { model, think } = activeModel(get())
+    const { model, think, setting } = activeModel(get())
     const reqId = nanoid()
     s.currentReq = reqId
     let looping = false
@@ -512,7 +528,7 @@ export const useAgent = create<AgentState>((set, get) => {
       tools: TOOL_DEFS,
       options: { temperature: 0.4 },
     }
-    body.think = noThink ? thinkValue(model, false) : thinkValue(model, think)
+    Object.assign(body, noThink ? thinkValue(model, false) : thinkFields(model, setting))
     const res = await agentApi.chat(reqId, body)
     off()
     if (frame) {
@@ -762,7 +778,8 @@ export const useAgent = create<AgentState>((set, get) => {
     if (!first) return
     const res = await agentApi.complete({
       model: activeModel(get()).model,
-      think: false,
+      // As light as the model goes: some always think, and refuse a plain off.
+      ...thinkValue(activeModel(get()).model, false),
       messages: [
         {
           role: 'system',
@@ -885,6 +902,9 @@ export const useAgent = create<AgentState>((set, get) => {
       } catch {
         /* ignore */
       }
+    },
+    setThink(model, s) {
+      get().setPrefs({ thinkBy: { ...get().prefs.thinkBy, [model]: s } })
     },
     toggle(open) {
       get().setPrefs({ open: open ?? !get().prefs.open })

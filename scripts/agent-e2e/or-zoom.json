@@ -4,7 +4,7 @@
   "setup": "setup-blank.js",
   "blobs": ["68c1cfc323af313e0943b4e33d202d899bd4f4a557b1b95b2f486448546ec56a"],
   "before": [
-    "(() => { const A = __notesDebug.useAgent.getState(); A.setPrefs({ model: 'minimax/minimax-m3.1-flash:free', think: true }); A.addAttachment({ sha: '68c1cfc323af313e0943b4e33d202d899bd4f4a557b1b95b2f486448546ec56a', name: 'whiteboard.jpg', mime: 'image/jpeg', kind: 'image', size: 882000 }); return 'attached' })()"
+    "(() => { const A = __notesDebug.useAgent.getState(); A.setPrefs({ model: 'minimax/minimax-m3.1-flash:free' }); A.addAttachment({ sha: '68c1cfc323af313e0943b4e33d202d899bd4f4a557b1b95b2f486448546ec56a', name: 'whiteboard.jpg', mime: 'image/jpeg', kind: 'image', size: 882000 }); return 'attached' })()"
   ],
   "prompts": [
     "Read the truth table on this whiteboard (bottom left) exactly, row by row, and tell me which gate it is. Reply in chat only, do not touch my notes."

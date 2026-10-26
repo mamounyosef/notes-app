@@ -57,7 +57,9 @@ export function toOpenRouter(body: any, stream: boolean) {
   if (o.temperature !== undefined) req.temperature = o.temperature
   if (o.num_predict) req.max_tokens = o.num_predict
   if (o.repeat_penalty) req.repetition_penalty = o.repeat_penalty
-  if (typeof body.think === 'string') req.reasoning = { effort: body.think }
+  // The chat sends OpenRouter's own reasoning object (a level, a budget or off); short calls send the Ollama style switch.
+  if (body.reasoning && typeof body.reasoning === 'object') req.reasoning = body.reasoning
+  else if (typeof body.think === 'string') req.reasoning = { effort: body.think }
   else if (body.think !== undefined) req.reasoning = { enabled: Boolean(body.think) }
   if (stream) req.usage = { include: true }
   return req
@@ -83,7 +85,7 @@ export function postOpenRouter(key: string, req: any, signal: AbortSignal) {
  */
 export async function postWithFallback(key: string, req: any, signal: AbortSignal) {
   const res = await postOpenRouter(key, req, signal)
-  if (res.status !== 400 || req.reasoning?.enabled !== false) return res
+  if (res.status !== 400 || (req.reasoning?.enabled !== false && req.reasoning?.effort !== 'none')) return res
   const text = await res.clone().text().catch(() => '')
   if (!/reasoning/i.test(text)) return res
   const { max_tokens: _cap, ...rest } = req

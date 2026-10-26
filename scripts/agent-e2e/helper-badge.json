@@ -3,7 +3,7 @@
   "theme": "dark",
   "setup": "setup-blank.js",
   "before": [
-    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'beam', think: false }); return 'beam' })()"
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'beam', thinkBy: { 'beam': { level: 'low' } } }); return 'beam' })()"
   ],
   "prompts": [
     "Make a flowchart of how a microcontroller boots, from reset to main(). Then check the drawing."

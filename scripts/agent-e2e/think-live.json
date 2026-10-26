@@ -1,0 +1,20 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "appKeys": true,
+  "setup": "setup-blank.js",
+  "before": [
+    "(() => { const A = __notesDebug.useAgent.getState(); A.setPrefs({ model: 'nvidia/nemotron-3-ultra-550b-a55b:free' }); A.setThink('nvidia/nemotron-3-ultra-550b-a55b:free', { level: 'medium', budget: 1024 }); return 'nemotron ultra free, 1K budget' })()",
+    "(() => { const A = __notesDebug.useAgent.getState(); A.setPrefs({ model: 'gpt-oss:20b' }); A.setThink('gpt-oss:20b', { level: 'high' }); return 'gpt-oss 20b, high' })()",
+    "(() => { const A = __notesDebug.useAgent.getState(); A.setPrefs({ model: 'google/gemma-4-31b-it:free' }); A.setThink('google/gemma-4-31b-it:free', { level: 'on' }); return 'gemma 31b free, on' })()"
+  ],
+  "prompts": [
+    "Without using any tools, answer in one short sentence: what is 17 times 23?",
+    "Without using any tools, answer in one short sentence: what is 19 times 21?",
+    "Without using any tools, answer in one short sentence: what is 12 times 13?"
+  ],
+  "shots": ["p3"],
+  "eval": [
+    "(() => { const c = __notesDebug.useAgent.getState().chat; return c && c.messages.filter(m => m.role === 'assistant').map(m => ({ model: m.meta && m.meta.usage && m.meta.usage.model, thinkingChars: (m.thinking || '').length, thinkingMs: m.thinkingMs || 0, content: (m.content || '').slice(0, 120) })) })()"
+  ]
+}
