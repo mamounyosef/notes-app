@@ -525,6 +525,18 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+/* what the step wrote or changed, under its name */
+.ag-tool-detail {
+  display: block;
+  font-size: 11px;
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
 }
 
 /* a chip whose looking was done by the vision model */

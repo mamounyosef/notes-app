@@ -485,7 +485,9 @@ const RUNTIME = String.raw`(async function () {
       var best = null, bestA = Infinity;
       [].slice.call(svg ? svg.querySelectorAll('rect, path, polygon, ellipse, circle') : []).forEach(function (el) {
         if (el.closest('defs, marker, clipPath, mask, pattern, text, foreignObject')) return;
-        var v = lum(getComputedStyle(el).fill); if (v === null) return;
+        // A faint tint (a K-map loop's 8% fill) leaves the page showing through: it is not what the label sits on.
+        var cs = getComputedStyle(el); if (+cs.fillOpacity * +cs.opacity < 0.5) return;
+        var v = lum(cs.fill); if (v === null) return;
         var b = el.getBoundingClientRect(), a = b.width * b.height;
         if (x > b.left && x < b.right && y > b.top && y < b.bottom && a < bestA) { best = v; bestA = a }
       });

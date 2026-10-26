@@ -721,6 +721,7 @@ export const useAgent = create<AgentState>((set, get) => {
             content: result.content,
             meta: {
               summary: result.summary,
+              ...(result.detail ? { detail: result.detail } : {}),
               ok: result.ok,
               ...(result.target ? { target: result.target } : {}),
               ...(result.helper ? { helper: result.helper } : {}),

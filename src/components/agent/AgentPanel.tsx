@@ -138,7 +138,7 @@ function Thinking({ text, ms, live }: { text: string; ms?: number; live?: boolea
     <div className={`ag-think ${open ? 'open' : ''}`}>
       <button className="ag-think-head" onClick={() => setOpen(!open)}>
         <Brain size={13} />
-        <span className={live ? 'shimmer' : ''}>{live ? 'Thinking' : `Thought for ${secs}s`}</span>
+        <span className={live ? 'shimmer' : ''}>{live ? 'Thinking' : secs ? `Thought for ${secs}s` : 'Thought'}</span>
         <Chevron size={12} className="ag-chev" />
       </button>
       {open && (
@@ -170,7 +170,10 @@ function ToolChip({ m }: { m: ChatMessage }) {
       onClick={() => target && goToTarget(target)}
     >
       <span className="ag-tool-dot">{ok ? <Check size={11} /> : <X size={11} />}</span>
-      <span className="ag-tool-text">{meta?.summary || m.toolName}</span>
+      <span className="ag-tool-text">
+        {meta?.summary || m.toolName}
+        {meta?.detail && <span className="ag-tool-detail">{meta.detail}</span>}
+      </span>
     </button>
   )
   const pics: string[] = meta?.images || []
@@ -563,6 +566,8 @@ function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(
       continue
     }
     flushChips(m.id)
+    // Each step's reasoning sits where it happened, before what it led to.
+    if (m.thinking) blocks.push(<Thinking key={`t${m.id}`} text={m.thinking} ms={m.thinkingMs} />)
     if (m.meta?.ask) {
       blocks.push(<AskCard key={m.id} m={m} />)
       continue
@@ -572,18 +577,15 @@ function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(
   }
   flushChips('end')
 
-  // One reasoning row per reply, covering every step of it.
-  const steps = turn.items.filter((m) => m.thinking)
+  // The step running now: its reasoning comes last, under everything done so far.
   const liveThinking = live?.thinking && !live.content && !live.toolCalls?.length
-  const thinkText = [...steps.map((m) => m.thinking!), live?.thinking || ''].filter(Boolean).join('\n\n')
-  const thinkMs = steps.reduce((a, m) => a + (m.thinkingMs || 0), 0)
 
   return (
     <div className="ag-turn">
       {turn.user && <UserBubble m={turn.user} onImage={onImage} />}
       <div className="ag-reply">
-        {thinkText && <Thinking text={thinkText} ms={thinkMs} live={Boolean(liveThinking)} />}
         {blocks}
+        {live?.thinking ? <Thinking text={live.thinking} live={Boolean(liveThinking)} /> : null}
         {live?.content ? <Markdown text={live.content} live /> : null}
         {working && (
           <div className="ag-activity">

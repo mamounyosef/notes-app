@@ -152,6 +152,8 @@ export interface ToolResult {
   content: string
   /** One line for the chat. */
   summary: string
+  /** A smaller line under it: what was written or changed ("+42 words · 2 formulas · 1 table"). */
+  detail?: string
   ok: boolean
   /** Ids to jump to from the chat chip. */
   target?: { pageId?: string; cellId?: string; anchor?: string; loc?: { x?: number; y?: number } }
@@ -162,6 +164,37 @@ export interface ToolResult {
 }
 
 class ToolError extends Error {}
+
+/** What a cell's content holds, counted for the chat chip. */
+function contentFacts(html: string): Record<string, number> {
+  const doc = new DOMParser().parseFromString(`<body>${html || ''}</body>`, 'text/html')
+  const f: Record<string, number> = {}
+  const add = (k: string, n = 1) => n && (f[k] = (f[k] || 0) + n)
+  add('word', (doc.body.textContent || '').split(/\s+/).filter(Boolean).length)
+  add('formula', doc.querySelectorAll('[data-latex]').length)
+  add('table', doc.querySelectorAll('table').length)
+  add('heading', doc.querySelectorAll('h1, h2, h3, h4, h5, h6').length)
+  add('list item', doc.querySelectorAll('li').length)
+  add('image', doc.querySelectorAll('img').length)
+  doc.querySelectorAll('[data-html-embed]').forEach((el) => add(DRAWING_NOUN[kindOf(el.getAttribute('data-kind'))] || 'drawing'))
+  return f
+}
+
+const DRAWING_NOUN: Record<string, string> = { html: 'widget', mermaid: 'diagram', wavedrom: 'logic diagram', chart: 'chart', kmap: 'K-map', graphviz: 'graph', tikz: 'figure' }
+const plural = (n: number, k: string) => `${n} ${k}${n === 1 ? '' : 's'}`
+
+/** "86 words · 2 formulas · 1 table", or with `before` what changed: "+31 words · +1 K-map · −1 table". */
+function factsLine(html: string, before?: string): string {
+  const now = contentFacts(html)
+  if (before === undefined) return Object.entries(now).map(([k, n]) => plural(n, k)).join(' · ')
+  const was = contentFacts(before)
+  const keys = [...new Set([...Object.keys(was), ...Object.keys(now)])]
+  const parts = keys
+    .map((k) => [k, (now[k] || 0) - (was[k] || 0)] as const)
+    .filter(([, d]) => d)
+    .map(([k, d]) => `${d > 0 ? '+' : '-'}${plural(Math.abs(d), k)}`)
+  return parts.length ? parts.join(' · ') : 'same size, reworded'
+}
 
 /** Who looks at a picture: the chat model when it can see, otherwise the vision helper. */
 export const eyesFor = (chatModel: string) => (modelInfo(chatModel).vision ? chatModel : VISION_MODEL)
@@ -820,7 +853,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const path = pathTo(useStore.getState().workspace.tree, id).map((n) => n.title).join(' > ')
     const out = [`Page "${p.title}" [${p.id}] in ${path}. ${cells.length} cells.`]
     for (const c of cells) out.push(`### Cell [${c.id}] "${c.title}" ${JSON.stringify(cellSummary(c))}\n${c.kind === 'ink' ? '(ink drawing)' : htmlToAgent(c.html) || '(empty)'}`)
-    return ok(out.join('\n\n'), `Read page "${p.title}"`, { pageId: id })
+    return { ...ok(out.join('\n\n'), `Read page "${p.title}"`, { pageId: id }), detail: [path, plural(cells.length, 'cell'), factsLine(cells.map((c) => c.html || '').join(''))].filter(Boolean).join(' · ') }
   },
 
   async read_cell(a) {
@@ -828,7 +861,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const p = await loadPage(pid)
     const c = findCell(p, a.cell_id)
     const body = a.format === 'html' ? c.html : htmlToAgent(c.html)
-    return ok(`Cell [${c.id}] "${c.title}" ${JSON.stringify(cellSummary(c))}\n${body || '(empty)'}`, `Read cell "${c.title || htmlToText(c.html).slice(0, 30)}"`, { pageId: pid, cellId: c.id })
+    return { ...ok(`Cell [${c.id}] "${c.title}" ${JSON.stringify(cellSummary(c))}\n${body || '(empty)'}`, `Read cell "${c.title || htmlToText(c.html).slice(0, 30)}"`, { pageId: pid, cellId: c.id }), detail: factsLine(c.html) }
   },
 
   async search_notes(a) {
@@ -909,11 +942,14 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     if (isOpen && made.length) useStore.getState().setSelection(made.map((c) => c.id))
     const names = made.map((c) => c.title || htmlToText(c.html).slice(0, 30) || 'cell')
     const drawings = await drawingReport(made)
-    return ok(
-      { created: made.map((c) => ({ id: c.id, title: c.title, x: c.x, y: c.y, w: c.w })), ...(drawings ? { drawings } : {}) },
-      made.length === 1 ? `Added cell "${names[0]}"` : `Added ${made.length} cells`,
-      { pageId: id, cellId: made[0]?.id },
-    )
+    return {
+      ...ok(
+        { created: made.map((c) => ({ id: c.id, title: c.title, x: c.x, y: c.y, w: c.w })), ...(drawings ? { drawings } : {}) },
+        made.length === 1 ? `Added cell "${names[0]}"` : `Added ${made.length} cells: ${names.map((n) => `"${n}"`).join(', ')}`,
+        { pageId: id, cellId: made[0]?.id },
+      ),
+      detail: factsLine(made.map((c) => c.html).join('')),
+    }
   },
 
   async update_cell(a, env) {
@@ -923,6 +959,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const changes: string[] = []
     let kept: string[] = []
     let after = null as { id: string; html: string; w: number } | null
+    let beforeHtml = ''
     let anchor: string | undefined
     const s = settingsNow()
     await editPage(env, pid, (p) => {
@@ -952,14 +989,19 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       if (['x', 'y'].some((k) => k in patch)) changes.push('position')
       if (['w', 'h'].some((k) => k in patch)) changes.push('size')
       title = patch.title ?? c.title
-      if (patch.html !== undefined) after = { id: c.id, html: patch.html, w: patch.w ?? c.w }
+      if (patch.html !== undefined) {
+        after = { id: c.id, html: patch.html, w: patch.w ?? c.w }
+        beforeHtml = c.html || ''
+      }
       return { ...p, cells: p.cells.map((x) => (x.id === c.id ? { ...x, ...patch, updatedAt: now() } : x)) }
     }, [String(a.cell_id)])
     const note = kept.length
       ? `Your content dropped the color/highlight/size on ${kept.join(', ')}; it was kept. To really remove it, call again with drop_styles: true.`
       : undefined
     const drawings = after ? await drawingReport([after]) : undefined
-    return ok({ updated: cid, changed: changes, ...(note ? { note } : {}), ...(drawings ? { drawings } : {}) }, `Updated "${title || 'cell'}"${changes.length ? ` (${changes.join(', ')})` : ''}`, { pageId: pid, cellId: cid, anchor })
+    const done = ok({ updated: cid, changed: changes, ...(note ? { note } : {}), ...(drawings ? { drawings } : {}) }, `Updated "${title || 'cell'}"${changes.length ? ` (${changes.join(', ')})` : ''}`, { pageId: pid, cellId: cid, anchor })
+    const html = (after as { html: string } | null)?.html
+    return html === undefined ? done : { ...done, detail: factsLine(html, beforeHtml) + (kept.length ? ' · kept your colors' : '') }
   },
 
   async edit_cell_text(a, env) {
@@ -996,7 +1038,11 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       return { ...p, cells: p.cells.map((x) => (x.id === c.id ? { ...x, html, updatedAt: now() } : x)) }
     }, [String(a.cell_id)])
     const failed = report.filter((r) => r.includes('NOT FOUND')).length
-    return { ...ok(report.join('\n'), `Edited text in "${title || 'cell'}"`, { pageId: pid, cellId: cid, anchor }), ok: failed < edits.length }
+    // The edits themselves, short: "teh" → "the" · "x" → "y" (and how many more).
+    const cut = (s: unknown) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > 28 ? t.slice(0, 27) + '…' : t }
+    const shown = edits.slice(0, 3).map((e) => (String(e.replace ?? '').trim() ? `"${cut(e.find)}" → "${cut(e.replace)}"` : `removed "${cut(e.find)}"`))
+    const detail = shown.join(' · ') + (edits.length > 3 ? ` · ${edits.length - 3} more` : '') + (failed ? ` · ${failed} not found` : '')
+    return { ...ok(report.join('\n'), `Edited ${edits.length === 1 ? 'text' : `${edits.length} places`} in "${title || 'cell'}"`, { pageId: pid, cellId: cid, anchor }), ok: failed < edits.length, detail }
   },
 
   async format_text(a, env) {

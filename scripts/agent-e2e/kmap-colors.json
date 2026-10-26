@@ -1,0 +1,6 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-kmap.js",
+  "shots": ["start"]
+}
