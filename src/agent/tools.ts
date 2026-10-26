@@ -1787,6 +1787,7 @@ export function scrollToCell(cellId: string, anchor?: string) {
 export async function runTool(name: string, args: Args, env: ToolEnv): Promise<ToolResult> {
   const impl = IMPL[name]
   if (!impl) return { content: `Unknown tool ${name}. Available: ${Object.keys(IMPL).join(', ')}`, summary: `Unknown tool ${name}`, ok: false }
+  if (args?.__badJson) return { content: `Error: the arguments were not valid JSON (${args.__badJson}). Nothing was done: send the call again with valid JSON (escape quotes and backslashes inside strings).`, summary: `${name}: arguments were garbled, retrying`, ok: false }
   try {
     return await impl(args || {}, env)
   } catch (e) {

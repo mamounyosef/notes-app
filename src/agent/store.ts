@@ -388,8 +388,9 @@ function parseArgs(a: any) {
   if (a && typeof a === 'object') return a
   try {
     return JSON.parse(String(a || '{}'))
-  } catch {
-    return {}
+  } catch (e) {
+    // Said back to the model (runTool), so it resends the call instead of running it with nothing.
+    return { __badJson: `${e instanceof Error ? e.message : e}. They began: ${String(a).slice(0, 200)}` }
   }
 }
 
@@ -660,6 +661,8 @@ export const useAgent = create<AgentState>((set, get) => {
     const turnId = nanoid(10)
     let firstAssistantId: string | null = null
     let emptyTries = 0
+    const failed = new Map<string, number>()
+    let lastHadTools = false
     setS(id, { busy: true, error: null, since: Date.now(), unread: false })
     const attachmentsOf = () => {
       const map = new Map<string, ChatAttachment>()
@@ -691,6 +694,7 @@ export const useAgent = create<AgentState>((set, get) => {
           break
         }
         if (!firstAssistantId) firstAssistantId = reply.id
+        lastHadTools = Boolean(reply.toolCalls?.length)
         if (!reply.toolCalls?.length) break
         for (const call of reply.toolCalls) {
           if (s.stopped) break
@@ -707,6 +711,13 @@ export const useAgent = create<AgentState>((set, get) => {
               }),
           }
           const result = await runTool(call.name, call.arguments || {}, env)
+          // The same call failing again and again: say so, so the model changes course instead of burning steps.
+          const key = `${call.name}:${JSON.stringify(call.arguments || {})}`
+          if (!result.ok) {
+            const n = (failed.get(key) || 0) + 1
+            failed.set(key, n)
+            if (n >= 2) result.content += `\n\nThis exact call has now failed ${n} times with the same arguments. Do not repeat it: change the arguments, use another tool, or tell the user what is blocking you.`
+          }
           // Only the chat on screen moves your view; one in the background leaves it alone.
           if (id === openId && !READ_ONLY.has(call.name) && rec.changed && result.ok && result.target?.cellId) {
             const st = useStore.getState()
@@ -730,6 +741,9 @@ export const useAgent = create<AgentState>((set, get) => {
           })
         }
       }
+      // Still working when the step limit came: say so, rather than ending without a word.
+      if (lastHadTools && !s.stopped && !s.error)
+        setS(id, { error: `Paused after ${MAX_STEPS} steps so it cannot run away. Send "go on" to let it continue.` })
     } catch (e) {
       setS(id, { error: e instanceof Error ? e.message : String(e) })
     } finally {
