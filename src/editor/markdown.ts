@@ -48,7 +48,16 @@ export function extractMath(md: string): Extracted {
     const rest = md.slice(i)
 
     let m = /^\$\$([\s\S]+?)\$\$/.exec(rest)
-    if (m) { push(true, m[1]); i += m[0].length; continue }
+    if (m) {
+      // On a line of its own it is a block of its own: inside a paragraph
+      // ("formula:\n$$x$$\nwhere") it would leave empty paragraphs around it.
+      const ownLine = (i === 0 || md[i - 1] === '\n') && /^[ \t]*(\n|$)/.test(rest.slice(m[0].length))
+      if (ownLine) out += '\n\n'
+      push(true, m[1])
+      if (ownLine) out += '\n\n'
+      i += m[0].length
+      continue
+    }
 
     m = /^\\\[([\s\S]+?)\\\]/.exec(rest)
     if (m) { push(true, m[1]); i += m[0].length; continue }
@@ -109,6 +118,8 @@ export function markdownToHtml(md: string) {
     html = html.replace(new RegExp(`(?:<p>\\s*)?${SVG_PLACEHOLDER(idx)}(?:\\s*</p>)?`), () => block)
   })
   math.forEach((m, idx) => {
+    // A display formula alone in its paragraph replaces that paragraph.
+    if (m.display) html = html.replace(new RegExp(`<p>\\s*${PLACEHOLDER(idx)}\\s*</p>`), PLACEHOLDER(idx))
     const tag = m.display
       ? `<div data-latex="${escapeAttr(m.latex)}"></div>`
       : `<span data-latex="${escapeAttr(m.latex)}"></span>`

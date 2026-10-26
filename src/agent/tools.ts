@@ -724,7 +724,7 @@ function buildCells(page: Page, specs: Args[], s: Settings, isOpen: boolean) {
   const work = { ...page, cells: [...page.cells] }
   let prev: Cell | null = null
   for (const spec of specs) {
-    const html = agentToHtml(spec.content ?? '')
+    const html = agentToHtml(dropTitleHeading(String(spec.content ?? ''), String(spec.title ?? '')))
     const w = snapUp(Number(spec.w) || s.defaultCellWidth, s.gridSize, s.snapToGrid)
     const auto = spec.auto_height !== false
     const h = snapUp(auto ? Math.max(guessHeight(html, w, s), s.gridSize * 3) : Number(spec.h) || s.defaultCellHeight, s.gridSize, s.snapToGrid)
@@ -758,6 +758,13 @@ function buildCells(page: Page, specs: Args[], s: Settings, isOpen: boolean) {
     prev = cell
   }
   return made
+}
+
+/** A first heading that only repeats the cell's title line shows the name twice: it goes. */
+function dropTitleHeading(md: string, title: string): string {
+  const m = /^\s*#{1,6}[ \t]+(.+?)[ \t#]*(\n|$)/.exec(md)
+  const norm = (s: string) => s.replace(/[*_`]/g, '').trim().toLowerCase()
+  return m && title && norm(m[1]) === norm(title) ? md.slice(m[0].length).replace(/^\s*\n/, '') : md
 }
 
 function applyStyle(c: Cell, a: Args): Partial<Cell> {

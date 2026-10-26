@@ -34,21 +34,7 @@ export default function Canvas() {
   const tool = useStore((s) => s.tool)
   const editingCellId = useStore((s) => s.editingCellId)
   const searchResult = useStore((s) => s.searchResult)
-  const titleFocus = useStore((s) => s.titleFocus)
   const store = useStore
-  const titleInput = useRef<HTMLInputElement>(null)
-
-  // A new page opens with its title selected, ready to type over.
-  useEffect(() => {
-    if (!titleFocus || page?.id !== titleFocus) return
-    const el = titleInput.current
-    if (!el) return
-    store.setState({ titleFocus: null })
-    requestAnimationFrame(() => {
-      el.focus()
-      el.select()
-    })
-  }, [titleFocus, page?.id])
 
   const wrapRef = useRef<HTMLDivElement>(null)
   // The scroll box as state too, for the page map (set after mount, and if it is ever replaced).
@@ -543,7 +529,6 @@ export default function Canvas() {
         >
           <div className="page-title-wrap">
             <input
-              ref={titleInput}
               className="page-title"
               value={page.title}
               placeholder="Untitled page"

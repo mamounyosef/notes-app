@@ -1,0 +1,15 @@
+{
+  "fresh": true,
+  "appKeys": true,
+  "theme": "dark",
+  "setup": "setup-blank.js",
+  "before": [
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b', think: true }); return 'gemma4:31b' })()"
+  ],
+  "prompts": [
+    "Add a note on this page about gradient descent: the update rule, the learning rate, and batch vs stochastic vs mini-batch.",
+    "What is the softmax function, and why do we subtract the max before computing it?",
+    "Make a cell summarizing the bias-variance tradeoff."
+  ],
+  "shots": ["p1", "p2", "p3"]
+}

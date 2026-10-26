@@ -32,6 +32,14 @@ for (const sha of scenario.blobs || []) {
   fs.mkdirSync(path.join(UD, 'agent', 'blobs'), { recursive: true })
   fs.copyFileSync(path.join(process.env.APPDATA, 'notesapp', 'agent', 'blobs', sha), path.join(UD, 'agent', 'blobs', sha))
 }
+// appKeys: the keys saved in your app (every one, in order, with their out of credit marks).
+// They are encrypted with the key in "Local State", so that file comes along.
+if (scenario.appKeys) {
+  for (const f of ['Local State', 'ollama-keys.bin', 'openrouter-keys.bin', 'key-status.json']) {
+    const src = path.join(process.env.APPDATA, 'notesapp', f)
+    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(UD, f))
+  }
+}
 
 const PORT = 9333
 // NOTES_E2E_EXE runs a packaged build (release/win-unpacked/Notes.exe) instead of the sources.

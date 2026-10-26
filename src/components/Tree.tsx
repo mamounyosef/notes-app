@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useStore } from '../store'
+import { useStore, findNode } from '../store'
 import type { TreeNode } from '../types'
 import { Menu, type MenuItem } from './Menu'
 import { askConfirm } from '../lib/confirm'
@@ -39,6 +39,16 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
       return next
     })
   const st = useStore
+
+  // A node just created opens in rename mode, its default name selected, in the tree that shows it.
+  const renameNodeId = useStore((s) => s.renameNodeId)
+  useEffect(() => {
+    if (!renameNodeId || archive) return
+    const n = findNode(roots, renameNodeId)
+    if (!n || !kinds.includes(n.kind)) return
+    st.setState({ renameNodeId: null })
+    setRenaming(n.id)
+  }, [renameNodeId, roots])
 
   const nodeMenu = (n: TreeNode): MenuItem[] => {
     const s = st.getState()
