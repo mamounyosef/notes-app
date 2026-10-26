@@ -103,6 +103,22 @@ function fitShape(c: Rect, kr: number): Rect {
   return { x: c.x + (c.w - w) / 2, y: c.y + (c.h - h) / 2, w, h }
 }
 
+/**
+ * Dims the picture outside the kept part: four plain boxes inside the picture.
+ * (A huge box-shadow did this before: it repainted far past the picture on every drag step.)
+ */
+function Shade({ c }: { c: Rect }) {
+  const pc = (n: number) => `${n * 100}%`
+  return (
+    <>
+      <i className="ie-shade" style={{ left: 0, top: 0, width: '100%', height: pc(c.y) }} />
+      <i className="ie-shade" style={{ left: 0, top: pc(c.y + c.h), width: '100%', bottom: 0 }} />
+      <i className="ie-shade" style={{ left: 0, top: pc(c.y), width: pc(c.x), height: pc(c.h) }} />
+      <i className="ie-shade" style={{ left: pc(c.x + c.w), top: pc(c.y), right: 0, height: pc(c.h) }} />
+    </>
+  )
+}
+
 function StripThumb({ att, active, edited, onClick }: { att: ChatAttachment; active: boolean; edited: boolean; onClick(): void }) {
   const url = useBlobUrl(att.sha, att.mime)
   return (
@@ -170,8 +186,28 @@ export function ImageEditor({
   )
   /** A change you can undo. */
   const commit = (next: ImageEdit) => setDraft((d) => (sameEdit(d.edit, next) ? d : { ...d, edit: next, past: [...d.past, d.edit].slice(-80), future: [] }))
-  /** A step of a drag: shown now, recorded once on release. */
-  const live = (next: ImageEdit) => setDraft((d) => ({ ...d, edit: next }))
+  /** A step of a drag: shown at the next frame (one render per frame, however fast the mouse), recorded once on release. */
+  const pending = useRef<ImageEdit | null>(null)
+  const raf = useRef(0)
+  const live = (next: ImageEdit) => {
+    editRef.current = next
+    pending.current = next
+    if (raf.current) return
+    raf.current = requestAnimationFrame(() => {
+      raf.current = 0
+      const n = pending.current
+      pending.current = null
+      if (n) setDraft((d) => ({ ...d, edit: n }))
+    })
+  }
+  /** Lands a drag's last step now, before it is recorded. */
+  const flushLive = () => {
+    if (raf.current) cancelAnimationFrame(raf.current)
+    raf.current = 0
+    const n = pending.current
+    pending.current = null
+    if (n) setDraft((d) => ({ ...d, edit: n }))
+  }
   const undo = () => setDraft((d) => (d.past.length ? { ...d, edit: d.past[d.past.length - 1], past: d.past.slice(0, -1), future: [d.edit, ...d.future] } : d))
   const redo = () => setDraft((d) => (d.future.length ? { ...d, edit: d.future[0], past: [...d.past, d.edit], future: d.future.slice(1) } : d))
 
@@ -256,7 +292,8 @@ export function ImageEditor({
     }
     el.addEventListener('wheel', onWheel, { passive: false })
     return () => el.removeEventListener('wheel', onWheel)
-  })
+    // Once: it reads zoom and pan through refs.
+  }, [])
 
   /* ---------- crop shape ---------- */
 
@@ -279,7 +316,14 @@ export function ImageEditor({
   const startPan = (e: React.PointerEvent) => {
     const s = { x: e.clientX, y: e.clientY, p: pan }
     setAction('pan')
-    const move = (ev: PointerEvent) => setPan({ x: s.p.x + ev.clientX - s.x, y: s.p.y + ev.clientY - s.y })
+    // One pan step per frame.
+    let f = 0
+    let last = { x: 0, y: 0 }
+    const move = (ev: PointerEvent) => {
+      last = { x: s.p.x + ev.clientX - s.x, y: s.p.y + ev.clientY - s.y }
+      panRef.current = last
+      if (!f) f = requestAnimationFrame(() => ((f = 0), setPan(last)))
+    }
     const up = () => {
       setAction(null)
       window.removeEventListener('pointermove', move)
@@ -323,6 +367,7 @@ export function ImageEditor({
       setAction(null)
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
+      flushLive()
       const now = editRef.current
       // Record the whole drag as one undo step.
       setDraft((d) => (sameEdit(before, now) ? { ...d, edit: before } : { ...d, past: [...d.past, before].slice(-80), future: [] }))
@@ -337,6 +382,7 @@ export function ImageEditor({
     onPointerDown: () => (slideFrom.current = editRef.current),
     onChange: (e: React.ChangeEvent<HTMLInputElement>) => (slideFrom.current ? live : commit)(to(Number(e.target.value))),
     onPointerUp: () => {
+      flushLive()
       const before = slideFrom.current
       slideFrom.current = null
       if (before) setDraft((d) => (sameEdit(before, d.edit) ? d : { ...d, past: [...d.past, before].slice(-80), future: [] }))
@@ -512,14 +558,12 @@ export function ImageEditor({
         >
           <canvas ref={canvas} className="ie-canvas" style={{ filter: comparing ? 'none' : cssFilter(edit) }} />
           {!img && !error && <div className="ie-loading"><span className="ie-spin" /></div>}
+          {img && !comparing && (cropped || (action && panel === 'crop')) && <Shade c={c} />}
           {img && !comparing && panel === 'crop' && (
             <div className={`ie-crop ${action ? 'active' : ''} ${cropped ? 'cut' : ''}`} style={{ left: `${c.x * 100}%`, top: `${c.y * 100}%`, width: `${c.w * 100}%`, height: `${c.h * 100}%` }}>
               <i className="ie-grid" />
               {HANDLES.map((h) => <span key={h} data-h={h} className={`ie-h ${h}`} />)}
             </div>
-          )}
-          {img && !comparing && panel === 'light' && cropped && (
-            <div className="ie-crop ghost" style={{ left: `${c.x * 100}%`, top: `${c.y * 100}%`, width: `${c.w * 100}%`, height: `${c.h * 100}%` }} />
           )}
           {comparing && <span className="ie-tag">Original</span>}
         </div>

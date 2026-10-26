@@ -1520,15 +1520,22 @@
 
 .ie-loading { position: absolute; inset: 0; display: grid; place-items: center; }
 
-/* The kept part: everything outside it is dimmed. */
+/*
+ * The editor is a room of its own: a solid backdrop, no blur. A blur of the
+ * whole app behind it was redone on every drag step, which made it crawl.
+ */
+.lb.ie { background: #0b0b0d; backdrop-filter: none; }
+.lb.ie * { backdrop-filter: none !important; }
+.lb.ie .ie-stage { contain: layout paint; }
+
+/* The kept part; the picture outside it is dimmed by .ie-shade boxes. */
 .ie-crop {
   position: absolute;
-  box-shadow: 0 0 0 9999px rgba(8, 8, 10, 0.62);
   outline: 1px solid rgba(255, 255, 255, 0.9);
   cursor: move;
 }
-.ie-crop:not(.cut):not(.active) { box-shadow: none; outline-color: rgba(255, 255, 255, 0.35); }
-.ie-crop.ghost { pointer-events: none; outline: 0; box-shadow: 0 0 0 9999px rgba(8, 8, 10, 0.62); }
+.ie-crop:not(.cut):not(.active) { outline-color: rgba(255, 255, 255, 0.35); }
+.ie-shade { position: absolute; background: rgba(8, 8, 10, 0.62); pointer-events: none; }
 
 .ie-grid {
   position: absolute;
