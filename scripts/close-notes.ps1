@@ -5,7 +5,8 @@ $root = Split-Path -Parent $PSScriptRoot
 $mine = {
   if (-not $_.Path) { return $false }
   if ($_.Path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase) -and ($_.Name -eq 'Notes' -or $_.Name -eq 'electron')) { return $true }
-  # An installed copy: Notes.exe made by this project.
+  # An installed copy: Notes.exe made by this project. Not while testing a throwaway copy (scripts\test-update.mjs).
+  if ($env:NOTES_UPDATE_TEST) { return $false }
   return ($_.Name -eq 'Notes' -and $_.Company -match 'mamoun')
 }
 $procs = Get-Process -ErrorAction SilentlyContinue | Where-Object $mine

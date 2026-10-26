@@ -48,6 +48,7 @@ REM This setup made that change, so it is safe to drop it.
 git diff --quiet -- package-lock.json
 if errorlevel 1 git checkout -- package-lock.json
 git pull --ff-only
+if errorlevel 1 if defined NOTES_QUIET call :forcepull
 if errorlevel 1 (
   echo   Could not pull the latest version. git status:
   git status --short --branch
@@ -86,6 +87,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\fix-wincodesign.ps1
 call npx electron-builder --win --dir
 if errorlevel 1 echo   Packaging failed. The shortcuts will run Notes from this folder instead.
 
+REM scripts\test-update.mjs updates a throwaway copy: your shortcuts and speech engine stay as they are.
+if defined NOTES_UPDATE_TEST goto extrasdone
 echo.
 echo   [6/7] Pointing every Notes shortcut (desktop, start menu, taskbar) at this version.
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\make-shortcut.ps1"
@@ -94,6 +97,7 @@ if errorlevel 1 goto failed
 echo.
 echo   [7/7] Voice mode's speech engine (skipped where the weekly planner has one).
 powershell -NoProfile -ExecutionPolicy Bypass -File "speech-engine\setup-speech.ps1"
+:extrasdone
 
 echo.
 REM From Settings, Update: scripts\update-runner.mjs starts Notes when this ends.
@@ -125,3 +129,27 @@ if not defined NOTES_QUIET pause
 REM An older Notes' Update button: Notes was closed for the update, so open what is there again.
 if defined NOTES_QUIET if not defined NOTES_RUNNER if exist "release\win-unpacked\Notes.exe" start "" "%~dp0release\win-unpacked\Notes.exe" <nul >nul 2>nul
 exit /b 1
+
+REM Settings, Update when "git pull" failed. Nothing is lost on the way:
+REM 1. Edits or new files in this folder that block the pull go to git stash
+REM    (git stash list shows them), then it pulls again.
+REM 2. If this copy has commits of its own (or the history was rewritten), they
+REM    stay on a branch notes-backup-<commit> and this copy takes the latest version.
+:forcepull
+git status --porcelain | findstr . >nul
+if errorlevel 1 goto forcepull_history
+echo   Local changes in this folder blocked the update. Keeping them in git stash.
+git -c user.name=Notes -c user.email=notes@localhost stash push --include-untracked -m "Kept by Notes update"
+git pull --ff-only
+if not errorlevel 1 exit /b 0
+:forcepull_history
+git fetch origin
+if errorlevel 1 exit /b 1
+git merge-base --is-ancestor HEAD @{u}
+if not errorlevel 1 exit /b 1
+for /f %%h in ('git rev-parse --short HEAD') do set "OLDHEAD=%%h"
+echo   This copy's history differs from the latest version. Keeping it on branch notes-backup-%OLDHEAD%.
+git branch -f notes-backup-%OLDHEAD% HEAD
+if errorlevel 1 exit /b 1
+git reset --hard @{u}
+exit /b

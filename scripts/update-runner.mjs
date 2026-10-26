@@ -26,8 +26,10 @@ delete clean.NoDefaultCurrentDirectoryInExePath
 
 function startNotes() {
   const exe = path.join(root, 'release', 'win-unpacked', 'Notes.exe')
+  // scripts/test-update.mjs: the new copy opens with the test's own profile, not your notes.
+  const args = process.env.NOTES_TEST_USER_DATA ? [`--user-data-dir=${process.env.NOTES_TEST_USER_DATA}`] : []
   try {
-    if (fs.existsSync(exe)) spawn(exe, [], { cwd: path.dirname(exe), detached: true, stdio: 'ignore', env: clean }).unref()
+    if (fs.existsSync(exe)) spawn(exe, args, { cwd: path.dirname(exe), detached: true, stdio: 'ignore', env: clean }).unref()
     else spawn('cmd.exe', ['/d', '/c', 'run-notes.bat'], { cwd: root, detached: true, stdio: 'ignore', windowsHide: true, env: clean }).unref()
   } catch (e) {
     append(`Could not start Notes: ${e?.message || e}\r\n`)
