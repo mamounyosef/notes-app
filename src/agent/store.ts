@@ -8,7 +8,8 @@ import { nanoid } from 'nanoid'
 import { agentApi, chatApi, type Chat, type ChatAttachment, type ChatMessage, type ChatSummary } from './api'
 import { buildContext } from './context'
 import { SYSTEM_PROMPT, voicePrompt } from './prompt'
-import { TOOL_DEFS, READ_ONLY, eyesFor, TurnRecorder, keepSnapshot, runTool, undoTurn, scrollToCell } from './tools'
+import { TOOL_DEFS, READ_ONLY, eyesFor, TurnRecorder, keepSnapshot, runTool, undoTurn } from './tools'
+import { cellTexts, scrollToCell } from './reveal'
 import { storage } from '../lib/storage'
 import { useStore, findNode } from '../store'
 import type { LiveSelection } from './selection'
@@ -726,6 +727,8 @@ export const useAgent = create<AgentState>((set, get) => {
                 setS(id, { pendingAsk: { messageId: askMsg.id, resolve }, activity: 'Waiting for your answer' })
               }),
           }
+          // The cells' text before the tool runs, so the reveal can point at exactly what it changed.
+          const before = id === openId && !READ_ONLY.has(call.name) ? cellTexts() : undefined
           const result = await runTool(call.name, call.arguments || {}, env)
           // The same call failing again and again: say so, so the model changes course instead of burning steps.
           const key = `${call.name}:${JSON.stringify(call.arguments || {})}`
@@ -735,12 +738,24 @@ export const useAgent = create<AgentState>((set, get) => {
             if (n >= 2) result.content += `\n\nThis exact call has now failed ${n} times with the same arguments. Do not repeat it: change the arguments, use another tool, or tell the user what is blocking you.`
           }
           // Only the chat on screen moves your view; one in the background leaves it alone.
+          const toolMsgId = nanoid(14)
           if (id === openId && !READ_ONLY.has(call.name) && rec.changed && result.ok && result.target?.cellId) {
             const st = useStore.getState()
-            if (st.page?.id === result.target.pageId) scrollToCell(result.target.cellId, result.target.anchor)
+            const t = result.target
+            if (st.page?.id === t.pageId)
+              scrollToCell(t.cellId!, {
+                before: before?.get(t.cellId!),
+                anchor: t.anchor,
+                // Remember the exact spot, so clicking this step later lands on it too.
+                onSpot: (spot) =>
+                  update(id, (c) => ({
+                    ...c,
+                    messages: c.messages.map((m) => (m.id === toolMsgId && (m.meta as any)?.target ? { ...m, meta: { ...m.meta, target: { ...(m.meta as any).target, ...spot } } as any } : m)),
+                  })),
+              })
           }
           pushMsg(id, {
-            id: nanoid(14),
+            id: toolMsgId,
             at: stamp(),
             v: 1,
             role: 'tool',
@@ -1270,14 +1285,14 @@ function labelFor(name: string, chatModel: string) {
 }
 
 /** Jumps to what a tool changed. */
-export async function goToTarget(t?: { pageId?: string; cellId?: string; anchor?: string }) {
+export async function goToTarget(t?: { pageId?: string; cellId?: string; anchor?: string; nth?: number }) {
   if (!t?.pageId) return
   const st = useStore.getState()
   if (!findNode(st.workspace.tree, t.pageId)) return
   if (st.activePageId !== t.pageId) await st.openPage(t.pageId)
   if (t.cellId) {
     useStore.getState().setSelection([t.cellId])
-    scrollToCell(t.cellId, t.anchor)
+    scrollToCell(t.cellId, { anchor: t.anchor, nth: t.nth })
   }
 }
 
