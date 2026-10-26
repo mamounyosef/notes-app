@@ -109,8 +109,11 @@ function ThinkBudget({ value, disabled, onPick }: { value: number; disabled: boo
   )
 }
 
-/** The model card's line: the levels it takes, the service default marked. */
-export function ThinkTag({ spec, provider }: { spec: ThinkSpec; provider: string }) {
+/**
+ * The model card's line: the levels it takes, the service default marked.
+ * With onPick each level is a button: one click picks the model and that level together.
+ */
+export function ThinkTag({ spec, provider, current, onPick }: { spec: ThinkSpec; provider: string; current?: ThinkLevel; onPick?(l: ThinkLevel): void }) {
   const always = !canStopThinking(spec)
   const title = [
     always ? alwaysHint(provider) : 'Thinking can be switched off.',
@@ -124,7 +127,20 @@ export function ThinkTag({ spec, provider }: { spec: ThinkSpec; provider: string
     <div className={`mp-think ${always ? 'always' : ''}`} title={title} aria-label={`Thinking: ${thinkSummary(spec)}`}>
       <span className="mp-think-label">{always ? 'Always thinks' : 'Thinking'}</span>
       {spec.levels.map((l) => (
-        <span key={l} className={`mp-think-lv ${spec.default === l ? 'def' : ''}`}>
+        <span
+          key={l}
+          className={`mp-think-lv ${spec.default === l ? 'def' : ''} ${current === l ? 'cur' : ''} ${onPick ? 'pick' : ''}`}
+          // A span, not a button: the whole card around it is already a button.
+          role={onPick ? 'button' : undefined}
+          title={onPick ? `Use this model with thinking ${THINK_LABEL[l]}${current === l ? ' (your choice now)' : ''}${spec.default === l ? ' (service default)' : ''}` : undefined}
+          onClick={
+            onPick &&
+            ((e) => {
+              e.stopPropagation()
+              onPick(l)
+            })
+          }
+        >
           <ThinkBars depth={thinkDepth(l)} size={9} />
           {THINK_SHORT[l]}
         </span>

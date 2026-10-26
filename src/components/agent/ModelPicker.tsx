@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { useAgent } from '../../agent/store'
+import { thinkSettingOf, useAgent } from '../../agent/store'
 import { MODELS, PROVIDER_LABEL, modelInfo, fmtCtx, fmtDate, paramsLabel, type ModelInfo } from '../../agent/models'
 import { Check, Chevron, ImageI, Gauge } from '../Icons'
 import { fmtSec, useSpeeds, type ModelSpeed } from '../../voice/voicePrefs'
@@ -47,6 +47,7 @@ function SpeedBadge({ s, other, think }: { s?: ModelSpeed; other?: ModelSpeed; t
  */
 export default function ModelPicker({ value, onPick, label, voiceThink }: { value?: string; onPick?(id: string): void; label?: string; voiceThink?: boolean } = {}) {
   const chatModel = useAgent((s) => s.prefs.model)
+  const prefs = useAgent((s) => s.prefs)
   const setPrefs = useAgent((s) => s.setPrefs)
   const model = value || chatModel
   const voice = voiceThink !== undefined
@@ -130,7 +131,22 @@ export default function ModelPicker({ value, onPick, label, voiceThink }: { valu
                 <span>{fmtCtx(m.context)} context</span>
                 <span>{fmtDate(m.released)}</span>
               </div>
-              <ThinkTag spec={m.think} provider={PROVIDER_LABEL[m.provider]} />
+              <ThinkTag
+                spec={m.think}
+                provider={PROVIDER_LABEL[m.provider]}
+                // The chat's picker: a level pill picks the model and its thinking in one click (voice keeps its own switch).
+                current={voice ? undefined : thinkSettingOf(prefs, m.id).level}
+                onPick={
+                  voice
+                    ? undefined
+                    : (l) => {
+                        useAgent.getState().setThink(m.id, { level: l, budget: 0 })
+                        if (onPick) onPick(m.id)
+                        else setPrefs({ model: m.id })
+                        setOpen(false)
+                      }
+                }
+              />
               {m.arch && <div className="mp-arch">{m.arch.join(' · ')}</div>}
               <div className="mp-row3">
                 <PriceLine m={m} />

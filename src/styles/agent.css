@@ -2075,6 +2075,11 @@
 }
 .mp-think-lv .tk-bars { --tk: var(--tk-c); }
 .mp-think-lv.def { color: var(--tk-c); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tk-c) 50%, transparent); background: color-mix(in srgb, var(--tk-c) 10%, transparent); }
+/* clickable level pills: pick the model and its thinking in one click */
+.mp-think-lv.pick { cursor: pointer; transition: background 0.12s, color 0.12s, transform 0.12s; }
+.mp-think-lv.pick:hover { color: var(--text); background: color-mix(in srgb, var(--tk-c) 22%, transparent); transform: translateY(-1px); }
+.mp-think-lv.pick:active { transform: translateY(0); }
+.mp-think-lv.cur { color: var(--text); background: color-mix(in srgb, var(--tk-c) 30%, transparent); box-shadow: inset 0 0 0 1px var(--tk-c); font-weight: 600; }
 .mp-think-lv.budget { color: var(--tk-c); background: color-mix(in srgb, var(--tk-c) 10%, transparent); }
 
 .ag-model-name {
