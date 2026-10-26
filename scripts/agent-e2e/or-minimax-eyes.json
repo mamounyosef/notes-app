@@ -3,7 +3,7 @@
   "theme": "dark",
   "setup": "setup-blank.js",
   "before": [
-    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'minimax/minimax-m3.1-flash:free', think: true }); return 'minimax' })()"
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'minimax/minimax-m3.1-flash:free' }); return 'minimax' })()"
   ],
   "prompts": [
     "Add a cell with a sequence diagram of the TCP three-way handshake, with one line explaining each step. Then check the drawing, and tell me the exact fill color of the Client box and the shape of the arrow heads, as you see them in the picture."

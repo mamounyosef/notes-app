@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react'
-import { useAgent, contextBreakdown, estimateTokens, chatCost } from '../../agent/store'
-import { modelInfo, costOf, fmtMoney, fmtCtx, fmtDate, paramsLabel } from '../../agent/models'
+import { useAgent, contextBreakdown, estimateTokens, chatCost, thinkSettingOf } from '../../agent/store'
+import { modelInfo, costOf, fmtMoney, fmtCtx, fmtDate, paramsLabel, fmtBudget, THINK_LABEL } from '../../agent/models'
 import { SYSTEM_PROMPT } from '../../agent/prompt'
 import { TOOL_DEFS } from '../../agent/tools'
 import { buildContext } from '../../agent/context'
@@ -97,6 +97,8 @@ export function ContextInspector({ onClose }: { onClose(): void }) {
   const { parts, total, exact } = useBreakdown()
   const usage = useAgent((s) => s.usage)
   const prefs = useAgent((s) => s.prefs)
+  const think = thinkSettingOf(prefs, prefs.model)
+  const thinkLabel = think.budget ? `Up to ${fmtBudget(think.budget)} tokens` : THINK_LABEL[think.level]
   const chat = useAgent((s) => s.chat)
   const info = modelInfo(prefs.model)
   const CONTEXT_LIMIT = info.context
@@ -203,9 +205,9 @@ export function ContextInspector({ onClose }: { onClose(): void }) {
           <pre className="ci-pre">{ctx}</pre>
         </Section>
 
-        <Section title="Settings" meta={prefs.think ? 'thinking on' : 'thinking off'}>
+        <Section title="Settings" meta={`thinking ${thinkLabel.toLowerCase()}`}>
           <div className="ci-kv"><em>Model</em><span>{prefs.model}</span></div>
-          <div className="ci-kv"><em>Thinking</em><span>{prefs.think ? 'On' : 'Off'}</span></div>
+          <div className="ci-kv"><em>Thinking</em><span>{thinkLabel}</span></div>
           <div className="ci-kv"><em>Temperature</em><span>0.4</span></div>
           <div className="ci-kv"><em>Endpoint</em><span>ollama.com/api/chat</span></div>
         </Section>

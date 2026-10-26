@@ -419,7 +419,7 @@ export function setupAgent(opts: {
   }
 
   /** Streams one reply from OpenRouter, relayed as Ollama chunks. */
-  async function streamOpenRouter(key: string, req: any, signal: AbortSignal, emit: (chunk: any) => void) {
+  async function streamOpenRouter(key: string, req: any, signal: AbortSignal, emit: (chunk: any) => void): Promise<void> {
     const orReq = toOpenRouter(req, true)
     let res = await postWithFallback(key, orReq, signal)
     // Free models are busy at times (429/5xx): try twice more before giving up,
@@ -433,6 +433,13 @@ export function setupAgent(opts: {
       await new Promise((r) => setTimeout(r, 2500 * attempt))
       res = await postWithFallback(key, orReq, signal)
     }
+    // A reasoning budget the model lists but its provider fails on (Nemotron 3 Ultra free, October 2026): ask again with the level.
+    const budgeted = req.reasoning?.max_tokens !== undefined
+    const withoutBudget = (): Promise<void> => streamOpenRouter(key, { ...req, reasoning: undefined }, signal, emit)
+    if (budgeted && !res.ok && res.status !== 429 && !signal.aborted) {
+      await res.text().catch(() => '')
+      return withoutBudget()
+    }
     if (!res.ok || !res.body) throw await failure('openrouter', res)
     let sent = false
     try {
@@ -444,6 +451,7 @@ export function setupAgent(opts: {
       // Refused inside the stream before anything came: may still be out of credit.
       const retryAt = sent ? 0 : creditRetryAt('openrouter', 0, e?.message || '')
       if (retryAt) throw new OutOfCredit('openrouter', e.message, retryAt)
+      if (budgeted && !sent && !signal.aborted) return withoutBudget()
       throw e
     }
   }

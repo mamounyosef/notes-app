@@ -4,7 +4,7 @@
   "theme": "dark",
   "setup": "setup-blank.js",
   "before": [
-    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b', think: true }); return 'gemma4:31b' })()"
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b' }); return 'gemma4:31b' })()"
   ],
   "prompts": [
     "Add a note on this page about gradient descent: the update rule, the learning rate, and batch vs stochastic vs mini-batch.",

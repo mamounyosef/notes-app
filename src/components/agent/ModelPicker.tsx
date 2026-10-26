@@ -4,6 +4,7 @@ import { MODELS, PROVIDER_LABEL, modelInfo, fmtCtx, fmtDate, paramsLabel, type M
 import { Check, Chevron, ImageI, Gauge } from '../Icons'
 import { fmtSec, useSpeeds, type ModelSpeed } from '../../voice/voicePrefs'
 import { runSpeedTest, useSpeedTest } from '../../voice/speedTest'
+import { ThinkTag } from './ThinkControl'
 
 const money = (n: number | null | undefined) => (n === null || n === undefined ? '-' : `$${n < 0.1 ? n.toFixed(3) : n.toFixed(2)}`)
 
@@ -129,6 +130,7 @@ export default function ModelPicker({ value, onPick, label, voiceThink }: { valu
                 <span>{fmtCtx(m.context)} context</span>
                 <span>{fmtDate(m.released)}</span>
               </div>
+              <ThinkTag spec={m.think} provider={PROVIDER_LABEL[m.provider]} />
               {m.arch && <div className="mp-arch">{m.arch.join(' · ')}</div>}
               <div className="mp-row3">
                 <PriceLine m={m} />

@@ -7,9 +7,32 @@
  *    model list, architecture from each model's Hugging Face config.json or
  *    model card, checked 20 October 2026. Free models allow 50 requests a day
  *    on a key without credits.
+ * Thinking controls, checked 26 October 2026, differ by service even for the
+ * same model, so each entry keeps its own:
+ *  - Ollama: the `thinking` field of ollama.com/api/show ({ values, default }).
+ *    `think` takes exactly one of those values; numbers (budgets) are not
+ *    supported (docs.ollama.com/capabilities/thinking).
+ *  - OpenRouter: the `reasoning` field of openrouter.ai/api/v1/models
+ *    (mandatory, default_enabled, supported_efforts, default_effort,
+ *    supports_max_tokens). No supported_efforts means on/off only; mandatory
+ *    means it cannot be switched off (openrouter.ai/docs, reasoning tokens).
  */
 
 export type Provider = 'ollama' | 'openrouter'
+
+/** How hard a model reasons before it answers, lightest first. "on" is a plain switch with no levels. */
+export type ThinkLevel = 'off' | 'minimal' | 'low' | 'on' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export const THINK_ORDER: ThinkLevel[] = ['off', 'minimal', 'low', 'on', 'medium', 'high', 'xhigh', 'max']
+
+export interface ThinkSpec {
+  /** What this model takes on this service, lightest first. No "off" means it always thinks. */
+  levels: ThinkLevel[]
+  /** What the service uses when nothing is sent; absent when the service does not say. */
+  default?: ThinkLevel
+  /** A reasoning token budget can be set instead of a level (OpenRouter reasoning.max_tokens). */
+  budget?: boolean
+}
 
 export interface ModelInfo {
   id: string
@@ -25,8 +48,8 @@ export interface ModelInfo {
   /** Architecture facts from the model's config or technical report. */
   arch?: string[]
   vision: boolean
-  /** gpt-oss takes a level instead of on/off. */
-  thinkLevels?: boolean
+  /** The thinking control this service offers for the model. */
+  think: ThinkSpec
   /** Per million tokens; null when the service does not list a price. Zero for free models. */
   price: { input: number; cached: number | null; output: number | null } | null
   note?: string
@@ -50,6 +73,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-06-04',
     arch: ULTRA_ARCH,
     vision: false,
+    think: { levels: ['off', 'on'], default: 'on' },
     price: { input: 0.1, cached: 0.1, output: 3.0 },
   },
   {
@@ -62,6 +86,8 @@ export const MODELS: ModelInfo[] = [
     released: '2026-06-04',
     arch: ULTRA_ARCH,
     vision: false,
+    // Listed with a budget, but on 26 October 2026 its provider failed every budgeted request: the main process then asks again with the level.
+    think: { levels: ['off', 'medium', 'high'], default: 'high', budget: true },
     price: FREE,
     note: '1M context here, 256K on Ollama.',
   },
@@ -75,6 +101,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-10-16',
     arch: ['52 layers (3 dense, 49 MoE)', 'dim 5120', '256 experts, 8 per token', 'GQA: 48 query heads, 8 KV heads', 'sliding window 512, 9 global layers'],
     vision: false,
+    think: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'max' },
     price: null,
     note: 'Price not listed on Ollama yet.',
   },
@@ -88,6 +115,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-10-19',
     arch: ['sparse attention', 'built-in vision encoder', 'always reasons'],
     vision: true,
+    think: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'max' },
     price: FREE,
     note: 'Newest. Size reported, not confirmed by MiniMax. Also sees video.',
   },
@@ -101,6 +129,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-08-14',
     arch: ['46 layers (1 dense, 45 MoE)', 'dim 5120', '256 experts + 1 shared, 8 per token', '13 sparse (DSA) + 33 sliding-window attention layers', 'multi-token prediction', 'MoE vision encoder (7B, 1.2B active)'],
     vision: true,
+    think: { levels: ['off', 'on'] },
     price: FREE,
     note: 'Preview.',
   },
@@ -114,6 +143,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-10-15',
     arch: ['Nemotron-H hybrid (Mamba-2, MoE, attention)', 'RADIO vision encoder', 'multi-token prediction'],
     vision: true,
+    think: { levels: ['off', 'on'] },
     price: FREE,
     note: 'Reads documents, screenshots and video.',
   },
@@ -127,6 +157,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-03-11',
     arch: SUPER_ARCH,
     vision: false,
+    think: { levels: ['off', 'on'], default: 'on' },
     price: { input: 0.015, cached: 0.015, output: 0.6 },
   },
   {
@@ -139,6 +170,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-03-11',
     arch: SUPER_ARCH,
     vision: false,
+    think: { levels: ['off', 'low', 'medium'], default: 'medium', budget: true },
     price: FREE,
   },
   {
@@ -151,6 +183,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-07-21',
     arch: ['48 layers (36 sliding, 12 full)', 'dim 3072', '256 experts, 10 per token', 'GQA: 48 to 72 query heads, 8 KV heads', 'sliding window 512'],
     vision: false,
+    think: { levels: ['off', 'on'], default: 'on' },
     price: FREE,
     note: 'Built for coding agents.',
   },
@@ -164,7 +197,7 @@ export const MODELS: ModelInfo[] = [
     released: '2025-08-05',
     arch: ['36 layers (18 sliding, 18 full)', 'dim 2880', '128 experts, 4 per token', 'GQA: 64 query heads, 8 KV heads', 'sliding window 128'],
     vision: false,
-    thinkLevels: true,
+    think: { levels: ['low', 'medium', 'high'], default: 'medium' },
     price: { input: 0.15, cached: 0.014, output: 0.6 },
   },
   {
@@ -176,6 +209,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-04-02',
     arch: GEMMA_31B_ARCH,
     vision: true,
+    think: { levels: ['off', 'on'], default: 'off' },
     price: { input: 0.14, cached: 0.05, output: 0.4 },
     note: 'Default. Reads images for the models that cannot see.',
   },
@@ -188,6 +222,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-04-02',
     arch: GEMMA_31B_ARCH,
     vision: true,
+    think: { levels: ['off', 'on'], default: 'off' },
     price: FREE,
   },
   {
@@ -200,6 +235,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-10-16',
     arch: ['40 layers', 'dim 3584', '64 experts + 1 shared, 4 per token', 'latent attention (MLA style), 32 heads', 'multi-token prediction'],
     vision: false,
+    think: { levels: ['off', 'on'], default: 'on' },
     price: FREE,
     note: 'From China Telecom (TeleAI).',
   },
@@ -213,6 +249,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-04-03',
     arch: ['30 layers (25 sliding, 5 full)', 'dim 2816', '128 experts, 8 per token', 'GQA: 16 query heads, 8 KV heads', 'sliding window 1024'],
     vision: true,
+    think: { levels: ['off', 'on'], default: 'off' },
     price: FREE,
   },
   {
@@ -225,6 +262,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-08-11',
     arch: [...NANO_ARCH, 'multi-token prediction'],
     vision: false,
+    think: { levels: ['off', 'on'] },
     price: FREE,
     note: 'Built for speed.',
   },
@@ -238,6 +276,7 @@ export const MODELS: ModelInfo[] = [
     released: '2026-04-28',
     arch: [...NANO_ARCH, 'vision and audio encoders'],
     vision: true,
+    think: { levels: ['off', 'on'], default: 'on', budget: true },
     price: FREE,
     note: 'Also hears audio and sees video.',
   },
@@ -251,6 +290,7 @@ export const MODELS: ModelInfo[] = [
     released: '2025-12-15',
     arch: NANO_ARCH,
     vision: false,
+    think: { levels: ['off', 'on'], default: 'on' },
     price: { input: 0.06, cached: null, output: 0.24 },
   },
   {
@@ -263,7 +303,7 @@ export const MODELS: ModelInfo[] = [
     released: '2025-08-05',
     arch: ['24 layers (12 sliding, 12 full)', 'dim 2880', '32 experts, 4 per token', 'GQA: 64 query heads, 8 KV heads', 'sliding window 128'],
     vision: false,
-    thinkLevels: true,
+    think: { levels: ['low', 'medium', 'high'], default: 'medium' },
     price: { input: 0.07, cached: 0.035, output: 0.3 },
   },
 ]
@@ -285,15 +325,103 @@ export function modelInfo(id: string): ModelInfo {
       context: 131_072,
       released: '',
       vision: false,
+      think: { levels: ['off', 'on'] },
       price: null,
     }
   )
 }
 
-/** The think switch, as each model expects it. */
-export function thinkValue(id: string, on: boolean): boolean | string {
-  return modelInfo(id).thinkLevels ? (on ? 'high' : 'low') : on
+// ---------------------------------------------------------------- thinking
+
+/** A model's thinking pick: a level, and for models that take one, a reasoning token budget (0 or absent: none). */
+export interface ThinkSetting {
+  level: ThinkLevel
+  budget?: number
 }
+
+/** Budget stops for the slider, in reasoning tokens. */
+export const THINK_BUDGETS = [1024, 2048, 4096, 8192, 16384, 32768]
+
+export const THINK_LABEL: Record<ThinkLevel, string> = { off: 'Off', minimal: 'Minimal', low: 'Low', on: 'On', medium: 'Medium', high: 'High', xhigh: 'Extra high', max: 'Max' }
+export const THINK_SHORT: Record<ThinkLevel, string> = { off: 'Off', minimal: 'Min', low: 'Low', on: 'On', medium: 'Med', high: 'High', xhigh: 'XHigh', max: 'Max' }
+
+/** What each level trades, for tooltips. */
+export const THINK_HINT: Record<ThinkLevel, string> = {
+  off: 'Answers at once: fastest, fine for quick questions and small edits.',
+  minimal: 'A glance of reasoning: nearly as fast as off.',
+  low: 'Brief reasoning: quick, a little more careful.',
+  on: 'Thinks before answering, as deep as the model decides: slower, better at multi step edits.',
+  medium: 'Balanced: the usual pick for multi step edits.',
+  high: 'Thorough: slower, for tricky problems and long plans.',
+  xhigh: 'Very thorough: much slower, for hard problems.',
+  max: 'Everything it has: slowest, for the hardest problems.',
+}
+
+/** 0 to 4, how much a level thinks, for the bars. */
+export const thinkDepth = (l: ThinkLevel) => ({ off: 0, minimal: 1, low: 1, on: 2, medium: 2, high: 3, xhigh: 4, max: 4 })[l]
+
+export const canStopThinking = (spec: ThinkSpec) => spec.levels.includes('off')
+
+/** The supported level nearest to the one asked for; on a tie, the lighter (faster) one. */
+export function nearestLevel(spec: ThinkSpec, want: ThinkLevel): ThinkLevel {
+  if (spec.levels.includes(want)) return want
+  const rank = (l: ThinkLevel) => THINK_ORDER.indexOf(l)
+  let best = spec.levels[0]
+  for (const l of spec.levels) if (Math.abs(rank(l) - rank(want)) < Math.abs(rank(best) - rank(want))) best = l
+  return best
+}
+
+/** The lightest level a model takes: off, or for models that always think, their lowest level. */
+export const lightestLevel = (id: string) => modelInfo(id).think.levels[0]
+
+/**
+ * The level used before one is picked: the service's own default when it
+ * thinks by default, otherwise thinking on (the app has always thought by
+ * default, as it is better at multi step edits).
+ */
+export function startLevel(id: string): ThinkLevel {
+  const spec = modelInfo(id).think
+  if (spec.default && spec.default !== 'off') return spec.default
+  return nearestLevel(spec, 'on')
+}
+
+/** A saved pick checked against what the model takes now. */
+export function resolveThink(id: string, s?: ThinkSetting | null): ThinkSetting {
+  const spec = modelInfo(id).think
+  const level = nearestLevel(spec, s?.level || startLevel(id))
+  const budget = spec.budget && level !== 'off' && s?.budget ? s.budget : 0
+  return budget ? { level, budget } : { level }
+}
+
+/**
+ * The thinking fields of a request, as each service expects them: Ollama's
+ * `think` (true, false or the level name) or OpenRouter's `reasoning` object
+ * (a budget replaces the effort: OpenRouter takes one or the other).
+ */
+export function thinkFields(id: string, s: ThinkSetting): { think?: boolean | string; reasoning?: Record<string, unknown> } {
+  const m = modelInfo(id)
+  const { level, budget } = resolveThink(id, s)
+  if (m.provider === 'ollama') return { think: level === 'off' ? false : level === 'on' ? true : level }
+  const hasEfforts = m.think.levels.some((l) => l !== 'off' && l !== 'on')
+  if (level === 'off') return { reasoning: hasEfforts ? { effort: 'none' } : { enabled: false } }
+  // `think` rides along as the level to fall back on if the provider fails on the budget.
+  if (budget) return { reasoning: { max_tokens: budget }, think: level === 'on' ? true : level }
+  return { reasoning: level === 'on' ? { enabled: true } : { effort: level } }
+}
+
+/** Thinking as a plain switch (voice mode and its speed test): off is the lightest level, on the usual one. */
+export function thinkValue(id: string, on: boolean) {
+  return thinkFields(id, { level: on ? startLevel(id) : lightestLevel(id) })
+}
+
+/** "Off, On", "Low to Max", for the model cards. */
+export function thinkSummary(spec: ThinkSpec) {
+  const lv = spec.levels.filter((l) => l !== 'off')
+  const range = lv.length === 1 ? THINK_LABEL[lv[0]] : `${THINK_LABEL[lv[0]]} to ${THINK_LABEL[lv[lv.length - 1]]}`
+  return canStopThinking(spec) ? (lv.length === 1 ? 'Off or on' : `Off, ${range}`) : range
+}
+
+export const fmtBudget = (n: number) => (n >= 1024 ? `${Math.round(n / 1024)}K` : String(n))
 
 /** Dollar cost of one request from the reported token counts. */
 export function costOf(id: string, u: { prompt: number; output: number; cached?: number }): number | null {

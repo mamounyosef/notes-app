@@ -3,7 +3,7 @@
   "theme": "dark",
   "setup": "setup-blank.js",
   "before": [
-    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b', think: true }); return 'gemma4:31b' })()"
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b' }); return 'gemma4:31b' })()"
   ],
   "prompts": [
     "Draw the logic circuit of a full adder: inputs A, B, Cin and outputs Sum and Cout.",

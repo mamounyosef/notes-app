@@ -1,0 +1,17 @@
+{
+  "fresh": true,
+  "theme": "dark",
+  "setup": "setup-kmap.js",
+  "shots": ["start"],
+  "finalShots": [
+    { "name": "composer-dark", "eval": "(() => { const A = __notesDebug.useAgent.getState(); A.toggle(true); A.setPrefs({ model: 'gpt-oss:120b' }); __notesDebug.useAgent.setState({ hasKey: true }); return 1 })()" },
+    { "name": "dial-gemma-ollama-dark", "eval": "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gemma4:31b' }); if (!document.querySelector('.tk-pop')) document.querySelector('.tk-chip').click(); return 1 })()" },
+    { "name": "dial-ultra-openrouter-budget-dark", "eval": "(() => { const A = __notesDebug.useAgent.getState(); A.setPrefs({ model: 'nvidia/nemotron-3-ultra-550b-a55b:free' }); A.setThink('nvidia/nemotron-3-ultra-550b-a55b:free', { level: 'high', budget: 8192 }); if (!document.querySelector('.tk-pop')) document.querySelector('.tk-chip').click(); return 1 })()" },
+    { "name": "dial-beam-always-dark", "eval": "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'beam' }); if (!document.querySelector('.tk-pop')) document.querySelector('.tk-chip').click(); return 1 })()" },
+    { "name": "dial-gptoss-light", "eval": "(() => { __notesDebug.useStore.getState().setSettings({ theme: 'light' }); __notesDebug.useAgent.getState().setPrefs({ model: 'gpt-oss:120b' }); if (!document.querySelector('.tk-pop')) document.querySelector('.tk-chip').click(); return 1 })()" },
+    { "name": "dial-super-openrouter-light", "eval": "(() => { const A = __notesDebug.useAgent.getState(); A.setPrefs({ model: 'nvidia/nemotron-3-super-120b-a12b:free' }); A.setThink('nvidia/nemotron-3-super-120b-a12b:free', { level: 'low' }); if (!document.querySelector('.tk-pop')) document.querySelector('.tk-chip').click(); return 1 })()" },
+    { "name": "picker-light", "eval": "(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); setTimeout(() => document.querySelector('.mp-btn').click(), 100); return 1 })()" },
+    { "name": "picker-dark", "eval": "(() => { __notesDebug.useStore.getState().setSettings({ theme: 'dark' }); const p = document.querySelector('.mp-pop'); if (p) p.scrollTop = 0; return 1 })()" },
+    { "name": "chip-max-dark", "eval": "(() => { document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); const A = __notesDebug.useAgent.getState(); A.setPrefs({ model: 'beam' }); A.setThink('beam', { level: 'max' }); return 1 })()" }
+  ]
+}

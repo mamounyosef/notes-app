@@ -3,7 +3,7 @@
   "setup": "setup-recall.js",
   "shots": ["end"],
   "before": [
-    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gpt-oss:20b', think: false }); return 'gpt-oss:20b' })()"
+    "(() => { __notesDebug.useAgent.getState().setPrefs({ model: 'gpt-oss:20b', thinkBy: { 'gpt-oss:20b': { level: 'low' } } }); return 'gpt-oss:20b' })()"
   ],
   "prompts": [
     "Reply with only the word one."
