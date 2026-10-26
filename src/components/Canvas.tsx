@@ -413,7 +413,7 @@ export default function Canvas() {
       ? [
           { title: 'Image' },
           { label: 'View full screen', hint: 'Double click', icon: <FitI />, onClick: () => viewImage(img) },
-          { label: 'Edit: crop, rotate, light...', icon: <CropI />, onClick: () => editImage(img) },
+          { label: 'Edit: crop, draw, light...', icon: <CropI />, onClick: () => editImage(img) },
           { label: 'Rotate right', icon: <RotateI />, onClick: () => quickImageEdit(img, 'cw') },
           { label: 'Rotate left', icon: <RotateLeftI />, onClick: () => quickImageEdit(img, 'ccw') },
           { label: 'Flip horizontally', icon: <FlipHI />, onClick: () => quickImageEdit(img, 'h') },

@@ -1,11 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { blobUrl, type ChatAttachment, type ImageEdit } from '../../agent/api'
-import { FULL, applyEdit, renderEdit, blankEdit, cssFilter, drawTurned, editOf, flip, isBlank, loadImg, rotate, sameEdit, turnedSize, type Rect } from '../../agent/imageEdit'
+import { blobUrl, type ChatAttachment, type ImageEdit, type Mark } from '../../agent/api'
+import { FULL, MARK_FONT, applyEdit, renderEdit, blankEdit, cssFilter, drawMarks, drawTurned, editOf, flip, fromOrig, inkOn, isBlank, loadImg, orient, rotate, sameEdit, toOrig, turnedSize, type Rect } from '../../agent/imageEdit'
 import { askConfirm } from '../../lib/confirm'
 import { useBlobUrl } from './Lightbox'
 import { copyCanvas, copyImage } from './imageCopy'
-import { ArrowLeft, ArrowRight, Check, Copy, CompareI, CropI, FitI, FlipHI, FlipVI, Redo, RotateI, RotateLeftI, SlidersI, Trash, Undo, ZoomIn, ZoomOut } from '../Icons'
+import { DrawBar, TOOLS, brushPx, loadDrawPrefs, saveDrawPrefs, stepPx, textPx, type DrawPrefs } from './ImageDraw'
+import { ArrowLeft, ArrowRight, Check, Copy, CompareI, CropI, DrawI, FitI, FlipHI, FlipVI, Redo, RotateI, RotateLeftI, SlidersI, Trash, Undo, ZoomIn, ZoomOut } from '../Icons'
 
 type Handle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
@@ -30,6 +31,29 @@ const LOOKS: { label: string; title: string; v: Pick<ImageEdit, 'bright' | 'cont
 const MIN_SIDE = 0.03
 const ZMAX = 8
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v))
+
+const r5 = (n: number) => Math.round(n * 1e5) / 1e5
+
+/** Text being typed on the picture; `base` is the drawing without it, `before` the edit to go back to. */
+interface Typing {
+  at: [number, number]
+  text: string
+  c: string
+  s: number
+  fill: boolean
+  before: ImageEdit
+  base: Mark[]
+  /** The text mark being changed, if any. */
+  was?: Mark
+}
+
+let measureG: CanvasRenderingContext2D | null = null
+/** Widest line of `text` at `px` in the drawing font. */
+function textWidth(text: string, px: number) {
+  measureG ??= document.createElement('canvas').getContext('2d')!
+  measureG.font = `600 ${px}px ${MARK_FONT}`
+  return Math.max(...text.split('\n').map((l) => measureG!.measureText(l).width))
+}
 
 interface Draft {
   edit: ImageEdit
@@ -159,12 +183,12 @@ export function ImageEditor({
   const [img, setImg] = useState<HTMLImageElement | null>(null)
   const [missing, setMissing] = useState(false)
   const [aspect, setAspect] = useState<number | 'orig' | null>(null)
-  const [panel, setPanel] = useState<'crop' | 'light'>('crop')
+  const [panel, setPanel] = useState<'crop' | 'light' | 'draw'>('crop')
   const [comparing, setComparing] = useState(false)
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [box, setBox] = useState({ w: 800, h: 600 })
-  const [action, setAction] = useState<'move' | 'resize' | 'draw' | 'pan' | null>(null)
+  const [action, setAction] = useState<'move' | 'resize' | 'draw' | 'pan' | 'ink' | null>(null)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [spaceDown, setSpaceDown] = useState(false)
@@ -172,6 +196,21 @@ export function ImageEditor({
   const emptyDown = useRef<{ x: number; y: number } | null>(null)
   const frame = useRef<HTMLDivElement>(null)
   const canvas = useRef<HTMLCanvasElement>(null)
+  const [prefs, setPrefs] = useState(loadDrawPrefs)
+  const setDraw = (p: Partial<DrawPrefs>) =>
+    setPrefs((o) => {
+      const n = { ...o, ...p }
+      saveDrawPrefs(n)
+      return n
+    })
+  const [typing, setTyping] = useState<Typing | null>(null)
+  const typingRef = useRef(typing)
+  typingRef.current = typing
+  /** The drawing as shown: `inkBase` holds the finished marks, `ink` adds the one being drawn. */
+  const ink = useRef<HTMLCanvasElement>(null)
+  const inkBase = useRef<HTMLCanvasElement | null>(null)
+  const liveMark = useRef<Mark | null>(null)
+  const brush = useRef<HTMLElement>(null)
 
   const draft: Draft = drafts[att.sha] || { edit: editOf(att), start: editOf(att), past: [], future: [] }
   const edit = draft.edit
@@ -295,6 +334,61 @@ export function ImageEditor({
     // Once: it reads zoom and pan through refs.
   }, [])
 
+  /* ---------- the drawing layer ---------- */
+
+  // Sharp at the zoom you look at: more pixels when zoomed in (in steps, so a wheel spin is not a repaint per notch).
+  const inkLong = Math.min(4096, Math.round(Math.max(fw, fh) * (window.devicePixelRatio || 1) * clamp(Math.ceil(zoom), 1, 3)))
+
+  /** Maps original picture pixels onto a drawing canvas of the turned picture. */
+  const inkSetup = (g: CanvasRenderingContext2D, cv: HTMLCanvasElement, e: ImageEdit) => {
+    const t = turnedSize(img!.naturalWidth, img!.naturalHeight, e.rot)
+    g.setTransform(1, 0, 0, 1, 0, 0)
+    g.translate(cv.width / 2, cv.height / 2)
+    g.scale(cv.width / t.w, cv.height / t.h)
+    orient(g, e, img!.naturalWidth, img!.naturalHeight)
+  }
+
+  const paintInk = () => {
+    const cv = ink.current
+    const base = inkBase.current
+    if (!cv || !base || !img) return
+    const g = cv.getContext('2d')!
+    g.setTransform(1, 0, 0, 1, 0, 0)
+    g.clearRect(0, 0, cv.width, cv.height)
+    g.drawImage(base, 0, 0)
+    const m = liveMark.current
+    if (m) {
+      inkSetup(g, cv, editRef.current)
+      drawMarks(g, [m], img.naturalWidth, img.naturalHeight)
+    }
+  }
+  const inkRaf = useRef(0)
+  const paintSoon = () => {
+    if (!inkRaf.current) inkRaf.current = requestAnimationFrame(() => ((inkRaf.current = 0), paintInk()))
+  }
+
+  useLayoutEffect(() => {
+    const cv = ink.current
+    if (!img || !cv) return
+    const t = turnedSize(img.naturalWidth, img.naturalHeight, edit.rot)
+    const k = inkLong / Math.max(t.w, t.h)
+    const W = Math.max(1, Math.round(t.w * k))
+    const H = Math.max(1, Math.round(t.h * k))
+    if (cv.width !== W || cv.height !== H) {
+      cv.width = W
+      cv.height = H
+    }
+    const base = (inkBase.current ??= document.createElement('canvas'))
+    base.width = W
+    base.height = H
+    if (edit.marks?.length) {
+      const g = base.getContext('2d')!
+      inkSetup(g, base, edit)
+      drawMarks(g, edit.marks, img.naturalWidth, img.naturalHeight)
+    }
+    paintInk()
+  }, [img, edit.marks, edit.rot, edit.flipH, edit.flipV, inkLong])
+
   /* ---------- crop shape ---------- */
 
   /** Height per width in fractions of the picture, for the chosen shape. */
@@ -338,7 +432,11 @@ export function ImageEditor({
       e.preventDefault()
       return startPan(e)
     }
-    if (e.button !== 0 || comparing || panel !== 'crop') return
+    // A tablet pen's eraser end comes as button 5.
+    const penEraser = e.pointerType === 'pen' && e.button === 5
+    if ((e.button !== 0 && !penEraser) || comparing) return
+    if (panel === 'draw') return startInk(e, penEraser)
+    if (panel !== 'crop') return
     e.preventDefault()
     e.stopPropagation()
     const before = editRef.current
@@ -376,6 +474,172 @@ export function ImageEditor({
     window.addEventListener('pointerup', up)
   }
 
+  /* ---------- drawing ---------- */
+
+  /** Lays the text being typed onto the picture as one undo step (or drops it when empty). */
+  const commitText = () => {
+    const t = typingRef.current
+    if (!t) return
+    typingRef.current = null
+    setTyping(null)
+    const text = t.text.replace(/\s+$/, '')
+    const was = t.was
+    if ((was && was.t === 'text' && was.text === text) || (!was && !text.trim())) return cancelText(t)
+    const marks: Mark[] = text.trim() ? [...t.base, { t: 'text', c: t.c, s: t.s, at: t.at, text, ...(t.fill ? { fill: true } : {}) }] : t.base
+    // Seen at once by whatever runs next in this event (a new stroke builds on it).
+    const next = { ...editRef.current, marks }
+    editRef.current = next
+    setDraft((d) => ({ ...d, edit: next, past: [...d.past, t.before].slice(-80), future: [] }))
+  }
+  const cancelText = (t = typingRef.current) => {
+    if (!t) return
+    typingRef.current = null
+    setTyping(null)
+    editRef.current = t.before
+    setDraft((d) => ({ ...d, edit: t.before }))
+  }
+
+  /** Index of the text mark under a screen point, or -1. */
+  const textAt = (cx: number, cy: number) => {
+    const marks = editRef.current.marks || []
+    if (!img) return -1
+    const r = frame.current!.getBoundingClientRect()
+    const iw = img.naturalWidth
+    const ih = img.naturalHeight
+    const scale = r.width / turned.w
+    for (let k = marks.length - 1; k >= 0; k--) {
+      const m = marks[k]
+      if (m.t !== 'text') continue
+      const S = m.s * Math.max(iw, ih) * scale
+      const { u, v } = fromOrig(editRef.current, iw, ih, m.at[0], m.at[1])
+      const x = r.left + u * r.width
+      const y = r.top + v * r.height
+      const pad = S * 0.4
+      if (cx >= x - pad && cx <= x + textWidth(m.text, S) + pad && cy >= y - pad && cy <= y + m.text.split('\n').length * S * 1.25 + pad) return k
+    }
+    return -1
+  }
+
+  const moveBrush = (cx: number, cy: number) => {
+    const el = brush.current
+    const st = stage.current
+    if (!el || !st) return
+    const r = st.getBoundingClientRect()
+    el.style.transform = `translate(${cx - r.left}px, ${cy - r.top}px)`
+  }
+
+  const startInk = (e: React.PointerEvent, penEraser: boolean) => {
+    if (!img) return
+    e.preventDefault()
+    e.stopPropagation()
+    commitText()
+    const iw = img.naturalWidth
+    const ih = img.naturalHeight
+    const L = Math.max(iw, ih)
+    const ed = editRef.current
+    const marks = ed.marks || []
+    const at = (cx: number, cy: number): [number, number] => {
+      const { u, v } = toUV(cx, cy)
+      const [x, y] = toOrig(ed, iw, ih, u, v)
+      return [r5(x), r5(y)]
+    }
+    // Screen pixels per original pixel, zoom included: sizes are picked on screen.
+    const scale = frame.current!.getBoundingClientRect().width / turned.w
+    const tool = penEraser ? 'erase' : prefs.tool
+    const c = prefs.color
+
+    if (tool === 'text') {
+      const k = textAt(e.clientX, e.clientY)
+      if (k >= 0) {
+        const was = marks[k] as Extract<Mark, { t: 'text' }>
+        const base = marks.filter((_, j) => j !== k)
+        // Hidden while it is retyped; not an undo step of its own.
+        editRef.current = { ...ed, marks: base }
+        setDraft((d) => ({ ...d, edit: { ...d.edit, marks: base } }))
+        setTyping({ at: was.at, text: was.text, c: was.c, s: was.s, fill: Boolean(was.fill), before: ed, base, was })
+      } else {
+        setTyping({ at: at(e.clientX, e.clientY), text: '', c, s: r5(textPx(prefs.size) / scale / L), fill: prefs.fill, before: ed, base: marks })
+      }
+      return
+    }
+    if (tool === 'step') {
+      const n = marks.reduce((top, m) => (m.t === 'step' ? Math.max(top, m.n) : top), 0) + 1
+      commit({ ...ed, marks: [...marks, { t: 'step', c, s: r5(stepPx(prefs.size) / scale / L), at: at(e.clientX, e.clientY), n }] })
+      return
+    }
+
+    const w = r5(brushPx(tool, prefs.size) / scale / L)
+    const s0 = { x: e.clientX, y: e.clientY }
+    const free = tool === 'pen' || tool === 'hl' || tool === 'erase'
+    const pen = e.pointerType === 'pen'
+    // Light touch draws thin, a firm press thick; mouse and touch draw even.
+    const press = (ev: PointerEvent) => (pen ? 0.2 + 1.3 * Math.pow(clamp(ev.pressure || 0.5, 0.05, 1), 0.85) : 1)
+    let pr = press(e.nativeEvent)
+    let last = s0
+    let moved = false
+    const mark: Mark = free
+      ? { t: tool, c, w, p: [...at(s0.x, s0.y), Math.round(pr * 100) / 100] }
+      : { t: tool, c, w, a: at(s0.x, s0.y), b: at(s0.x, s0.y), ...(prefs.fill && (tool === 'rect' || tool === 'ellipse') ? { fill: true } : {}) }
+    liveMark.current = mark
+    setAction('ink')
+    paintSoon()
+
+    const move = (ev: PointerEvent) => {
+      moveBrush(ev.clientX, ev.clientY)
+      if ('p' in mark) {
+        // Every sample the pointer took since the last event, for smooth fast strokes.
+        const all = ev.getCoalescedEvents?.() || []
+        for (const q of all.length ? all : [ev]) {
+          if (Math.hypot(q.clientX - last.x, q.clientY - last.y) < 1.2) continue
+          last = { x: q.clientX, y: q.clientY }
+          pr = pen ? pr * 0.55 + press(q) * 0.45 : 1
+          mark.p.push(...at(q.clientX, q.clientY), Math.round(pr * 100) / 100)
+        }
+      } else if ('a' in mark) {
+        let x = ev.clientX
+        let y = ev.clientY
+        const dx = x - s0.x
+        const dy = y - s0.y
+        if (Math.hypot(dx, dy) > 3) moved = true
+        if (ev.shiftKey) {
+          if (mark.t === 'line' || mark.t === 'arrow') {
+            const step = Math.PI / 12
+            const ang = Math.round(Math.atan2(dy, dx) / step) * step
+            const len = Math.hypot(dx, dy)
+            x = s0.x + Math.cos(ang) * len
+            y = s0.y + Math.sin(ang) * len
+          } else {
+            const d = Math.max(Math.abs(dx), Math.abs(dy))
+            x = s0.x + Math.sign(dx || 1) * d
+            y = s0.y + Math.sign(dy || 1) * d
+          }
+        }
+        const fromMid = ev.altKey && (mark.t === 'rect' || mark.t === 'ellipse')
+        mark.a = fromMid ? at(2 * s0.x - x, 2 * s0.y - y) : at(s0.x, s0.y)
+        mark.b = at(x, y)
+      }
+      paintSoon()
+    }
+    const up = () => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      window.removeEventListener('pointercancel', up)
+      setAction(null)
+      liveMark.current = null
+      const now = editRef.current
+      if (free || moved) commit({ ...now, marks: [...(now.marks || []), mark] })
+      else paintInk()
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+    window.addEventListener('pointercancel', up)
+  }
+
+  const clearInk = () => {
+    commitText()
+    commit({ ...editRef.current, marks: [] })
+  }
+
   /** Slider props: a drag is one undo step, a key press is one too. */
   const slideFrom = useRef<ImageEdit | null>(null)
   const slider = (to: (v: number) => ImageEdit) => ({
@@ -393,6 +657,7 @@ export function ImageEditor({
 
   const go = (k: number) => {
     if (!list.length) return
+    commitText()
     setI(((k % list.length) + list.length) % list.length)
     setComparing(false)
     resetView()
@@ -444,6 +709,7 @@ export function ImageEditor({
     const down = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement
       if (t.tagName === 'INPUT' && (t as HTMLInputElement).type !== 'range') return
+      if (t.tagName === 'TEXTAREA' || t.isContentEditable) return
       const mod = e.ctrlKey || e.metaKey
       const k = e.key
       if (k === 'Escape') cancel()
@@ -457,6 +723,10 @@ export function ImageEditor({
       else if (k === 'v' || k === 'V') commit(flip(edit, 'v'))
       else if (k === 'c' || k === 'C') setPanel('crop')
       else if (k === 'l' || k === 'L') setPanel('light')
+      else if (k === 'd' || k === 'D') setPanel('draw')
+      else if (panel === 'draw' && /^[1-9]$/.test(k)) setDraw({ tool: TOOLS[Number(k) - 1].t })
+      else if (panel === 'draw' && k === '[') setDraw({ size: Math.max(1, prefs.size - Math.max(1, Math.round(prefs.size * 0.2))) })
+      else if (panel === 'draw' && k === ']') setDraw({ size: Math.min(40, prefs.size + Math.max(1, Math.round(prefs.size * 0.2))) })
       else if (k === '\\') setComparing(true)
       else if (k === ' ') setSpaceDown(true)
       else if (k === '0') resetView()
@@ -525,7 +795,8 @@ export function ImageEditor({
             {(outSize.w !== outSize.ow || outSize.h !== outSize.oh) && <> → <b>{outSize.w} x {outSize.h}</b></>}
           </span>
         )}
-        {zoom > 1 && panel === 'crop' && <span className="ie-note soft">Hold Space and drag to move around</span>}
+        {zoom > 1 && panel !== 'light' && <span className="ie-note soft">Hold Space and drag to move around</span>}
+        {panel === 'draw' && zoom <= 1 && <span className="ie-note soft">{TOOLS.find((t) => t.t === prefs.tool)?.tip}</span>}
         {missing && <span className="ie-note">Original not on this computer: editing the picture as sent</span>}
         <div className="spacer" />
         {error && <span className="ie-err">{error}</span>}
@@ -560,9 +831,10 @@ export function ImageEditor({
       >
         <div
           ref={frame}
-          className={`ie-frame ${action ? 'busy' : ''}`}
+          className={`ie-frame ${action ? 'busy' : ''} ${panel === 'draw' && !comparing ? `inking ink-${prefs.tool}` : ''}`}
           style={{ width: fw, height: fh, transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`, ['--inv' as any]: 1 / zoom }}
           onPointerDown={onFrameDown}
+          onPointerMove={(e) => panel === 'draw' && moveBrush(e.clientX, e.clientY)}
           onDoubleClick={(e) => {
             if (panel !== 'crop' || comparing) return
             e.stopPropagation()
@@ -573,6 +845,49 @@ export function ImageEditor({
           }}
         >
           <canvas ref={canvas} className="ie-canvas" style={{ filter: comparing ? 'none' : cssFilter(edit) }} />
+          <canvas ref={ink} className="ie-ink" style={{ visibility: comparing ? 'hidden' : undefined }} />
+          {typing && img && (() => {
+            const { u, v } = fromOrig(edit, img.naturalWidth, img.naturalHeight, typing.at[0], typing.at[1])
+            const px = typing.s * Math.max(img.naturalWidth, img.naturalHeight) * (fw / turned.w)
+            const pad = px * 0.35
+            return (
+              <textarea
+                className={`ie-type ${typing.fill ? 'fill' : ''}`}
+                autoFocus
+                spellCheck={false}
+                placeholder="Type"
+                value={typing.text}
+                rows={typing.text.split('\n').length}
+                style={{
+                  left: `${u * 100}%`,
+                  top: `${v * 100}%`,
+                  fontSize: px,
+                  fontFamily: MARK_FONT,
+                  width: textWidth(typing.text || 'Type', px) + px,
+                  color: typing.fill ? inkOn(typing.c) : typing.c,
+                  background: typing.fill ? typing.c : 'transparent',
+                  padding: typing.fill ? `${pad * 0.7}px ${pad}px` : 0,
+                  margin: typing.fill ? `${-pad * 0.7}px 0 0 ${-pad}px` : 0,
+                  borderRadius: px * 0.3,
+                  ['--halo' as any]: inkOn(typing.c) === '#fff' ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.6)',
+                }}
+                onChange={(e) => setTyping({ ...typing, text: e.target.value })}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault()
+                    commitText()
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault()
+                    cancelText()
+                  }
+                }}
+                onBlur={() => commitText()}
+                // Changing a text: carry on at its end.
+                onFocus={(e) => e.currentTarget.setSelectionRange(e.currentTarget.value.length, e.currentTarget.value.length)}
+                onPointerDown={(e) => e.stopPropagation()}
+              />
+            )
+          })()}
           {!img && !error && <div className="ie-loading"><span className="ie-spin" /></div>}
           {img && !comparing && (cropped || (action && panel === 'crop')) && <Shade c={c} />}
           {img && !comparing && panel === 'crop' && (
@@ -583,6 +898,13 @@ export function ImageEditor({
           )}
           {comparing && <span className="ie-tag">Original</span>}
         </div>
+        {panel === 'draw' && !comparing && (prefs.tool === 'pen' || prefs.tool === 'hl' || prefs.tool === 'erase') && (
+          <i
+            ref={brush}
+            className={`ie-brush ${prefs.tool}`}
+            style={{ ['--d' as any]: `${Math.max(4, brushPx(prefs.tool, prefs.size))}px`, ['--c' as any]: prefs.color }}
+          />
+        )}
       </div>
 
       {list.length > 1 && (
@@ -603,6 +925,8 @@ export function ImageEditor({
             ))}
             {cropped && <button className="ie-pill ghost" onClick={() => commit({ ...edit, crop: FULL })} title="Keep the whole picture">Uncrop</button>}
           </div>
+        ) : panel === 'draw' ? (
+          <DrawBar prefs={prefs} set={setDraw} hasMarks={Boolean(edit.marks?.length)} onClear={clearInk} />
         ) : (
           <div className="ie-row">
             {LOOKS.map((l) => {
@@ -631,6 +955,7 @@ export function ImageEditor({
         <div className="lb-tools">
           <button className={`lb-btn ie-mode ${panel === 'crop' ? 'on' : ''}`} onClick={() => setPanel('crop')} title="Crop (C)"><CropI size={16} /><span>Crop</span></button>
           <button className={`lb-btn ie-mode ${panel === 'light' ? 'on' : ''}`} onClick={() => setPanel('light')} title="Light and contrast (L)"><SlidersI size={16} /><span>Adjust</span></button>
+          <button className={`lb-btn ie-mode ${panel === 'draw' ? 'on' : ''}`} onClick={() => setPanel('draw')} title="Draw, mark up and write on the picture (D)"><DrawI size={16} /><span>Draw</span></button>
           <span className="lb-sep" />
           <button className="lb-btn" onClick={() => commit(rotate(edit, -1))} title="Turn left (Shift+R)"><RotateLeftI size={16} /></button>
           <button className="lb-btn" onClick={() => commit(rotate(edit, 1))} title="Turn right (R)"><RotateI size={16} /></button>

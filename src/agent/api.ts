@@ -29,7 +29,22 @@ export interface ImageEdit {
   bright: number
   contrast: number
   gray: boolean
+  /** Drawing on top, in fractions of the original picture (before turns and mirrors). */
+  marks?: Mark[]
 }
+
+/**
+ * One drawn thing. Points are fractions of the original picture's width and
+ * height; widths and sizes are fractions of its long side, so a mark stays put
+ * and keeps its look through crops, turns, mirrors and zoom.
+ */
+export type Mark =
+  /** Freehand: p is [x, y, pressure, x, y, pressure, ...]. */
+  | { t: 'pen' | 'hl' | 'erase'; c: string; w: number; p: number[] }
+  | { t: 'line' | 'arrow' | 'rect' | 'ellipse'; c: string; w: number; a: [number, number]; b: [number, number]; fill?: boolean }
+  /** Text and numbered steps stay upright on screen whatever the turn. */
+  | { t: 'text'; c: string; s: number; at: [number, number]; text: string; fill?: boolean }
+  | { t: 'step'; c: string; s: number; at: [number, number]; n: number }
 
 export interface ToolCall {
   id?: string

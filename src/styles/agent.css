@@ -1657,6 +1657,119 @@
 .ie-mode { display: inline-flex; gap: 6px; align-items: center; font-size: 12.5px; }
 .ie-mode.on { background: rgba(255, 255, 255, 0.1); }
 
+/* ---------- drawing ---------- */
+
+.ie-ink {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.ie-frame.inking { cursor: crosshair; }
+.ie-frame.ink-pen, .ie-frame.ink-hl, .ie-frame.ink-erase { cursor: none; }
+.ie-frame.ink-text { cursor: text; }
+.ie-frame.ink-step { cursor: copy; }
+.ie-stage.space .ie-frame.inking { cursor: grab; }
+
+/* The brush outline that follows the pointer: its real size and color. */
+.ie-brush {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: var(--d);
+  height: var(--d);
+  margin: calc(var(--d) / -2) 0 0 calc(var(--d) / -2);
+  border-radius: 50%;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s, width 0.12s, height 0.12s, margin 0.12s;
+  box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.95), 0 0 0 2.5px rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--c) 55%, transparent);
+  z-index: 3;
+}
+.ie-brush.hl { border-radius: 30%; background: color-mix(in srgb, var(--c) 35%, transparent); }
+.ie-brush.erase { background: rgba(255, 255, 255, 0.12); box-shadow: 0 0 0 1.5px rgba(255, 255, 255, 0.95), 0 0 0 2.5px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(0, 0, 0, 0.4); }
+.ie-brush::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 2px;
+  height: 2px;
+  margin: -1px 0 0 -1px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.6);
+}
+.ie-frame:hover + .ie-brush, .ie-stage.doing-ink .ie-brush { opacity: 1; }
+.ie-stage.space .ie-brush { opacity: 0 !important; }
+
+.ie-type {
+  position: absolute;
+  z-index: 2;
+  border: none;
+  outline: 1.5px dashed color-mix(in srgb, var(--accent) 85%, transparent);
+  outline-offset: 4px;
+  resize: none;
+  overflow: hidden;
+  white-space: pre;
+  font-weight: 600;
+  line-height: 1.25;
+  min-width: 1em;
+  caret-color: currentColor;
+  text-shadow: 0 0 2px var(--halo), 0 0 3px var(--halo);
+  box-sizing: content-box;
+}
+.ie-type.fill { text-shadow: none; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35); }
+.ie-type::placeholder { color: currentColor; opacity: 0.45; }
+
+/* One line: the dock is centered by a half-width shift, so a wrapping row would break at half the window. */
+.ie-draw { gap: 3px; flex-wrap: nowrap; white-space: nowrap; }
+.ie-gap { width: 6px; }
+.ie-tool {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border-radius: 7px;
+  color: #ddd;
+  transition: background 0.12s, color 0.12s, transform 0.12s;
+}
+.ie-tool:hover { background: rgba(255, 255, 255, 0.1); }
+.ie-tool.on { background: var(--accent); color: #fff; }
+.ie-tool:active { transform: scale(0.92); }
+
+.ie-swatch {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  margin: 0 2px;
+  border-radius: 50%;
+  background: var(--sw);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.25);
+  transition: transform 0.12s, box-shadow 0.12s;
+  cursor: pointer;
+}
+.ie-swatch:hover { transform: scale(1.15); }
+.ie-swatch.on { box-shadow: 0 0 0 2px #0b0b0d, 0 0 0 3.5px #fff; transform: scale(1.08); }
+.ie-swatch.custom { background: conic-gradient(#ff3b30, #ffd60a, #30d158, #0a84ff, #bf5af2, #ff3b30); }
+.ie-swatch.custom.on { background: radial-gradient(circle, var(--sw) 0 46%, transparent 50%), conic-gradient(#ff3b30, #ffd60a, #30d158, #0a84ff, #bf5af2, #ff3b30); }
+.ie-swatch.custom input { position: absolute; inset: 0; opacity: 0; width: 100%; height: 100%; cursor: pointer; }
+
+.ie-size { margin-left: 2px; }
+.ie-size input { width: 96px; }
+.ie-size-box { display: grid; place-items: center; width: 26px; height: 26px; flex: none; opacity: 1 !important; }
+.ie-size-dot {
+  display: grid;
+  flex: none;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.4);
+  transition: width 0.1s, height 0.1s;
+}
+.ie-clear { display: inline-flex; align-items: center; gap: 5px; }
+.ie-clear:hover { color: #ff8a8a; }
+
 .lb-strip-item { position: relative; }
 .ie-dot {
   position: absolute;
