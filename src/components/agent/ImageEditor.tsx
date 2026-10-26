@@ -499,7 +499,23 @@ export function ImageEditor({
   }
 
   return createPortal(
-    <div className="lb ie" onContextMenu={(e) => e.preventDefault()}>
+    <div
+      className="lb ie"
+      onContextMenu={(e) => e.preventDefault()}
+      // A plain click on empty space anywhere (below the picture, beside the tool bars) closes, like the Close button.
+      onPointerDown={(e) => {
+        const t = e.target as HTMLElement
+        if (e.button === 0 && (t === e.currentTarget || t.classList.contains('lb-dock'))) emptyDown.current = { x: e.clientX, y: e.clientY }
+      }}
+      onPointerUp={(e) => {
+        const t = e.target as HTMLElement
+        const d = emptyDown.current
+        if (d && (t === e.currentTarget || t.classList.contains('lb-dock')) && Math.hypot(e.clientX - d.x, e.clientY - d.y) < 5) {
+          emptyDown.current = null
+          finish()
+        }
+      }}
+    >
       <div className="lb-bar ie-bar">
         <span className="lb-name" title={att.name}>{att.name}</span>
         {list.length > 1 && <span className="lb-count">{i + 1} / {list.length}</span>}
