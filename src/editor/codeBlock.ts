@@ -230,6 +230,39 @@ export function isCodeHtml(html: string): boolean {
   )
 }
 
+const CODE_CLASS = /(?:^|\s|-)(?:token|hljs|shiki|cm-line|cm-content|code-block|monaco|syntax|highlight|sourceCode)/i
+const CODE_STYLE = /white-space:\s*pre|font-family:[^;]*(?:monospace|Consolas|Menlo|Courier|SFMono|ui-monospace|Cascadia|Fira Code|JetBrains Mono)/i
+
+/**
+ * True only when every piece of text in the clipboard HTML sits inside code
+ * (a <pre>, a highlighter's element, or a monospace / pre-styled block).
+ * An answer with one inline `code` span in its prose is not code.
+ */
+export function isWhollyCodeHtml(html: string): boolean {
+  if (!isCodeHtml(html)) return false
+  try {
+    const doc = new DOMParser().parseFromString(html, 'text/html')
+    const inCode = (el: Element | null): boolean => {
+      for (; el && el !== doc.body; el = el.parentElement) {
+        if (el.tagName === 'PRE' || el.tagName === 'CODE') return true
+        if (CODE_CLASS.test(el.getAttribute('class') || '')) return true
+        if (CODE_STYLE.test(el.getAttribute('style') || '')) return true
+      }
+      return false
+    }
+    const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT)
+    let any = false
+    for (let n = walker.nextNode(); n; n = walker.nextNode()) {
+      if (!n.nodeValue?.trim()) continue
+      any = true
+      if (!inCode(n.parentElement)) return false
+    }
+    return any
+  } catch {
+    return false
+  }
+}
+
 /**
  * Extracts language identifier from clipboard HTML (e.g. from Claude's code block
  * `<code class="language-python">` or `<span class="code-language">python</span>`).
@@ -246,126 +279,4 @@ export function extractLanguageFromHtml(html: string): string | null {
   return null
 }
 
-/**
- * Robust heuristic to determine if plain text looks like source code.
- */
-export function looksLikeCode(text: string): { isCode: boolean; language: string | null } {
-  if (!text || text.length < 8) return { isCode: false, language: null }
-  const lines = text.trim().split('\n')
-  if (lines.length < 2) return { isCode: false, language: null }
-
-  // Markdown fenced code block (```lang ... ```)
-  const fenceMatch = text.trim().match(/^```([a-zA-Z0-9_-]+)?\s*\n([\s\S]+?)\n```$/)
-  if (fenceMatch) {
-    return { isCode: true, language: fenceMatch[1]?.toLowerCase() || null }
-  }
-
-  // Strong programming language signatures:
-  // Python:
-  const isPython =
-    /^(?:from\s+[a-zA-Z0-9_.]+\s+import|import\s+[a-zA-Z0-9_.]+)/m.test(text) ||
-    /^\s*(?:def|class)\s+[a-zA-Z0-9_]+(?:\([^)]*\))?\s*:/m.test(text) ||
-    /^\s*if\s+__name__\s*==\s*['"]__main__['"]\s*:/m.test(text) ||
-    (lines.filter((l) => /^\s*#\s+\S+/.test(l)).length >= 1 &&
-      lines.filter((l) => /^\s*[a-zA-Z0-9_.]+\s*=\s*\S+/.test(l)).length >= 1)
-
-  if (isPython) return { isCode: true, language: 'python' }
-
-  // JavaScript / TypeScript:
-  const isJsTs =
-    /^\s*import\s+(?:\{[^}]+\}|\*\s+as\s+\w+|\w+)\s+from\s+['"][^'"]+['"]/m.test(text) ||
-    /^\s*export\s+(?:default\s+)?(?:function|class|const|let|var|interface|type)\b/m.test(text) ||
-    /^\s*(?:const|let|var)\s+[a-zA-Z0-9_$]+\s*=\s*(?:require\(|\([^)]*\)\s*=>|function\b|new\s+\w+|[\{\[])/m.test(text) ||
-    /^\s*(?:interface|type)\s+[A-Z]\w*(?:<[^>]+>)?\s*[={]/m.test(text) ||
-    /console\.(?:log|error|warn|info)\(/m.test(text)
-
-  if (isJsTs) {
-    const isTs =
-      /:\s*(?:string|number|boolean|any|void|unknown|never|Record<|Array<|Promise<)\b/.test(text) ||
-      /^\s*(?:interface|type)\s+[A-Z]/m.test(text)
-    return { isCode: true, language: isTs ? 'typescript' : 'javascript' }
-  }
-
-  // C / C++:
-  const isCpp =
-    /^#(?:include\s+[<"]|define\s+\w+)/m.test(text) ||
-    /^\s*std::\w+/m.test(text) ||
-    /^\s*(?:int|void|char|double|float|bool)\s+main\s*\(/m.test(text)
-  if (isCpp) return { isCode: true, language: 'cpp' }
-
-  // Java / C#:
-  const isJava =
-    /^\s*(?:public|private|protected)\s+(?:static\s+)?(?:class|void|int|String|boolean)\s+\w+/m.test(text) ||
-    /^\s*package\s+[a-zA-Z0-9_.]+;/m.test(text)
-  if (isJava) return { isCode: true, language: 'java' }
-
-  // Rust:
-  const isRust =
-    /^\s*(?:fn|pub\s+fn|pub\s+struct|pub\s+enum|impl(?:<[^>]+>)?)\s+\w+/m.test(text) ||
-    /println!\(/.test(text)
-  if (isRust) return { isCode: true, language: 'rust' }
-
-  // Go:
-  const isGo = /^\s*package\s+\w+/m.test(text) && /^\s*func\s+/m.test(text)
-  if (isGo) return { isCode: true, language: 'go' }
-
-  // HTML / XML:
-  const isHtml =
-    /^\s*<(?:!DOCTYPE\s+html|html|div|span|p|head|body|svg)\b[\s\S]*>/i.test(text) &&
-    /<\/\w+>\s*$/m.test(text)
-  if (isHtml) return { isCode: true, language: 'html' }
-
-  // JSON:
-  if (/^\s*\{[\s\S]*\}\s*$/.test(text) || /^\s*\[[\s\S]*\]\s*$/.test(text)) {
-    try {
-      JSON.parse(text)
-      return { isCode: true, language: 'json' }
-    } catch {}
-  }
-
-  // Shell / Bash:
-  const isShell =
-    /^#!\/(?:usr\/)?bin\/(?:bash|sh|zsh)/m.test(text) ||
-    lines.every(
-      (l) =>
-        !l.trim() ||
-        /^\s*(?:npm|npx|pnpm|yarn|cargo|git|docker|pip|python|node|brew|apt|curl|wget)\s+/.test(l),
-    )
-  if (isShell) return { isCode: true, language: 'bash' }
-
-  // SQL:
-  const isSql = /^\s*(?:SELECT\s+.*\s+FROM|INSERT\s+INTO|UPDATE\s+.*\s+SET|DELETE\s+FROM|CREATE\s+TABLE)\b/im.test(text)
-  if (isSql) return { isCode: true, language: 'sql' }
-
-  // General heuristic for indented code with high symbol ratio:
-  const codeLineCount = lines.filter((line) => {
-    const l = line.trim()
-    if (!l) return false
-    return (
-      /^[a-zA-Z0-9_.]+\s*=\s*.+/.test(l) ||
-      /^[a-zA-Z0-9_.]+\([^)]*\)/.test(l) ||
-      /[;{}]$/.test(l) ||
-      /^(?:\/\/|#|\/\*)\s+/.test(l)
-    )
-  }).length
-
-  const nonBlankLines = lines.filter((l) => l.trim().length > 0).length
-  if (nonBlankLines >= 3 && codeLineCount / nonBlankLines >= 0.6) {
-    return { isCode: true, language: null }
-  }
-
-  return { isCode: false, language: null }
-}
-
-/**
- * Checks if the text has mixed markdown prose around code blocks
- * (in which case it should be processed by the full markdown parser).
- */
-export function looksLikeMixedMarkdown(text: string): boolean {
-  if (!text.includes('```')) return false
-  const trimmed = text.trim()
-  const first = trimmed.indexOf('```')
-  if (first !== 0) return true
-  const second = trimmed.indexOf('```', 3)
-  return second !== -1 && second < trimmed.length - 3
-}
+export { looksLikeCode, looksLikeMixedMarkdown } from './pasteClassify'

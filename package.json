@@ -18,7 +18,8 @@
     "onenote:import": "node scripts/import-onenote.mjs",
     "onenote:verify": "node scripts/verify-import.mjs",
     "test:sync": "node scripts/test-sync.mjs && node scripts/test-sync-converge.mjs && node scripts/test-vault-sync.mjs && node scripts/test-cloud-sync.mjs && node scripts/test-chat-sync.mjs",
-    "test:voice": "node --experimental-strip-types --no-warnings src/voice/speechText.test.ts"
+    "test:voice": "node --experimental-strip-types --no-warnings src/voice/speechText.test.ts",
+    "test:paste": "node --experimental-strip-types --no-warnings src/editor/paste.test.ts"
   },
   "dependencies": {
     "@hpcc-js/wasm-graphviz": "^1.30.0",

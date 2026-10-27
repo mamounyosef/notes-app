@@ -19,7 +19,8 @@ import { NodeSelection, Plugin } from '@tiptap/pm/state'
 import { DOMSerializer } from '@tiptap/pm/model'
 import { BlockMath, InlineMath } from './math'
 import { ListAfterBreak } from './listAfterBreak'
-import { htmlToMarkdown, looksLikeMarkdown, markdownToHtml } from './markdown'
+import { htmlToMarkdown, markdownToHtml } from './markdown'
+import { classifyPaste } from './pasteClassify'
 import { latexDocumentToHtml, looksLikeLatexDocument } from './latexDocument'
 import { storage } from '../lib/storage'
 import { useStore } from '../store'
@@ -32,9 +33,7 @@ import { HtmlEmbed, looksLikeHtmlDocument } from './HtmlEmbed'
 import {
   CustomCodeBlockLowlight,
   extractLanguageFromHtml,
-  isCodeHtml,
-  looksLikeCode,
-  looksLikeMixedMarkdown,
+  isWhollyCodeHtml,
 } from './codeBlock'
 
 declare module '@tiptap/core' {
@@ -154,25 +153,15 @@ export const SmartPaste = Extension.create({
               return true
             }
 
-            // Code detection: if copied from a code block (HTML with code tags/classes/white-space:pre)
-            // or if the plain text looks like a multi-line code snippet (e.g. from Claude's Copy button)
-            const codeDetection = looksLikeCode(text)
-            const htmlIsCode = isCodeHtml(html)
-            const shouldPasteAsCode =
-              (htmlIsCode &&
-                (codeDetection.isCode ||
-                  /<(?:pre|code)\b/i.test(html) ||
-                  /class=["'][^"']*(?:token|hljs|shiki|cm-line|code-block)[^"']*/i.test(html)) &&
-                text.trim().includes('\n')) ||
-              (codeDetection.isCode && !looksLikeMixedMarkdown(text))
-
-            if (shouldPasteAsCode) {
+            // Code only when the clipboard is code from end to end (a code block, an editor)
+            // or the plain text is a snippet. Prose with an inline `code` span stays Markdown.
+            const kind = classifyPaste(text, isWhollyCodeHtml(html), extractLanguageFromHtml(html))
+            if (kind.kind === 'code') {
               event.preventDefault()
-              const language = extractLanguageFromHtml(html) || codeDetection.language
-              const cleanCode = text.replace(/\r\n?/g, '\n').replace(/\n+$/, '')
+              const cleanCode = (kind.code ?? text).replace(/\r\n?/g, '\n').replace(/\n+$/, '')
               editor.commands.insertContent({
                 type: 'codeBlock',
-                attrs: { language },
+                attrs: { language: kind.language },
                 content: cleanCode ? [{ type: 'text', text: cleanCode }] : [],
               })
               return true
@@ -180,7 +169,7 @@ export const SmartPaste = Extension.create({
 
             // Markdown-like plain text must win in auto mode so math delimiters,
             // emphasis, and blank-line paragraph breaks are parsed correctly.
-            const preferMarkdown = mode === 'always' ? !!text : looksLikeMarkdown(text)
+            const preferMarkdown = mode === 'always' || kind.kind === 'markdown'
             if (preferMarkdown) {
               event.preventDefault()
               editor.commands.insertContent(markdownToHtml(text))
