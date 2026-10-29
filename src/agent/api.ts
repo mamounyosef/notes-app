@@ -17,6 +17,34 @@ export interface ChatAttachment {
   edit?: ImageEdit
 }
 
+/** One picture or equation picked inside a cell: which one, so the agent and a later click find exactly it. */
+export interface PickedNode {
+  type: 'image' | 'math'
+  /** Its place among the cell's images (or equations), 0 first. */
+  nth: number
+  /** Of how many in the cell. */
+  of: number
+  src?: string
+  alt?: string
+  latex?: string
+  /** Block equation (its own line) rather than inline. */
+  display?: boolean
+}
+
+/** What the user had selected when sending, as kept with the message. */
+export interface SentSelection {
+  kind: 'text' | 'cells' | 'image' | 'math'
+  label: string
+  text: string
+  cellIds: string[]
+  cellTitle?: string
+  /** The page it was on, so clicking the chip later can go back there. */
+  pageId?: string
+  node?: PickedNode
+  /** Note images in the selection: their pixels go along, so the model sees exactly these. */
+  images?: ChatAttachment[]
+}
+
 export interface ImageEdit {
   orig: { sha: string; mime: string; size: number }
   /** Quarter turns clockwise, applied after the mirrors. */
@@ -80,7 +108,7 @@ export interface ChatMessage {
     /** Quoted selection sent with "Ask the agent". */
     quote?: string
     /** What the user had selected when sending (unless they dismissed it). */
-    selection?: { kind: 'text' | 'cells'; label: string; text: string; cellIds: string[]; cellTitle?: string }
+    selection?: SentSelection
     /** A question the agent asked (ask_user) and the answer. */
     ask?: { question: string; options?: string[]; multi?: boolean; answer?: string }
     /** One line per tool call result, for the chips in the chat. */

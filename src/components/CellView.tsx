@@ -39,7 +39,6 @@ function CellViewInner({
   onDeleteSelf,
 }: Props) {
   const titleRef = useRef<HTMLInputElement>(null)
-  const gripDown = useRef<{ x: number; y: number } | null>(null)
   const [copied, setCopied] = useState(false)
 
   const handleCopy = useCallback(async (e: React.MouseEvent) => {
@@ -160,18 +159,8 @@ function CellViewInner({
       onContextMenu={onContextMenu}
       data-cell-id={cell.id}
     >
-      <div className="cell-grip" title="Click for options. Drag to move. Double click to collapse."
-           onPointerDown={(e) => {
-             gripDown.current = { x: e.clientX, y: e.clientY }
-             onDragStart(e)
-           }}
-           onClick={(e) => {
-             // A click that did not move the cell opens its menu; the second click of a double click does not.
-             const d = gripDown.current
-             gripDown.current = null
-             if (e.detail > 1 || !d || Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 3) return
-             onContextMenu(e)
-           }}
+      <div className="cell-grip" title="Drag to move. Double click to collapse. Right click for options."
+           onPointerDown={onDragStart}
            onDoubleClick={() => onChange({ collapsed: !cell.collapsed })}>
         <Grip size={18} />
       </div>

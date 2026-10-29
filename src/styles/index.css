@@ -1679,6 +1679,14 @@ select:focus {
   background: var(--sel);
 }
 
+/* a picked equation: one click selects it (for the assistant, copy, delete), the next edits */
+.math-inline.ProseMirror-selectednode,
+.math-block.ProseMirror-selectednode {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: 0 0 0 1.5px var(--accent);
+  cursor: text;
+}
+
 .math-empty {
   display: inline-block;
   padding: 2px 8px;

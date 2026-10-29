@@ -8,11 +8,12 @@ import { renderMarkdown } from '../../agent/render'
 import { pathTo, useStore } from '../../store'
 import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
 import Composer from './Composer'
+import SelChip from './SelChip'
 import { RunMark, SessionStrip, runLine } from './Sessions'
 import { AttachmentTray, useAddFiles } from './AttachmentTray'
 import { ContextRing, ContextInspector } from './ContextMeter'
 import {
-  AssistantMark, StopI, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock, AudioLines, Mic,
+  AssistantOrb, StopI, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock, AudioLines, Mic,
 } from '../Icons'
 import { waitText } from './QueueDeck'
 import VoiceDock, { HearingBubble, VoiceEmpty } from '../voice/VoiceDock'
@@ -334,15 +335,7 @@ function UserBubble({ m, onImage }: { m: ChatMessage; onImage(items: LightboxIte
   return (
     <div className="ag-user">
       {m.meta?.quote && <div className="ag-quote">{m.meta.quote}</div>}
-      {m.meta?.selection && (
-        <div className="ag-sel sent" title={m.meta.selection.text.slice(0, 600)}>
-          <span className="ag-sel-dot" />
-          <span className="ag-sel-label">
-            {m.meta.selection.label}
-            {m.meta.selection.cellTitle ? ` in "${m.meta.selection.cellTitle}"` : ''}
-          </span>
-        </div>
-      )}
+      {m.meta?.selection && <SelChip sel={m.meta.selection} sent />}
       {!editing && images.length > 0 && (
         <div className={`ag-user-imgs n${Math.min(images.length, 3)}`}>
           {images.map((a, i) => (
@@ -649,7 +642,7 @@ function Suggestions({ onVoice }: { onVoice?(): void }) {
       ]
   return (
     <div className="ag-empty">
-      <div className="ag-empty-mark"><AssistantMark size={40} /></div>
+      <div className="ag-empty-mark"><AssistantOrb size={40} /></div>
       <div className="ag-empty-title">What should we do?</div>
       <div className="ag-empty-sub">I can see your screen, read any page, and change anything in the app. Paste a photo of notes, attach a PDF, or point at a page with @.</div>
       <div className="ag-sugs">
@@ -674,7 +667,7 @@ function KeySetup() {
   const [busy, setBusy] = useState(false)
   return (
     <div className="ag-empty">
-      <div className="ag-empty-mark"><AssistantMark size={40} /></div>
+      <div className="ag-empty-mark"><AssistantOrb size={40} /></div>
       <div className="ag-empty-title">Connect Ollama Cloud</div>
       <div className="ag-empty-sub">Paste your Ollama API key (ollama.com, Settings, Keys). It is stored encrypted on this computer only.</div>
       <div className="ag-key">
@@ -951,7 +944,7 @@ export default function AgentPanel() {
       >
         {overlay && <FloatHandles />}
         <header className="ag-head" onMouseDown={overlay ? startMove : undefined} title={overlay ? 'Drag to move' : undefined}>
-          <div className="ag-brand"><AssistantMark size={20} /></div>
+          <div className="ag-brand"><AssistantOrb size={20} busy={busy} /></div>
           <button className="ag-title" onClick={() => setShowHistory(!showHistory)} title="All chats">
             <span>{showHistory ? 'Chats' : chat?.title || 'New chat'}</span>
             <Chevron size={12} className={`ag-chev ${showHistory ? 'up' : ''}`} />

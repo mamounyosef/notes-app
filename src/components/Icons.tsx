@@ -110,6 +110,20 @@ export const AssistantMark = (p: P) => {
     </svg>
   )
 }
+/**
+ * The same mark, alive (the weekly planner's assistant wears the same one): the
+ * core breathes, the glow behind it swells and settles, and while the assistant
+ * works it all quickens and rings ripple outwards. `calm` is the slow glow only,
+ * for small places such as the toolbar. Reduced motion gets the still orb.
+ */
+export const AssistantOrb = ({ size = 16, busy, calm, className }: { size?: number; busy?: boolean; calm?: boolean; className?: string }) => (
+  <span aria-hidden="true" className={`ag-orb ${busy ? 'busy' : calm ? 'calm' : 'live'} ${className ?? ''}`} style={{ width: size, height: size }}>
+    <span className="ag-orb-halo" />
+    <span className="ag-orb-core" />
+    <span className="ag-orb-ripple" />
+    <span className="ag-orb-ripple r2" />
+  </span>
+)
 export const Send = (p: P) => (<svg {...s(p)}><path d="M12 19V5M5 12l7-7 7 7" /></svg>)
 export const StopI = (p: P) => (<svg {...s(p)}><rect x="7" y="7" width="10" height="10" rx="2" fill="currentColor" /></svg>)
 export const Mic = (p: P) => (<svg {...s(p)}><rect x="9" y="3" width="6" height="11" rx="3" /><path d="M5 11a7 7 0 0014 0M12 18v3" /></svg>)

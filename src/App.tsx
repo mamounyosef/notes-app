@@ -26,7 +26,7 @@ import { isDesktop, storage } from './lib/storage'
 import type { TreeNode } from './types'
 import {
   Book, File as FileIcon, Folder, Gear, Max, Min, PanelLeft, PanelMid, Plus, Search as SearchIcon,
-  Star, X, ZoomIn, ZoomOut, Archive, Chevron, SidebarPeek, ArrowLeft, ArrowRight, SyncI, AssistantMark
+  Star, X, ZoomIn, ZoomOut, Archive, Chevron, SidebarPeek, ArrowLeft, ArrowRight, SyncI, AssistantOrb
 } from './components/Icons'
 
 export default function App() {
@@ -728,7 +728,7 @@ function AssistantButton({ open }: { open: boolean }) {
       title={`Assistant (Ctrl+J). Ctrl+L asks about the selection.${parts.length ? `\nChats: ${parts.join(', ')}` : ''}`}
       onClick={() => useAgent.getState().toggle()}
     >
-      <AssistantMark size={17} /> Assistant
+      <AssistantOrb size={16} calm={!working} busy={working > 0} /> Assistant
       {attention > 0 && <span className={`agent-badge ${asking ? 'asking' : ''}`}>{attention}</span>}
     </button>
   )

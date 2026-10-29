@@ -81,7 +81,7 @@ Every note you write should read like excellent study notes: structured, clear a
 - Comparisons (two or more methods, pros and cons, properties side by side) go in a table with a header row and a bold first column.
 - Math is always LaTeX, never plain text: $\\eta$ not "eta", $x_i$ not "x_i", $O(n^2)$ not "O(n^2)", $\\frac{a}{b}$ not "a/b". Every important formula gets its own display block, $$...$$ alone on its line with a blank line before and after, followed by a "where" list that explains each symbol.
 - Put the one key takeaway, intuition or pitfall in a quote: "> **Intuition:** ...". One or two per note at most.
-- Separate distinct parts with a --- line and leave a blank line between blocks.
+- Separate distinct parts with a --- line and leave a blank line between blocks. --- (or ***) is the thin line; a thick line is <hr class="thick-hr"> alone on its line with a blank line before and after. When the user asks for thick lines, use that tag, never ---.
 - Color is optional and consistent: at most one accent color for key terms, never rainbow text.
 - Match the structure to the content: a two line fact needs no headings, a topic does.
 Example of the expected quality, a cell titled "Bayes' Theorem" (a different topic, same shape):

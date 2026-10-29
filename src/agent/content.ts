@@ -7,7 +7,13 @@ import TurndownService from 'turndown'
 import { markdownToHtml, extractMath, escapeAttr } from '../editor/markdown'
 import { FENCE_OF, KIND_OF_FENCE, fromBase64, kindOf, toBase64 } from '../widgets/widget'
 
-const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-' })
+const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', hr: '---' })
+
+// The thick divider has no Markdown form: kept as its tag, so a rewrite of the cell keeps it thick.
+td.addRule('thickRule', {
+  filter: (node) => node.nodeName === 'HR' && (node as HTMLElement).classList.contains('thick-hr'),
+  replacement: () => '\n\n<hr class="thick-hr">\n\n',
+})
 
 td.addRule('math', {
   filter: (node) => node.nodeType === 1 && (node as HTMLElement).hasAttribute('data-latex'),
@@ -219,6 +225,14 @@ function contentToHtml(src: string): string {
   // Highlights written as ==text== become <mark>.
   const { text: noMath, math } = extractMath(src)
   let prepared = noMath.replace(/==([^=\n]+)==/g, '<mark data-color="rgba(229,192,123,0.35)" style="background-color: rgba(229,192,123,0.35); color: inherit">$1</mark>')
+  // A styled line written as HTML (<p style="text-align: center">**Title**</p>) is passed through
+  // untouched by Markdown, so its **bold** would show as stars: turn that emphasis into tags here.
+  // Code blocks are left exactly as written.
+  prepared = prepared
+    .split(/(^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]*\2[ \t]*$)/m)
+    .map((part, i) => (i % 3 ? part : part.replace(/^[ \t]{0,3}<(p|h[1-6]|div|blockquote|span|li|td|th|strong|em)\b[^\n]*$/gim, (line) => inlineMarkdownInHtml(line))))
+    .filter((_p, i) => i % 3 !== 2)
+    .join('')
   // Put the math back so markdownToHtml handles it the usual way.
   math.forEach((m, i) => {
     prepared = prepared.split(`xx0math${i}xx0`).join(m.display ? `$$${m.latex}$$` : `$${m.latex}$`)
@@ -243,6 +257,9 @@ function inlineMarkdownInHtml(html: string): string {
       i % 2
         ? part
         : part
+            // Read back from a cell, emphasis written inside a styled tag shows escaped (\*\*word\*\*), and the model copies it.
+            .replace(/\\\*\\\*(?=\S)((?:[^*\n\\]|\\(?!\*))*?\S)\\\*\\\*/g, '**$1**')
+            .replace(/\\([*_~])/g, '$1')
             .replace(/\*\*(?=\S)([^*\n]*?\S)\*\*/g, '<strong>$1</strong>')
             .replace(/(^|[^\w_])__(?=\S)([^_\n]*?\S)__(?![\w_])/g, '$1<strong>$2</strong>')
             .replace(/(^|[^\w*])\*(?=\S)([^*\n]*?\S)\*(?![\w*])/g, '$1<em>$2</em>')

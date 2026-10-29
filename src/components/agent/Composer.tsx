@@ -6,6 +6,7 @@ import { AttachmentTray, useAddFiles } from './AttachmentTray'
 import ModelPicker from './ModelPicker'
 import ThinkControl from './ThinkControl'
 import QueueDeck from './QueueDeck'
+import SelChip from './SelChip'
 import { Send, StopI, Mic, Plus, X, AtI, File as FileIcon, Book, Folder, Bolt, QueueI, AudioLines } from '../Icons'
 import { warmVoice } from '../../voice/voiceSession'
 import type { TreeNode } from '../../types'
@@ -230,15 +231,7 @@ const Composer = forwardRef<{ addFiles(files: File[]): void }, { onVoice?(): voi
           )}
           <ThinkControl />
           <ModelPicker />
-          {selection && selection.key !== dismissed && (
-            <span className="ag-sel" title={`${selection.cellTitle ? `In "${selection.cellTitle}": ` : ''}${selection.text.slice(0, 600)}`}>
-              <span className="ag-sel-dot" />
-              <span className="ag-sel-label">{selection.label}</span>
-              <button aria-label="Do not send the selection" title="Don't include this selection" onClick={() => useAgent.getState().dismissSelection()}>
-                <X size={11} />
-              </button>
-            </span>
-          )}
+          {selection && selection.key !== dismissed && <SelChip sel={selection} onDismiss={() => useAgent.getState().dismissSelection()} />}
           <div className="spacer" />
           {busy && !asking ? (
             <span className="ag-send-group">

@@ -260,6 +260,8 @@ export interface RevealOptions {
   nth?: number
   /** Called with where the change ended up, so a later click can find it again. */
   onSpot?: (spot: { anchor: string; nth: number }) => void
+  /** One element in the cell to show instead of text (a picture, an equation). */
+  pick?: (cell: HTMLElement) => HTMLElement | null
 }
 
 /**
@@ -304,13 +306,19 @@ export function scrollToCell(cellId: string, opts: RevealOptions = {}) {
     }
 
     // Where each change is on screen right now, clipped to the cell (a fixed-height cell hides its overflow).
-    type Mark = { boxes: Box[]; kind: 'line' | 'caret' | 'cell' }
+    type Mark = { boxes: Box[]; kind: 'line' | 'caret' | 'cell' | 'node' }
     let lastMarks: Mark[] = []
     const measure = (): Mark[] => {
       const cell = cellEl(cellId)
       if (!cell) return lastMarks
       const cr = cell.getBoundingClientRect()
       const whole: Mark[] = [{ boxes: [{ left: cr.left, top: cr.top, right: cr.right, bottom: cr.bottom }], kind: 'cell' }]
+      const picked = opts.pick?.(cell)
+      if (picked) {
+        const r = picked.getBoundingClientRect()
+        const b = { left: Math.max(r.left, cr.left), top: Math.max(r.top, cr.top), right: Math.min(r.right, cr.right), bottom: Math.min(r.bottom, cr.bottom) }
+        if (b.bottom - b.top > 1 && b.right - b.left > 1) return (lastMarks = [{ boxes: [b], kind: 'node' }])
+      }
       if (!spans) return (lastMarks = whole)
       const ix = indexText(cell)
       if (ix.text.length !== textLen) return lastMarks.length ? lastMarks : (lastMarks = whole)
@@ -343,9 +351,9 @@ export function scrollToCell(cellId: string, opts: RevealOptions = {}) {
       for (const m of marks) {
         for (const l of m.boxes.slice(0, 40)) {
           const bit = document.createElement('div')
-          bit.className = m.kind === 'cell' ? 'agent-reveal-cell' : m.kind === 'caret' ? 'agent-reveal-caret' : 'agent-reveal-line'
-          const padX = m.kind === 'cell' ? 6 : m.kind === 'caret' ? 0 : 3
-          const padY = m.kind === 'cell' ? 6 : 2
+          bit.className = m.kind === 'cell' ? 'agent-reveal-cell' : m.kind === 'node' ? 'agent-reveal-cell node' : m.kind === 'caret' ? 'agent-reveal-caret' : 'agent-reveal-line'
+          const padX = m.kind === 'cell' ? 6 : m.kind === 'node' ? 4 : m.kind === 'caret' ? 0 : 3
+          const padY = m.kind === 'cell' ? 6 : m.kind === 'node' ? 4 : 2
           bit.style.left = `${l.left - hr.left - padX}px`
           bit.style.top = `${l.top - hr.top - padY}px`
           bit.style.width = `${l.right - l.left + padX * 2}px`

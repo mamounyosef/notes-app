@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { thinkSettingOf, useAgent } from '../../agent/store'
-import { MODELS, PROVIDER_LABEL, modelInfo, fmtCtx, fmtDate, paramsLabel, type ModelInfo } from '../../agent/models'
-import { Check, Chevron, ImageI, Gauge } from '../Icons'
+import { MODELS, PROVIDER_LABEL, modelInfo, fmtCtx, fmtDate, paramsLabel, expertsLabel, expertsTitle, type ModelInfo } from '../../agent/models'
+import { Check, Chevron, ImageI, Gauge, Star } from '../Icons'
 import { fmtSec, useSpeeds, type ModelSpeed } from '../../voice/voicePrefs'
 import { runSpeedTest, useSpeedTest } from '../../voice/speedTest'
 import { ThinkTag } from './ThinkControl'
@@ -58,6 +58,31 @@ export default function ModelPicker({ value, onPick, label, voiceThink }: { valu
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const cur = modelInfo(model)
+  // Starred models come first, each part still strongest first.
+  const favSet = new Set(prefs.favModels)
+  const favs = MODELS.filter((m) => favSet.has(m.id))
+  const rest = MODELS.filter((m) => !favSet.has(m.id))
+  // The row that just moved between the parts glows briefly, so the eye can follow it.
+  const [moved, setMoved] = useState<string | null>(null)
+  const pop = useRef<HTMLDivElement>(null)
+
+  const toggleFav = (id: string) => {
+    const now = useAgent.getState().prefs.favModels
+    setPrefs({ favModels: now.includes(id) ? now.filter((f) => f !== id) : [...now, id] })
+    setMoved(id)
+  }
+
+  useEffect(() => {
+    if (!moved) return
+    pop.current?.querySelector(`[data-model="${CSS.escape(moved)}"]`)?.scrollIntoView({ block: 'nearest' })
+    const t = setTimeout(() => setMoved(null), 900)
+    return () => clearTimeout(t)
+  }, [moved, prefs.favModels])
+
+  // Open on the current pick, wherever it sits in the list.
+  useEffect(() => {
+    if (open) pop.current?.querySelector('.mp-opt.sel')?.scrollIntoView({ block: 'nearest' })
+  }, [open])
 
   useEffect(() => {
     if (!open) return
@@ -87,7 +112,7 @@ export default function ModelPicker({ value, onPick, label, voiceThink }: { valu
         <Chevron size={11} className="mp-chev" />
       </button>
       {open && (
-        <div className="mp-pop">
+        <div className="mp-pop" ref={pop}>
           <div className="mp-head">
             {voice ? 'Voice model' : 'Model'} <span className="mp-head-sub">strongest first</span>
             {voice && (
@@ -103,60 +128,104 @@ export default function ModelPicker({ value, onPick, label, voiceThink }: { valu
                 : `Seconds until each model starts talking (${voiceThink ? 'thinking first' : 'quick answers'}), measured on this computer by the speed test and by every voice reply. Separate from the chat's model.`}
             </div>
           )}
-          {MODELS.map((m) => (
-            <button
-              key={m.id}
-              className={`mp-opt ${m.id === model ? 'sel' : ''}`}
-              onClick={() => {
-                if (onPick) onPick(m.id)
-                else setPrefs({ model: m.id })
-                setOpen(false)
-              }}
-            >
-              <div className="mp-row1">
-                <span className="mp-name">{m.name}</span>
-                <span className={`mp-prov ${m.provider}`} title={m.provider === 'openrouter' ? 'Runs on OpenRouter' : 'Runs on Ollama Cloud'}>
-                  {PROVIDER_LABEL[m.provider]}
-                </span>
-                {m.vision && (
-                  <span className="mp-tag" title="Can see images">
-                    <ImageI size={11} /> vision
-                  </span>
-                )}
-                {book && <SpeedBadge s={book[m.id]} other={otherBook?.[m.id]} think={Boolean(voiceThink)} />}
-                {m.id === model && <Check size={13} className="mp-check" />}
-              </div>
-              <div className="mp-row2">
-                <span>{paramsLabel(m)}</span>
-                <span>{fmtCtx(m.context)} context</span>
-                <span>{fmtDate(m.released)}</span>
-              </div>
-              <ThinkTag
-                spec={m.think}
-                provider={PROVIDER_LABEL[m.provider]}
-                // The chat's picker: a level pill picks the model and its thinking in one click (voice keeps its own switch).
-                current={voice ? undefined : thinkSettingOf(prefs, m.id).level}
-                onPick={
-                  voice
-                    ? undefined
-                    : (l) => {
-                        useAgent.getState().setThink(m.id, { level: l, budget: 0 })
-                        if (onPick) onPick(m.id)
-                        else setPrefs({ model: m.id })
-                        setOpen(false)
-                      }
-                }
-              />
-              {m.arch && <div className="mp-arch">{m.arch.join(' · ')}</div>}
-              <div className="mp-row3">
-                <PriceLine m={m} />
-                {m.note && <span className="mp-note">{m.note}</span>}
-              </div>
-            </button>
-          ))}
-          <div className="mp-foot">Ollama prices from ollama.com/pricing; your plan's monthly credits are used first. OpenRouter free models need an OpenRouter key (Settings, Assistant) and allow 50 requests a day.</div>
+          {favs.length > 0 && (
+            <div className="mp-sec fav">
+              <Star size={11} /> Favorites <span className="mp-sec-n">{favs.length}</span>
+            </div>
+          )}
+          {favs.map(row)}
+          {favs.length > 0 && rest.length > 0 && (
+            <div className="mp-sec line">
+              <span>All other models</span>
+            </div>
+          )}
+          {rest.map(row)}
+          <div className="mp-foot">
+            {favs.length === 0 && <span className="mp-foot-hint"><Star size={10} /> Star a model to keep it at the top. </span>}
+            Ollama prices from ollama.com/pricing; your plan's monthly credits are used first. OpenRouter free models need an OpenRouter key (Settings, Assistant) and allow 50 requests a day.
+          </div>
         </div>
       )}
     </div>
   )
+
+  function row(m: ModelInfo) {
+    const fav = favSet.has(m.id)
+    return (
+      <button
+        key={m.id}
+        data-model={m.id}
+        className={`mp-opt ${m.id === model ? 'sel' : ''} ${moved === m.id ? 'moved' : ''}`}
+        onClick={() => {
+          if (onPick) onPick(m.id)
+          else setPrefs({ model: m.id })
+          setOpen(false)
+        }}
+      >
+        <div className="mp-row1">
+          <span className="mp-name">{m.name}</span>
+          <span className={`mp-prov ${m.provider}`} title={m.provider === 'openrouter' ? 'Runs on OpenRouter' : 'Runs on Ollama Cloud'}>
+            {PROVIDER_LABEL[m.provider]}
+          </span>
+          {m.vision && (
+            <span className="mp-tag" title="Can see images">
+              <ImageI size={11} /> vision
+            </span>
+          )}
+          {book && <SpeedBadge s={book[m.id]} other={otherBook?.[m.id]} think={Boolean(voiceThink)} />}
+          {m.id === model && <Check size={13} className="mp-check" />}
+          <span
+            role="button"
+            tabIndex={0}
+            aria-pressed={fav}
+            className={`mp-star ${fav ? 'on' : ''}`}
+            title={fav ? 'Remove from favorites' : 'Add to favorites (keeps it at the top)'}
+            onClick={(e) => {
+              e.stopPropagation()
+              toggleFav(m.id)
+            }}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' && e.key !== ' ') return
+              e.preventDefault()
+              e.stopPropagation()
+              toggleFav(m.id)
+            }}
+          >
+            <Star size={14} />
+          </span>
+        </div>
+        <div className="mp-row2">
+          <span>{paramsLabel(m)}</span>
+          {m.experts && (
+            <span className="mp-experts" title={expertsTitle(m.experts)}>
+              {expertsLabel(m.experts)}
+            </span>
+          )}
+          <span>{fmtCtx(m.context)} context</span>
+          <span>{fmtDate(m.released)}</span>
+        </div>
+        <ThinkTag
+          spec={m.think}
+          provider={PROVIDER_LABEL[m.provider]}
+          // The chat's picker: a level pill picks the model and its thinking in one click (voice keeps its own switch).
+          current={voice ? undefined : thinkSettingOf(prefs, m.id).level}
+          onPick={
+            voice
+              ? undefined
+              : (l) => {
+                  useAgent.getState().setThink(m.id, { level: l, budget: 0 })
+                  if (onPick) onPick(m.id)
+                  else setPrefs({ model: m.id })
+                  setOpen(false)
+                }
+          }
+        />
+        {m.arch && <div className="mp-arch">{m.arch.join(' · ')}</div>}
+        <div className="mp-row3">
+          <PriceLine m={m} />
+          {m.note && <span className="mp-note">{m.note}</span>}
+        </div>
+      </button>
+    )
+  }
 }

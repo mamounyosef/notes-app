@@ -34,6 +34,15 @@ export interface ThinkSpec {
   budget?: boolean
 }
 
+export interface Experts {
+  /** Routed experts in each MoE layer. */
+  total: number
+  /** Routed experts each token goes through. */
+  active: number
+  /** Experts every token always goes through, on top of the routed ones. */
+  shared?: number
+}
+
 export interface ModelInfo {
   id: string
   name: string
@@ -45,6 +54,8 @@ export interface ModelInfo {
   context: number
   /** When the model was published on the service. */
   released: string
+  /** Mixture-of-experts routing per MoE layer, from the model's config. */
+  experts?: Experts
   /** Architecture facts from the model's config or technical report. */
   arch?: string[]
   vision: boolean
@@ -58,9 +69,12 @@ export interface ModelInfo {
 const FREE = { input: 0, cached: 0, output: 0 }
 
 const GEMMA_31B_ARCH = ['60 layers', 'dim 5376', 'GQA: 32 query heads, 16 KV heads', 'sliding window 1024, 10 full-attention layers']
-const ULTRA_ARCH = ['108 layers (48 Mamba-2, 48 MoE, 12 attention)', 'dim 8192', '512 experts + 1 shared, 22 per token', 'LatentMoE (latent 2048)', 'GQA: 64 query heads, 2 KV heads', 'multi-token prediction']
-const SUPER_ARCH = ['88 layers (40 Mamba-2, 40 MoE, 8 attention)', 'dim 4096', '512 experts + 1 shared, 22 per token', 'LatentMoE (latent 1024)', 'GQA: 32 query heads, 2 KV heads', 'multi-token prediction']
-const NANO_ARCH = ['52 layers (23 Mamba-2, 23 MoE, 6 attention)', 'dim 2688', '128 experts + 1 shared, 6 per token', 'GQA: 32 query heads, 2 KV heads']
+const ULTRA_ARCH = ['108 layers (48 Mamba-2, 48 MoE, 12 attention)', 'dim 8192', 'LatentMoE (latent 2048)', 'GQA: 64 query heads, 2 KV heads', 'multi-token prediction']
+const SUPER_ARCH = ['88 layers (40 Mamba-2, 40 MoE, 8 attention)', 'dim 4096', 'LatentMoE (latent 1024)', 'GQA: 32 query heads, 2 KV heads', 'multi-token prediction']
+const NANO_ARCH = ['52 layers (23 Mamba-2, 23 MoE, 6 attention)', 'dim 2688', 'GQA: 32 query heads, 2 KV heads']
+const ULTRA_EXPERTS: Experts = { total: 512, active: 22, shared: 1 }
+const SUPER_EXPERTS: Experts = { total: 512, active: 22, shared: 1 }
+const NANO_EXPERTS: Experts = { total: 128, active: 6, shared: 1 }
 
 export const MODELS: ModelInfo[] = [
   {
@@ -71,6 +85,7 @@ export const MODELS: ModelInfo[] = [
     active: '55B',
     context: 262_144,
     released: '2026-06-04',
+    experts: ULTRA_EXPERTS,
     arch: ULTRA_ARCH,
     vision: false,
     think: { levels: ['off', 'on'], default: 'on' },
@@ -84,6 +99,7 @@ export const MODELS: ModelInfo[] = [
     active: '55B',
     context: 1_000_000,
     released: '2026-06-04',
+    experts: ULTRA_EXPERTS,
     arch: ULTRA_ARCH,
     vision: false,
     // Listed with a budget, but on 26 October 2026 its provider failed every budgeted request: the main process then asks again with the level.
@@ -99,7 +115,8 @@ export const MODELS: ModelInfo[] = [
     active: '23B',
     context: 1_048_576,
     released: '2026-10-16',
-    arch: ['52 layers (3 dense, 49 MoE)', 'dim 5120', '256 experts, 8 per token', 'GQA: 48 query heads, 8 KV heads', 'sliding window 512, 9 global layers'],
+    experts: { total: 256, active: 8 },
+    arch: ['52 layers (3 dense, 49 MoE)', 'dim 5120', 'GQA: 48 query heads, 8 KV heads', 'sliding window 512, 9 global layers'],
     vision: false,
     think: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'max' },
     price: null,
@@ -113,7 +130,8 @@ export const MODELS: ModelInfo[] = [
     active: '~23B',
     context: 1_000_000,
     released: '2026-10-19',
-    arch: ['sparse attention', 'built-in vision encoder', 'always reasons'],
+    experts: { total: 128, active: 4, shared: 1 },
+    arch: ['60 layers', 'dim 6144', 'sparse attention', 'built-in vision encoder', 'always reasons'],
     vision: true,
     think: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'max' },
     price: FREE,
@@ -127,7 +145,8 @@ export const MODELS: ModelInfo[] = [
     active: '16B',
     context: 512_000,
     released: '2026-08-14',
-    arch: ['46 layers (1 dense, 45 MoE)', 'dim 5120', '256 experts + 1 shared, 8 per token', '13 sparse (DSA) + 33 sliding-window attention layers', 'multi-token prediction', 'MoE vision encoder (7B, 1.2B active)'],
+    experts: { total: 256, active: 8, shared: 1 },
+    arch: ['46 layers (1 dense, 45 MoE)', 'dim 5120', '13 sparse (DSA) + 33 sliding-window attention layers', 'multi-token prediction', 'MoE vision encoder (7B, 1.2B active)'],
     vision: true,
     think: { levels: ['off', 'on'] },
     price: FREE,
@@ -141,6 +160,7 @@ export const MODELS: ModelInfo[] = [
     active: '12B',
     context: 1_000_000,
     released: '2026-10-15',
+    experts: SUPER_EXPERTS,
     arch: ['Nemotron-H hybrid (Mamba-2, MoE, attention)', 'RADIO vision encoder', 'multi-token prediction'],
     vision: true,
     think: { levels: ['off', 'on'] },
@@ -155,6 +175,7 @@ export const MODELS: ModelInfo[] = [
     active: '12B',
     context: 262_144,
     released: '2026-03-11',
+    experts: SUPER_EXPERTS,
     arch: SUPER_ARCH,
     vision: false,
     think: { levels: ['off', 'on'], default: 'on' },
@@ -168,6 +189,7 @@ export const MODELS: ModelInfo[] = [
     active: '12B',
     context: 262_144,
     released: '2026-03-11',
+    experts: SUPER_EXPERTS,
     arch: SUPER_ARCH,
     vision: false,
     think: { levels: ['off', 'low', 'medium'], default: 'medium', budget: true },
@@ -181,7 +203,8 @@ export const MODELS: ModelInfo[] = [
     active: '8B',
     context: 262_144,
     released: '2026-07-21',
-    arch: ['48 layers (36 sliding, 12 full)', 'dim 3072', '256 experts, 10 per token', 'GQA: 48 to 72 query heads, 8 KV heads', 'sliding window 512'],
+    experts: { total: 256, active: 10 },
+    arch: ['48 layers (36 sliding, 12 full)', 'dim 3072', 'GQA: 48 to 72 query heads, 8 KV heads', 'sliding window 512'],
     vision: false,
     think: { levels: ['off', 'on'], default: 'on' },
     price: FREE,
@@ -195,7 +218,8 @@ export const MODELS: ModelInfo[] = [
     active: '5.1B',
     context: 131_072,
     released: '2025-08-05',
-    arch: ['36 layers (18 sliding, 18 full)', 'dim 2880', '128 experts, 4 per token', 'GQA: 64 query heads, 8 KV heads', 'sliding window 128'],
+    experts: { total: 128, active: 4 },
+    arch: ['36 layers (18 sliding, 18 full)', 'dim 2880', 'GQA: 64 query heads, 8 KV heads', 'sliding window 128'],
     vision: false,
     think: { levels: ['low', 'medium', 'high'], default: 'medium' },
     price: { input: 0.15, cached: 0.014, output: 0.6 },
@@ -233,7 +257,8 @@ export const MODELS: ModelInfo[] = [
     active: '4B',
     context: 262_144,
     released: '2026-10-16',
-    arch: ['40 layers', 'dim 3584', '64 experts + 1 shared, 4 per token', 'latent attention (MLA style), 32 heads', 'multi-token prediction'],
+    experts: { total: 64, active: 4, shared: 1 },
+    arch: ['40 layers', 'dim 3584', 'latent attention (MLA style), 32 heads', 'multi-token prediction'],
     vision: false,
     think: { levels: ['off', 'on'], default: 'on' },
     price: FREE,
@@ -247,7 +272,8 @@ export const MODELS: ModelInfo[] = [
     active: '3.8B',
     context: 262_144,
     released: '2026-04-03',
-    arch: ['30 layers (25 sliding, 5 full)', 'dim 2816', '128 experts, 8 per token', 'GQA: 16 query heads, 8 KV heads', 'sliding window 1024'],
+    experts: { total: 128, active: 8 },
+    arch: ['30 layers (25 sliding, 5 full)', 'dim 2816', 'GQA: 16 query heads, 8 KV heads', 'sliding window 1024'],
     vision: true,
     think: { levels: ['off', 'on'], default: 'off' },
     price: FREE,
@@ -260,6 +286,7 @@ export const MODELS: ModelInfo[] = [
     active: '3B',
     context: 1_000_000,
     released: '2026-08-11',
+    experts: NANO_EXPERTS,
     arch: [...NANO_ARCH, 'multi-token prediction'],
     vision: false,
     think: { levels: ['off', 'on'] },
@@ -274,6 +301,7 @@ export const MODELS: ModelInfo[] = [
     active: '3B',
     context: 256_000,
     released: '2026-04-28',
+    experts: NANO_EXPERTS,
     arch: [...NANO_ARCH, 'vision and audio encoders'],
     vision: true,
     think: { levels: ['off', 'on'], default: 'on', budget: true },
@@ -288,6 +316,7 @@ export const MODELS: ModelInfo[] = [
     active: '3.2B',
     context: 262_144,
     released: '2025-12-15',
+    experts: NANO_EXPERTS,
     arch: NANO_ARCH,
     vision: false,
     think: { levels: ['off', 'on'], default: 'on' },
@@ -301,7 +330,8 @@ export const MODELS: ModelInfo[] = [
     active: '3.6B',
     context: 131_072,
     released: '2025-08-05',
-    arch: ['24 layers (12 sliding, 12 full)', 'dim 2880', '32 experts, 4 per token', 'GQA: 64 query heads, 8 KV heads', 'sliding window 128'],
+    experts: { total: 32, active: 4 },
+    arch: ['24 layers (12 sliding, 12 full)', 'dim 2880', 'GQA: 64 query heads, 8 KV heads', 'sliding window 128'],
     vision: false,
     think: { levels: ['low', 'medium', 'high'], default: 'medium' },
     price: { input: 0.07, cached: 0.035, output: 0.3 },
@@ -449,4 +479,13 @@ export function fmtMoney(n: number) {
 /** "Dense, 32.7B" or "MoE, 501B total, 23B active". */
 export function paramsLabel(m: Pick<ModelInfo, 'params' | 'active'>) {
   return m.active ? `MoE, ${m.params} total, ${m.active} active` : `Dense, ${m.params}`
+}
+
+/** "22 of 512 experts active + 1 shared": what each token goes through in a MoE layer. */
+export function expertsLabel(e: Experts) {
+  return `${e.active} of ${e.total} experts active${e.shared ? ` + ${e.shared} shared` : ''}`
+}
+
+export function expertsTitle(e: Experts) {
+  return `Each MoE layer has ${e.total} experts; every token goes through ${e.active} of them${e.shared ? `, plus ${e.shared} shared expert${e.shared > 1 ? 's' : ''} every token always uses` : ''}.`
 }

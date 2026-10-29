@@ -10,6 +10,7 @@ import { buildContext } from './context'
 import { SYSTEM_PROMPT, voicePrompt } from './prompt'
 import { TOOL_DEFS, READ_ONLY, eyesFor, TurnRecorder, keepSnapshot, runTool, undoTurn } from './tools'
 import { cellTexts, scrollToCell } from './reveal'
+import { fileToAttachment } from './files'
 import { storage } from '../lib/storage'
 import { useStore, findNode } from '../store'
 import type { LiveSelection } from './selection'
@@ -38,9 +39,11 @@ export interface Prefs {
   /** Thinking picked per model; a model not in here starts at startLevel(). */
   thinkBy: Record<string, ThinkSetting>
   showThinking: boolean
+  /** Starred models, shown first in every model menu (chat and voice share them). */
+  favModels: string[]
 }
 
-const defaultPrefs: Prefs = { open: false, mode: 'pane', width: 400, model: DEFAULT_MODEL, thinkBy: {}, showThinking: true }
+const defaultPrefs: Prefs = { open: false, mode: 'pane', width: 400, model: DEFAULT_MODEL, thinkBy: {}, showThinking: true, favModels: [] }
 
 function loadPrefs(): Prefs {
   try {
@@ -51,6 +54,7 @@ function loadPrefs(): Prefs {
     delete (p as any).think
     // A model that was taken off the list falls back to the default.
     if (!MODELS.some((m) => m.id === p.model)) p.model = DEFAULT_MODEL
+    p.favModels = Array.isArray(raw.favModels) ? raw.favModels.filter((id: unknown) => MODELS.some((m) => m.id === id)) : []
     return p
   } catch {
     return defaultPrefs
@@ -299,6 +303,9 @@ function attachmentText(a: ChatAttachment) {
   return `<attachment name="${a.name}" type="${a.kind}" id="${id}">\n${(a.text || '').slice(0, 120_000)}\n</attachment>`
 }
 
+/** A message's pictures: what was attached, and the note images that were selected when it was sent. */
+const pictured = (m: ChatMessage) => [...(m.attachments || []), ...(m.meta?.selection?.images || [])]
+
 function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): any[] {
   const canSee = modelInfo(model).vision
   // Only the branch being shown: other versions are not part of this conversation.
@@ -306,7 +313,7 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): an
   const lastUserIdx = msgs.map((m) => m.role).lastIndexOf('user')
   // Images only for the last few messages that carried any, to keep requests light.
   const withImages = new Set(
-    msgs.filter((m) => m.role === 'user' && m.attachments?.some((a) => a.kind === 'image' || a.pages?.length)).slice(-4).map((m) => m.id),
+    msgs.filter((m) => m.role === 'user' && pictured(m).some((a) => a.kind === 'image' || a.pages?.length)).slice(-4).map((m) => m.id),
   )
   // Pictures tools handed over: only the last few go along, to keep requests light.
   const toolPics = new Set(msgs.filter((m) => m.role === 'tool' && m.meta?.images?.length).slice(-4).map((m) => m.id))
@@ -315,7 +322,7 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): an
   if (canSee)
     for (const m of msgs)
       if (withImages.has(m.id))
-        for (const a of m.attachments || []) {
+        for (const a of pictured(m)) {
           if (a.kind === 'image') sentPics.add(`sha:${a.sha}`)
           for (const p of (a.pages || []).slice(0, 20)) sentPics.add(`sha:${p}`)
         }
@@ -336,11 +343,12 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): an
       if (m.meta?.quote) parts.push(`The user quoted this from their notes:\n"""${m.meta.quote}"""`)
       if (m.meta?.selection) {
         const s = m.meta.selection
+        const inCell = `cell ${s.cellIds[0] ? `[${s.cellIds[0]}]` : ''}${s.cellTitle ? ` "${s.cellTitle}"` : ''}`
         const where =
-          s.kind === 'text'
-            ? `text in cell ${s.cellIds[0] ? `[${s.cellIds[0]}]` : ''}${s.cellTitle ? ` "${s.cellTitle}"` : ''}`
-            : `cells ${s.cellIds.map((id) => `[${id}]`).join(', ')}`
-        parts.push(`THE USER HAS THIS SELECTED (${where}); "this" most likely means it:\n"""${s.text}"""`)
+          s.kind === 'text' ? `text in ${inCell}` : s.kind === 'image' ? `one image in ${inCell}` : s.kind === 'math' ? `one equation in ${inCell}` : `cells ${s.cellIds.map((id) => `[${id}]`).join(', ')}`
+        const pics = s.images?.length ? `\nThe selected image${s.images.length > 1 ? 's are' : ' is'} attached as ${s.images.map((a) => `attachment:${a.sha}`).join(', ')}.` : ''
+        const exact = s.kind === 'image' || s.kind === 'math' ? ` Act on exactly this ${s.kind === 'image' ? 'image' : 'equation'}, not the others in the cell.` : ''
+        parts.push(`THE USER HAS THIS SELECTED (${where}); "this" most likely means it.${exact}\n"""${s.text}"""${pics}`)
       }
       if (m.meta?.mentions?.length) parts.push(`Mentioned: ${m.meta.mentions.map((x) => `${x.kind} "${x.title}" [${x.id}]`).join(', ')}`)
       for (const a of m.attachments || []) parts.push(attachmentText(a))
@@ -349,7 +357,7 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): an
       const msg: any = { role: 'user', content: parts.join('\n\n') }
       if (withImages.has(m.id)) {
         const imgs: string[] = []
-        for (const a of m.attachments || []) {
+        for (const a of pictured(m)) {
           if (a.kind === 'image') imgs.push(`sha:${a.sha}`)
           for (const p of (a.pages || []).slice(0, 20)) imgs.push(`sha:${p}`)
         }
@@ -642,6 +650,19 @@ export const useAgent = create<AgentState>((set, get) => {
       else mentionPages[m.id] = (await storage.readPage(m.id).catch(() => null))?.data || null
     }
     const ctx = buildContext({ mentions, mentionPages, ignoreSelection: true })
+    // Note images in the selection go along as pixels, so the model sees exactly the one meant.
+    const selImages: ChatAttachment[] = []
+    for (const src of sel?.imageSrcs || []) {
+      try {
+        const res = await fetch(src)
+        if (!res.ok) continue
+        const blob = await res.blob()
+        const name = decodeURIComponent(src.split(/[/?#]/).filter(Boolean).pop() || 'image').slice(0, 60)
+        selImages.push(await fileToAttachment(new File([blob], /\.\w{3,4}$/.test(name) ? name : `${name}.png`, { type: blob.type || 'image/png' })))
+      } catch {
+        /* the text still says which image it is */
+      }
+    }
     // Later than anything already in the chat, even if it came from a computer whose clock runs ahead.
     for (const m of s.chat.messages) lastStamp = Math.max(lastStamp, m.at || 0)
     const first = !s.chat.messages.length
@@ -657,7 +678,18 @@ export const useAgent = create<AgentState>((set, get) => {
         brief: ctx.brief,
         mentions: mentions.length ? mentions : undefined,
         quote: quote || undefined,
-        selection: sel ? { kind: sel.kind, label: sel.label, text: sel.text.slice(0, 12000), cellIds: sel.cellIds, cellTitle: sel.cellTitle } : undefined,
+        selection: sel
+          ? {
+              kind: sel.kind,
+              label: sel.label,
+              text: sel.text.slice(0, 12000),
+              cellIds: sel.cellIds,
+              cellTitle: sel.cellTitle,
+              pageId: sel.pageId,
+              node: sel.node,
+              images: selImages.length ? selImages : undefined,
+            }
+          : undefined,
         ...mark,
       },
     }
@@ -683,7 +715,7 @@ export const useAgent = create<AgentState>((set, get) => {
     setS(id, { busy: true, error: null, since: Date.now(), unread: false })
     const attachmentsOf = () => {
       const map = new Map<string, ChatAttachment>()
-      for (const m of s.chat.messages) for (const a of m.attachments || []) {
+      for (const m of s.chat.messages) for (const a of pictured(m)) {
         map.set(a.sha, a)
         for (const p of a.pages || []) map.set(p, { ...a, sha: p, mime: 'image/png', kind: 'image' })
       }

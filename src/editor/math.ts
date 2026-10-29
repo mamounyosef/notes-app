@@ -59,6 +59,8 @@ function makeNodeView(display: boolean) {
     const dom = document.createElement(display ? 'div' : 'span')
     dom.className = display ? 'math-block' : 'math-inline'
     dom.contentEditable = 'false'
+    // Lets a click on the assistant's selection chip find this exact equation again.
+    dom.dataset.latex = node.attrs.latex
 
     const view = document.createElement(display ? 'div' : 'span')
     view.className = 'math-render'
@@ -365,11 +367,29 @@ function makeNodeView(display: boolean) {
       }
     }
 
+    // The first click picks the equation (so the assistant, copy and delete act
+    // on it); a click on it once picked, a double click or Enter opens the editor.
+    let wasPicked = false
+    const picked = () => {
+      const sel = editor.state.selection as any
+      return !!sel.node && sel.from === getPos()
+    }
+    dom.addEventListener('mousedown', () => {
+      if (!editing) wasPicked = picked()
+    })
     dom.addEventListener('click', (e) => {
+      if (editing) return
+      e.stopPropagation()
+      if (wasPicked || !editor.isEditable) return startEdit()
+      if (!picked()) editor.chain().setNodeSelection(getPos()).focus(undefined, { scrollIntoView: false }).run()
+    })
+    dom.addEventListener('dblclick', (e) => {
       if (editing) return
       e.stopPropagation()
       startEdit()
     })
+    dom.addEventListener('math-edit', () => startEdit())
+    dom.title = 'Click to select, click again (or Enter) to edit'
 
     if (node.attrs.autoEdit) {
       setTimeout(() => {
@@ -387,6 +407,7 @@ function makeNodeView(display: boolean) {
       update(updated: any) {
         if (updated.type.name !== node.type.name) return false
         node = updated
+        dom.dataset.latex = updated.attrs.latex
         if (!editing) render(view, updated.attrs.latex, display)
         return true
       },
@@ -409,6 +430,14 @@ const attrs = {
   },
 }
 
+/** Enter on a picked equation opens its editor instead of replacing it with a new line. */
+function editPickedMath(editor: any) {
+  const sel = editor.state.selection as any
+  if (!sel.node || (sel.node.type.name !== 'inlineMath' && sel.node.type.name !== 'blockMath')) return false
+  ;(editor.view.nodeDOM(sel.from) as HTMLElement | null)?.dispatchEvent(new CustomEvent('math-edit'))
+  return true
+}
+
 export const InlineMath = Node.create({
   name: 'inlineMath',
   group: 'inline',
@@ -423,6 +452,9 @@ export const InlineMath = Node.create({
     node.attrs.latex,
   ],
   addNodeView: () => makeNodeView(false) as any,
+  addKeyboardShortcuts() {
+    return { Enter: () => editPickedMath(this.editor) }
+  },
   addCommands() {
     return {
       insertInlineMath:
@@ -455,6 +487,9 @@ export const BlockMath = Node.create({
     node.attrs.latex,
   ],
   addNodeView: () => makeNodeView(true) as any,
+  addKeyboardShortcuts() {
+    return { Enter: () => editPickedMath(this.editor) }
+  },
   addCommands() {
     return {
       insertBlockMath:

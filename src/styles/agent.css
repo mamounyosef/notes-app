@@ -1302,6 +1302,22 @@
   animation-name: agent-reveal-cell;
 }
 
+/* One picture or equation (a selection chip clicked): a ring that lands on it, then fades. */
+.agent-reveal-cell.node {
+  border-radius: 7px;
+  border-width: 2px;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 18%, transparent);
+  animation-name: agent-reveal-node;
+}
+
+@keyframes agent-reveal-node {
+  0% { opacity: 0; transform: scale(1.12); }
+  14% { opacity: 1; transform: scale(1); }
+  60% { opacity: 1; transform: scale(1); }
+  100% { opacity: 0; transform: scale(1); }
+}
+
 @keyframes agent-reveal-line {
   0% { opacity: 0; }
   15% { opacity: 1; }
@@ -2283,6 +2299,48 @@
   background: transparent;
 }
 
+/* the chip's body: a click glides the page to exactly what was selected */
+.ag-sel button.ag-sel-go {
+  width: auto;
+  height: 100%;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  flex: 0 1 auto;
+}
+.ag-sel button.ag-sel-go:hover { background: none; color: var(--text); }
+.ag-sel button.ag-sel-go:disabled { cursor: default; }
+.ag-sel:has(.ag-sel-go:not(:disabled)):hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line-soft)); }
+.ag-sel.sent:has(.ag-sel-go:not(:disabled)):hover { background: var(--bg-3); }
+.ag-sel:has(.ag-sel-go:not(:disabled):active) { transform: scale(0.98); }
+.ag-sel-dot.math { background: #e5c07b; }
+.ag-sel-thumb {
+  width: 18px;
+  height: 18px;
+  margin-left: -4px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: none;
+  background: var(--bg-4);
+  box-shadow: 0 0 0 1px var(--line-soft);
+}
+.ag-sel-math {
+  max-width: 96px;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text);
+  flex: none;
+  mask-image: linear-gradient(90deg, #000 80%, transparent);
+}
+.ag-sel-math .katex { font-size: 1em; }
+.ag-sel.has-image, .ag-sel.has-math { max-width: 240px; }
+
 /* ---------- model picker ---------- */
 
 .mp { position: relative; }
@@ -2357,7 +2415,8 @@
 
 .mp-row2 {
   display: flex;
-  gap: 10px;
+  flex-wrap: wrap;
+  gap: 0 10px;
   font-size: 11.5px;
   color: var(--text-dim);
   font-variant-numeric: tabular-nums;
@@ -2418,6 +2477,67 @@
   margin-top: 4px;
 }
 
+/* favorites: a star on every row, starred models first, a line under them */
+.mp-star {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-right: -4px;
+  border-radius: 6px;
+  color: var(--text-faint);
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s, color 0.12s, background 0.12s, transform 0.12s;
+}
+.mp-check + .mp-star,
+.mp-speed ~ .mp-star { margin-left: 2px; }
+.mp-opt:hover .mp-star,
+.mp-opt:focus-visible .mp-star,
+.mp-star:focus-visible { opacity: 0.75; }
+.mp-star:hover { opacity: 1; color: #e5c07b; background: color-mix(in srgb, #e5c07b 14%, transparent); }
+.mp-star:active { transform: scale(0.86); }
+.mp-star.on { opacity: 1; color: #e5c07b; }
+.mp-star.on svg { fill: currentColor; }
+.mp-opt.moved .mp-star.on svg { animation: mp-star-pop 0.45s cubic-bezier(0.3, 1.6, 0.5, 1); }
+@keyframes mp-star-pop {
+  0% { transform: scale(0.4) rotate(-40deg); }
+  100% { transform: scale(1) rotate(0); }
+}
+.mp-opt.moved { animation: mp-moved 0.9s ease-out; }
+@keyframes mp-moved {
+  0% { box-shadow: inset 0 0 0 1px color-mix(in srgb, #e5c07b 70%, transparent); background: color-mix(in srgb, #e5c07b 12%, transparent); }
+  100% { box-shadow: inset 0 0 0 1px transparent; }
+}
+
+.mp-sec {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+  padding: 4px 8px 2px;
+}
+.mp-sec.fav { color: #e5c07b; }
+.mp-sec.fav svg { fill: currentColor; }
+.mp-sec-n {
+  font-size: 10px;
+  letter-spacing: 0;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: color-mix(in srgb, #e5c07b 14%, transparent);
+}
+.mp-sec.line { margin: 6px 0 2px; padding: 4px 8px; }
+.mp-sec.line::before,
+.mp-sec.line::after { content: ''; height: 1px; background: var(--line); flex: 1; }
+.mp-sec.line::before { flex: 0 0 6px; }
+.mp-foot-hint { color: var(--text-dim); }
+.mp-foot-hint svg { vertical-align: -1px; }
+
 .ci-stats.two { grid-template-columns: repeat(2, 1fr); margin-top: 0; }
 
 /* ---------- assistant mark (glow orb) ---------- */
@@ -2437,6 +2557,35 @@
 }
 
 .agent-toggle svg { flex: none; }
+
+/* the live orb: the same breathing mark as the weekly planner's assistant */
+.ag-orb { position: relative; display: inline-block; flex: none; isolation: isolate; }
+.ag-orb > span { position: absolute; border-radius: 50%; pointer-events: none; }
+.ag-orb-halo {
+  inset: -22%;
+  z-index: -1;
+  filter: blur(3px);
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent) 55%, transparent) 0%, color-mix(in srgb, var(--accent) 18%, transparent) 45%, transparent 70%);
+}
+.ag-orb-core {
+  inset: 0;
+  background: radial-gradient(circle, #fff 0%, color-mix(in srgb, var(--accent) 45%, #fff) 25%, color-mix(in srgb, var(--accent) 90%, transparent) 70%, transparent 100%);
+}
+.ag-orb-ripple { inset: 0; border: 1.5px solid color-mix(in srgb, var(--accent) 70%, transparent); opacity: 0; }
+.ag-orb.live .ag-orb-core { animation: ag-orb-breathe 4.2s ease-in-out infinite, ag-orb-flicker 3.1s ease-in-out infinite; }
+.ag-orb.live .ag-orb-halo { animation: ag-orb-glow 4.2s ease-in-out infinite; }
+.ag-orb.calm .ag-orb-halo { animation: ag-orb-glow 6s ease-in-out infinite; }
+.ag-orb.busy .ag-orb-core { animation: ag-orb-breathe 1.15s ease-in-out infinite, ag-orb-flicker 0.9s ease-in-out infinite; }
+.ag-orb.busy .ag-orb-halo { animation: ag-orb-glow 1.15s ease-in-out infinite; }
+.ag-orb.busy .ag-orb-ripple { animation: ag-orb-ripple 1.4s cubic-bezier(0.2, 0.6, 0.3, 1) infinite; }
+.ag-orb.busy .ag-orb-ripple.r2 { animation-delay: 0.7s; }
+@keyframes ag-orb-breathe { 0%, 100% { transform: scale(0.94); } 50% { transform: scale(1.04); } }
+@keyframes ag-orb-glow { 0%, 100% { opacity: 0.45; transform: scale(0.9); } 50% { opacity: 0.85; transform: scale(1.12); } }
+@keyframes ag-orb-ripple { 0% { opacity: 0.55; transform: scale(0.7); } 100% { opacity: 0; transform: scale(1.65); } }
+@keyframes ag-orb-flicker { 0%, 100% { opacity: 0.9; } 40% { opacity: 1; } 70% { opacity: 0.8; } }
+@media (prefers-reduced-motion: reduce) {
+  .ag-orb > span { animation: none !important; }
+}
 
 /* The model menu spans the chat box so it never runs off the panel. */
 .mp { position: static; }
