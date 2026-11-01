@@ -345,9 +345,13 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): an
         const s = m.meta.selection
         const inCell = `cell ${s.cellIds[0] ? `[${s.cellIds[0]}]` : ''}${s.cellTitle ? ` "${s.cellTitle}"` : ''}`
         const where =
-          s.kind === 'text' ? `text in ${inCell}` : s.kind === 'image' ? `one image in ${inCell}` : s.kind === 'math' ? `one equation in ${inCell}` : `cells ${s.cellIds.map((id) => `[${id}]`).join(', ')}`
+          s.kind === 'text'
+            ? `text in ${inCell}`
+            : s.kind === 'image' || s.kind === 'math' || s.kind === 'table'
+              ? `one ${s.kind === 'math' ? 'equation' : s.kind} in ${inCell}`
+              : `cells ${s.cellIds.map((id) => `[${id}]`).join(', ')}`
         const pics = s.images?.length ? `\nThe selected image${s.images.length > 1 ? 's are' : ' is'} attached as ${s.images.map((a) => `attachment:${a.sha}`).join(', ')}.` : ''
-        const exact = s.kind === 'image' || s.kind === 'math' ? ` Act on exactly this ${s.kind === 'image' ? 'image' : 'equation'}, not the others in the cell.` : ''
+        const exact = s.kind === 'image' || s.kind === 'math' || s.kind === 'table' ? ` Act on exactly this ${s.kind === 'math' ? 'equation' : s.kind}, not the others in the cell, and leave the rest of the cell as it is.` : ''
         parts.push(`THE USER HAS THIS SELECTED (${where}); "this" most likely means it.${exact}\n"""${s.text}"""${pics}`)
       }
       if (m.meta?.mentions?.length) parts.push(`Mentioned: ${m.meta.mentions.map((x) => `${x.kind} "${x.title}" [${x.id}]`).join(', ')}`)
@@ -796,6 +800,8 @@ export const useAgent = create<AgentState>((set, get) => {
             meta: {
               summary: result.summary,
               ...(result.detail ? { detail: result.detail } : {}),
+              ...(result.changes?.length ? { changes: result.changes } : {}),
+              ...(result.restored?.length ? { restored: result.restored } : {}),
               ok: result.ok,
               ...(result.target ? { target: result.target } : {}),
               ...(result.helper ? { helper: result.helper } : {}),
@@ -1293,6 +1299,8 @@ function labelFor(name: string, chatModel: string) {
     recent_notes: 'Looking at recent notes',
     view_image: 'Reading the image',
     check_drawing: 'Looking at the drawing',
+    read_drawing: 'Reading the drawing',
+    edit_drawing: 'Editing the drawing',
     update_drawing: 'Fixing the drawing',
     create_cells: 'Adding cells',
     update_cell: 'Updating a cell',

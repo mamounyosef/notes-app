@@ -61,6 +61,7 @@ function makeNodeView(display: boolean) {
     dom.contentEditable = 'false'
     // Lets a click on the assistant's selection chip find this exact equation again.
     dom.dataset.latex = node.attrs.latex
+    applyScale(dom, node.attrs.scale)
 
     const view = document.createElement(display ? 'div' : 'span')
     view.className = 'math-render'
@@ -172,7 +173,7 @@ function makeNodeView(display: boolean) {
           finish()
           const pos = typeof getPos === 'function' ? getPos() : null
           if (pos !== null && pos !== undefined) {
-            editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, undefined, { latex, autoEdit: false }))
+            editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, latex, autoEdit: false }))
           }
           render(view, latex, true)
           editor.commands.focus()
@@ -211,7 +212,7 @@ function makeNodeView(display: boolean) {
         textarea.addEventListener('keydown', onKeyDown)
 
         const onDocMouseDown = (e: MouseEvent) => {
-          if (!card.contains(e.target as Node)) {
+          if (!card.contains(e.target as HTMLElement)) {
             commit()
           }
         }
@@ -309,7 +310,7 @@ function makeNodeView(display: boolean) {
           finish()
           const pos = typeof getPos === 'function' ? getPos() : null
           if (pos !== null && pos !== undefined) {
-            editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, undefined, { latex, autoEdit: false }))
+            editor.view.dispatch(editor.view.state.tr.setNodeMarkup(pos, undefined, { ...node.attrs, latex, autoEdit: false }))
           }
           render(view, latex, false)
           editor.commands.focus()
@@ -346,7 +347,7 @@ function makeNodeView(display: boolean) {
         input.addEventListener('keydown', onKeyDown)
 
         const onDocMouseDown = (e: MouseEvent) => {
-          if (!popover.contains(e.target as Node)) {
+          if (!popover.contains(e.target as HTMLElement)) {
             commit()
           }
         }
@@ -408,6 +409,7 @@ function makeNodeView(display: boolean) {
         if (updated.type.name !== node.type.name) return false
         node = updated
         dom.dataset.latex = updated.attrs.latex
+        applyScale(dom, updated.attrs.scale)
         if (!editing) render(view, updated.attrs.latex, display)
         return true
       },
@@ -428,6 +430,26 @@ const attrs = {
     default: false,
     rendered: false,
   },
+  // How big the formula draws against the text around it: 1 = normal. Kept as
+  // data-scale, and as a CSS variable so saved HTML shows it at that size too.
+  scale: {
+    default: 1,
+    parseHTML: (el: HTMLElement) => {
+      const s = parseFloat(el.getAttribute('data-scale') || '')
+      return s > 0 ? s : 1
+    },
+    renderHTML: (a: any) => (a.scale && a.scale !== 1 ? { 'data-scale': String(a.scale), style: `--math-scale: ${a.scale}` } : {}),
+  },
+}
+
+function applyScale(dom: HTMLElement, scale: number) {
+  if (scale && scale !== 1) {
+    dom.dataset.scale = String(scale)
+    dom.style.setProperty('--math-scale', String(scale))
+  } else {
+    delete dom.dataset.scale
+    dom.style.removeProperty('--math-scale')
+  }
 }
 
 /** Enter on a picked equation opens its editor instead of replacing it with a new line. */

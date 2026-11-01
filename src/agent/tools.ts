@@ -10,13 +10,16 @@ import { nanoid } from 'nanoid'
 import { useStore, findNode, findParent, pathTo, walk } from '../store'
 import { storage } from '../lib/storage'
 import { DEFAULT_SETTINGS, type Cell, type Page, type Settings, type TreeNode } from '../types'
-import { agentInlineToHtml, agentToHtml, htmlToAgent, htmlToText, softenMarks } from './content'
+import { agentInlineToHtml, agentToHtml, htmlToAgent, htmlToText, softColor } from './content'
+import { chatChanges, describe, effectLines, effectsOf, guard, ledgerOf, specAttrs, styleText, type Change, type StyleSpec } from './ledger'
 import { buildContext } from './context'
 import { agentApi, chatApi, type ChatAttachment } from './api'
 import { DEFAULT_MODEL, VISION_MODEL, modelInfo } from './models'
 import { buildWidgetDoc, currentTheme, FENCE_OF, fromBase64, KIND_OF_FENCE, kindOf, toBase64, type WidgetKind } from '../widgets/widget'
 import { describeKmap } from '../widgets/kmap'
 import { scrollToCell } from './reveal'
+import { SET_MATH_SIZE_DEF, keepMathScales, mathReport, setMathSize } from './mathSize'
+import { BIG_SOURCE, KEPT_MARK, MAX_FULL_READ, MAX_READ, applySourceEdits, keptIndex, outlineSource, searchSource, sourceProblems, sourceVersion, suspiciousRewrite, type SourceEdit } from './sourceEdit'
 
 const now = () => Date.now()
 const clone = <T,>(v: T): T => JSON.parse(JSON.stringify(v))
@@ -162,6 +165,10 @@ export interface ToolResult {
   helper?: { model: string; ms: number; text: string }
   /** Pictures for a model that can see ("sha:<hash>"): sent to it as real image input with this result. */
   images?: string[]
+  /** What the edit really changed, read through the editor's schema (see ledger.ts). */
+  changes?: Change[]
+  /** What the edit would also have changed, unasked, and was put back. */
+  restored?: Change[]
 }
 
 class ToolError extends Error {}
@@ -430,10 +437,72 @@ function drawingsIn(html: string): Drawing[] {
   }))
 }
 
+/**
+ * What read_cell shows as `format: html`: stored base64 of a big drawing is a
+ * wall of noise that says nothing, so it goes the way of the Markdown read.
+ */
+function hideBigSources(html: string) {
+  return (html || '').replace(/data-html-src="([^"]*)"/g, (m, b64: string) => (b64.length > BIG_SOURCE ? `data-html-src="(kept: use read_drawing)"` : m))
+}
+
+/**
+ * A rewritten cell comes back with the stand-ins of its big drawings: each gets
+ * its real source back. A big drawing that is simply gone stops the write, as a
+ * model working from a cut read must not delete what it never saw.
+ */
+function keepBigDrawings(oldHtml: string, newHtml: string, replacing: boolean, dropAllowed: boolean) {
+  const old = drawingsIn(oldHtml)
+  const html = newHtml.replace(/data-html-src="([^"]*)"/g, (m, b64: string) => {
+    if (b64.length > 2000) return m
+    const n = keptIndex(fromBase64(b64))
+    if (n === null) return m
+    const d = old[n - 1]
+    if (!d) throw new ToolError(`There is no drawing ${n} in this cell to keep.`)
+    return `data-html-src="${toBase64(d.src)}"`
+  })
+  if (replacing && !dropAllowed) {
+    const now = new Set(drawingsIn(html).map((d) => d.src))
+    const lost = old.filter((d) => d.src.length > BIG_SOURCE && !now.has(d.src))
+    if (lost.length) {
+      throw new ToolError(`This would delete or rewrite big drawing ${lost.map((d) => d.index).join(', ')} (${lost[0].src.length} chars). Keep its [source kept] block as it is, and change it with edit_drawing. If the user asked to remove it, call again with drop_drawings: true. Nothing was changed.`)
+    }
+  }
+  return html
+}
+
+/** A cell's HTML with one drawing's source swapped, refused if it moved on since it was read. */
+function withSource(html: string, at: number, was: string, next: string) {
+  const doc = new DOMParser().parseFromString(`<body>${html}</body>`, 'text/html')
+  const el = doc.querySelectorAll('div[data-html-embed]')[at]
+  if (!el || fromBase64(el.getAttribute('data-html-src') || '') !== was) throw new ToolError('The drawing changed while editing; nothing was changed. Read it again.')
+  el.setAttribute('data-html-src', toBase64(next))
+  return doc.body.innerHTML
+}
+
+/** The drawing a tool call is about, read fresh. */
+async function drawingOf(a: Args) {
+  const pid = await pageOfCell(a.cell_id, a.page_id)
+  const c = findCell(await loadPage(pid), a.cell_id)
+  const all = drawingsIn(c.html)
+  if (!all.length) throw new ToolError(`Cell [${c.id}] has no drawing (no mermaid, wavedrom, chart, kmap, graphviz, tikz or widget block).`)
+  const d = all[(Number(a.index) || 1) - 1]
+  if (!d) throw new ToolError(`Cell [${c.id}] has ${all.length} drawing(s); index starts at 1.`)
+  return { pid, c, d }
+}
+
 /** Draws one block off screen, the way the user sees it. */
-async function shootDrawing(d: Drawing, cellWidth: number) {
+async function shootDrawing(d: Drawing, cellWidth: number, fromY = 0) {
   const html = await buildWidgetDoc(d.kind, d.src, currentTheme(document.querySelector('.cell')), { opaque: true })
-  return agentApi.renderWidget({ html, width: Math.max(260, Math.round(d.width || cellWidth - 28)) })
+  return agentApi.renderWidget({ html, width: Math.max(260, Math.round(d.width || cellWidth - 28)), fromY })
+}
+
+/** For a drawing taller than one picture: which stretch this is, and how to see the next. */
+function stretchNote(shot: { height?: number; fullHeight?: number; fromY?: number }) {
+  const whole = shot.fullHeight || 0
+  const top = shot.fromY || 0
+  const bottom = top + (shot.height || 0)
+  if (whole <= bottom && !top) return ''
+  return ` This picture shows y ${top} to ${bottom} of its ${whole}px height.${bottom < whole ? ` See the rest with from_y: ${bottom}.` : ''}`
 }
 
 /** For a K-map: the groups and expression it shows, so the answer written next to it matches. */
@@ -460,7 +529,7 @@ async function drawingReport(cells: { id: string; html: string; w: number }[]): 
       else if (shot.errors?.length) out.push(`${where}: FAILED to draw: ${shot.errors.slice(0, 3).join(' | ').slice(0, 600)}. Fix the source with update_drawing.`)
       else {
         const lint = shot.lint?.length ? ` MEASURED PROBLEMS (fix them with update_drawing): ${shot.lint.join(' ')}` : ' No overlaps or cut off parts measured.'
-        out.push(`${where}: drawn, ${shot.width}x${shot.height}px.${kmapNote(d)}${lint} Call check_drawing to see it.`)
+        out.push(`${where}: drawn, ${shot.width}x${shot.fullHeight || shot.height}px.${kmapNote(d)}${lint} Call check_drawing to see it.`)
       }
     }
   }
@@ -597,6 +666,7 @@ export const TOOL_DEFS = [
     content: str('New content in Markdown (see create_cells). When replacing, start from the cell as it is NOW (read_cell if it changed since you last saw it) and keep its colors, highlights and sizes as inline HTML.'),
     content_mode: { type: 'string', enum: ['replace', 'append', 'prepend'], description: 'How to use content. Default replace.' },
     drop_styles: { type: 'boolean', description: 'Only when the user asked to remove colors/highlights: lets a replace drop them. By default styled text whose style your content left out keeps it.' },
+    drop_drawings: { type: 'boolean', description: 'Only when the user asked to remove a big drawing: lets a replace delete it. By default that is refused.' },
     x: num('New x.'),
     y: num('New y.'),
     w: num('New width.'),
@@ -674,13 +744,59 @@ export const TOOL_DEFS = [
     index: { type: 'number', description: 'Which drawing in the cell, from 1. Default 1.' },
     intended: str('What the drawing should show, in a sentence or two, so missing parts are noticed.'),
     compare_to: str('The original to match: "attachment:<sha>" of the photo the user sent, or an image URL / asset://local/... path.'),
+    from_y: num('For a drawing over 3000px tall: start the picture at this height. The result says when there is more.'),
   }, ['cell_id']),
-  fn('update_drawing', 'Replace the source of one drawing in a cell, leaving the rest of the cell untouched. Use it to fix or change a drawing instead of rewriting the whole cell. The result reports measured problems, like after creating it.', {
+  fn('read_drawing', `Read the source of one drawing, as much of it as you need. With no options: the whole source when it is small, and a map of its parts with offsets when it is over ${BIG_SOURCE} chars ([source kept] blocks in other reads are such drawings). Then read a part with offset and length, or find text with find, which also matches the text as seen on screen. Every result gives the version that edit_drawing needs for offsets.`, {
+    cell_id: str('Cell with the drawing.'),
+    page_id: str('Page of the cell. Omit for the open page.'),
+    index: { type: 'number', description: 'Which drawing in the cell, from 1. Default 1.' },
+    offset: num('Read from this character.'),
+    length: num(`How many characters. Default and most ${MAX_READ}.`),
+    find: str('Find this text: in the source, or else in what the user sees ("K1" finds K<sub>1</sub>). Case-insensitive unless case_sensitive. Gives each place with its offset.'),
+    regex: bool('find is a JavaScript regex over the source.'),
+    case_sensitive: bool('Match case in find.'),
+    full: bool(`The whole source, up to ${MAX_FULL_READ} chars. Only when you truly must see all of it.`),
+  }, ['cell_id']),
+  fn('edit_drawing', 'Change part of a drawing\'s source without resending the rest: the way to change any big drawing, and the best way to make small changes to any drawing. All edits apply or none do, and they are placed against the source as you read it, so they never shift each other. A change that breaks the HTML tags, the JSON or the rendering is refused and nothing changes; the error says what to fix. The rest of the source stays byte for byte.', {
+    cell_id: str('Cell with the drawing.'),
+    page_id: str('Page of the cell. Omit for the open page.'),
+    index: { type: 'number', description: 'Which drawing in the cell, from 1. Default 1.' },
+    version: str('The version from read_drawing. Required with from, to or copy_of.'),
+    edits: {
+      type: 'array',
+      description: 'Each edit is find + replace, or from (+ to) + replace; from alone inserts.',
+      items: {
+        type: 'object',
+        properties: {
+          find: str('Exact source text. Must be there once, unless all, occurrence, or from/to narrow it down.'),
+          replace: str('New text. Empty string deletes.'),
+          all: bool('Change every occurrence.'),
+          occurrence: num('Change only this occurrence, from 1.'),
+          regex: bool('find is a JavaScript regex; replace may use $1.'),
+          from: num('Start offset: limits find to this range, or without find starts the part to replace.'),
+          to: num('End offset (exclusive).'),
+          copy_of: {
+            type: 'object',
+            description: 'Instead of replace: reuse a part of this source, like a repeated section, without typing it. map renames inside the copy.',
+            properties: {
+              from: num('Start offset of the part to copy.'),
+              to: num('End offset (exclusive).'),
+              map: { type: 'array', items: { type: 'object', properties: { find: str('Text in the copy.'), replace: str('New text. Every occurrence changes.') }, required: ['find', 'replace'] } },
+            },
+            required: ['from', 'to'],
+          },
+        },
+      },
+    },
+    dry_run: bool('Only check: says what would change, and changes nothing.'),
+  }, ['cell_id', 'edits']),
+  fn('update_drawing', 'Replace the whole source of one drawing in a cell, leaving the rest of the cell untouched. Use it for a new version of a small drawing; to change part of a drawing use edit_drawing. The result reports measured problems, like after creating it.', {
     cell_id: str('Cell with the drawing.'),
     page_id: str('Page of the cell. Omit for the open page.'),
     index: { type: 'number', description: 'Which drawing in the cell, from 1. Default 1.' },
     source: str('The new source, without the ``` fence lines: Mermaid text, WaveDrom JSON, a kmap object, a Chart.js config, Graphviz DOT, a TikZ picture, or the widget HTML.'),
     kind: { type: 'string', enum: ['mermaid', 'wavedrom', 'chart', 'kmap', 'graphviz', 'tikz', 'widget'], description: 'Change the kind of drawing too. Omit to keep it.' },
+    rewrite: bool('You really mean to replace a big drawing with a much smaller one.'),
   }, ['cell_id', 'source']),
   fn('insert_image','Put an image into a cell or a new cell: an image the user attached in this chat (source "attachment:<sha>"), a rendered PDF page ("attachment:<sha>" of the page image), an image already in the notes ("asset://local/..."), or a web URL.', {
     source: str('attachment:<sha>, asset://local/<name> or https URL.'),
@@ -740,6 +856,7 @@ export const TOOL_DEFS = [
     options: { type: 'array', items: { type: 'string' }, description: '2 to 5 short answer options.' },
     multi: bool('Allow picking several options.'),
   }, ['question']),
+  SET_MATH_SIZE_DEF,
 ]
 
 /* ================================================================== *
@@ -831,6 +948,10 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     return ok(buildContext().full, 'Looked at the screen')
   },
 
+  async set_math_size(a, env) {
+    return setMathSize(a, { pageIdOr, pageOfCell, loadPage, findCell, edit: (id, f, cells) => editPage(env, id, f, cells) })
+  },
+
   async list_tree(a) {
     const st = useStore.getState()
     const roots = a.root_id ? findNode(st.workspace.tree, a.root_id)?.children : st.workspace.tree
@@ -853,7 +974,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const cells = [...p.cells].sort((x, y) => x.y - y.y || x.x - y.x)
     const path = pathTo(useStore.getState().workspace.tree, id).map((n) => n.title).join(' > ')
     const out = [`Page "${p.title}" [${p.id}] in ${path}. ${cells.length} cells.`]
-    for (const c of cells) out.push(`### Cell [${c.id}] "${c.title}" ${JSON.stringify(cellSummary(c))}\n${c.kind === 'ink' ? '(ink drawing)' : htmlToAgent(c.html) || '(empty)'}`)
+    for (const c of cells) out.push(`### Cell [${c.id}] "${c.title}" ${JSON.stringify(cellSummary(c))}\n${c.kind === 'ink' ? '(ink drawing)' : htmlToAgent(c.html) || '(empty)'}${c.kind === 'ink' ? '' : mathReport(c.id, c.html).replace(/^(?=.)/, '\n')}`)
     return { ...ok(out.join('\n\n'), `Read page "${p.title}"`, { pageId: id }), detail: [path, plural(cells.length, 'cell'), factsLine(cells.map((c) => c.html || '').join(''))].filter(Boolean).join(' · ') }
   },
 
@@ -861,8 +982,8 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const pid = await pageOfCell(a.cell_id, a.page_id)
     const p = await loadPage(pid)
     const c = findCell(p, a.cell_id)
-    const body = a.format === 'html' ? c.html : htmlToAgent(c.html)
-    return { ...ok(`Cell [${c.id}] "${c.title}" ${JSON.stringify(cellSummary(c))}\n${body || '(empty)'}`, `Read cell "${c.title || htmlToText(c.html).slice(0, 30)}"`, { pageId: pid, cellId: c.id }), detail: factsLine(c.html) }
+    const body = a.format === 'html' ? hideBigSources(c.html) : htmlToAgent(c.html)
+    return { ...ok(`Cell [${c.id}] "${c.title}" ${JSON.stringify(cellSummary(c))}\n${body || '(empty)'}${mathReport(c.id, c.html).replace(/^(?=.)/, '\n')}`,`Read cell "${c.title || htmlToText(c.html).slice(0, 30)}"`, { pageId: pid, cellId: c.id }), detail: factsLine(c.html) }
   },
 
   async search_notes(a) {
@@ -933,6 +1054,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const id = pageIdOr(a.page_id)
     const specs: Args[] = Array.isArray(a.cells) ? a.cells : a.content !== undefined || a.title !== undefined ? [a] : []
     if (!specs.length) throw new ToolError('cells is empty.')
+    if (specs.some((c) => String(c.content ?? '').includes(KEPT_MARK))) throw new ToolError('A [source kept] block only stands for a drawing in its own cell, so it cannot go in a new cell. To copy that drawing use duplicate_cells.')
     const s = settingsNow()
     const isOpen = useStore.getState().activePageId === id
     let made: Cell[] = []
@@ -962,6 +1084,8 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     let after = null as { id: string; html: string; w: number } | null
     let beforeHtml = ''
     let anchor: string | undefined
+    let effects: Change[] | null = null
+    let restored: Change[] = []
     const s = settingsNow()
     await editPage(env, pid, (p) => {
       const c = findCell(p, a.cell_id)
@@ -969,15 +1093,24 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       const patch: Partial<Cell> = applyStyle(c, a)
       if (a.title !== undefined) { patch.title = String(a.title); changes.push('title'); anchor = anchor || String(a.title) }
       if (a.content !== undefined) {
-        let html = agentToHtml(String(a.content))
-        anchor = htmlToText(html)
         const mode = a.content_mode || 'replace'
+        let html = keepBigDrawings(c.html || '', agentToHtml(String(a.content)), mode === 'replace', Boolean(a.drop_drawings))
+        anchor = htmlToText(html)
         if (mode === 'replace' && !a.drop_styles) {
           const r = keepDroppedStyles(c.html || '', html)
-          html = r.html
+          html = keepMathScales(c.html || '', r.html)
           kept = r.kept
         }
         patch.html = mode === 'append' ? (c.html || '') + html : mode === 'prepend' ? html + (c.html || '') : html
+        // A rewrite may restyle on purpose, but a style that silently fell off unchanged text goes back.
+        // Adding text before or after leaves the old text exactly as it was.
+        if (a.drop_styles) effects = effectsOf(ledgerOf(c.html || '', patch.html))
+        else {
+          const g = guard(c.html || '', patch.html, mode === 'replace' ? (ch) => ch.to === null : () => true, mode !== 'replace')
+          patch.html = g.html
+          effects = effectsOf(g.ledger)
+          restored = g.restored
+        }
         changes.push(mode === 'replace' ? 'content' : `${mode}ed text`)
       }
       for (const k of ['x', 'y', 'w', 'h'] as const) {
@@ -1000,9 +1133,18 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       ? `Your content dropped the color/highlight/size on ${kept.join(', ')}; it was kept. To really remove it, call again with drop_styles: true.`
       : undefined
     const drawings = after ? await drawingReport([after]) : undefined
-    const done = ok({ updated: cid, changed: changes, ...(note ? { note } : {}), ...(drawings ? { drawings } : {}) }, `Updated "${title || 'cell'}"${changes.length ? ` (${changes.join(', ')})` : ''}`, { pageId: pid, cellId: cid, anchor })
+    const fx = effects as Change[] | null
+    const effect = fx ? effectLines(fx, restored) : undefined
+    const done = ok({ updated: cid, changed: changes, ...(note ? { note } : {}), ...(drawings ? { drawings } : {}), ...(effect ? { effect } : {}) }, `Updated "${title || 'cell'}"${changes.length ? ` (${changes.join(', ')})` : ''}`, { pageId: pid, cellId: cid, anchor })
     const html = (after as { html: string } | null)?.html
-    return html === undefined ? done : { ...done, detail: factsLine(html, beforeHtml) + (kept.length ? ' · kept your colors' : '') }
+    if (html === undefined) return done
+    return {
+      ...done,
+      detail: factsLine(html, beforeHtml) + (kept.length || restored.length ? ' · kept your colors' : ''),
+      // Text rewrites show as the word count above; the chat lists style and block changes.
+      ...(fx ? { changes: chatChanges(fx.filter((ch) => ch.kind !== 'text')) } : {}),
+      ...(restored.length ? { restored: chatChanges(restored) } : {}),
+    }
   },
 
   async edit_cell_text(a, env) {
@@ -1012,6 +1154,8 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     let title = ''
     let cid = ''
     let anchor: string | undefined
+    let changes: Change[] = []
+    let restored: Change[] = []
     await editPage(env, pid, (p) => {
       const c = findCell(p, a.cell_id)
       cid = c.id
@@ -1036,6 +1180,13 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
         report.push(`"${e.find}": ${r.count} replaced`)
       }
       if (title === undefined) title = ''
+      // Text edits change text only: styles and block types on the text around them go back.
+      // A style on the new text itself (a replacement written as **bold**) is meant.
+      const written = edits.map((e) => htmlToText(agentInlineToHtml(String(e.replace ?? ''))))
+      const g = guard(c.html, html, (ch) => !written.some((w) => w && w.includes(ch.text)), true)
+      html = g.html
+      changes = effectsOf(g.ledger)
+      restored = g.restored
       return { ...p, cells: p.cells.map((x) => (x.id === c.id ? { ...x, html, updatedAt: now() } : x)) }
     }, [String(a.cell_id)])
     const failed = report.filter((r) => r.includes('NOT FOUND')).length
@@ -1043,44 +1194,62 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const cut = (s: unknown) => { const t = String(s ?? '').replace(/\s+/g, ' ').trim(); return t.length > 28 ? t.slice(0, 27) + '…' : t }
     const shown = edits.slice(0, 3).map((e) => (String(e.replace ?? '').trim() ? `"${cut(e.find)}" → "${cut(e.replace)}"` : `removed "${cut(e.find)}"`))
     const detail = shown.join(' · ') + (edits.length > 3 ? ` · ${edits.length - 3} more` : '') + (failed ? ` · ${failed} not found` : '')
-    return { ...ok(report.join('\n'), `Edited ${edits.length === 1 ? 'text' : `${edits.length} places`} in "${title || 'cell'}"`, { pageId: pid, cellId: cid, anchor }), ok: failed < edits.length, detail }
+    const text = `${report.join('\n')}\n${effectLines(changes, restored)}`
+    return {
+      ...ok(text, `Edited ${edits.length === 1 ? 'text' : `${edits.length} places`} in "${title || 'cell'}"`, { pageId: pid, cellId: cid, anchor }),
+      ok: failed < edits.length,
+      detail,
+      // The text edits already show in the detail line; the chat lists styles and what was put back.
+      changes: chatChanges(changes.filter((ch) => ch.kind !== 'text')),
+      ...(restored.length ? { restored: chatChanges(restored) } : {}),
+    }
   },
 
   async format_text(a, env) {
     const pid = pageIdOr(a.page_id && a.cell_id === '*' ? a.page_id : a.cell_id === '*' ? undefined : await pageOfCell(a.cell_id, a.page_id))
-    const styles: string[] = []
-    if (a.color) styles.push(`color: ${a.color}`)
-    if (a.font_size) styles.push(`font-size: ${Number(a.font_size)}px`)
-    const wrap = (t: string) => {
-      let h = esc(t)
-      if (a.bold) h = `<strong>${h}</strong>`
-      if (a.italic) h = `<em>${h}</em>`
-      if (a.underline) h = `<u>${h}</u>`
-      if (a.strike) h = `<s>${h}</s>`
-      if (styles.length) h = `<span style="${styles.join('; ')}">${h}</span>`
-      if (a.highlight) h = `<mark data-color="${esc(String(a.highlight))}" style="background-color: ${esc(String(a.highlight))}; color: inherit">${h}</mark>`
-      return h
+    // Built the way the editor's toolbar styles text: new styles merge into what is there,
+    // so changing a heading's color keeps its size. The ledger then checks it did only that.
+    const spec: StyleSpec = {
+      ...(a.color ? { color: String(a.color) } : {}),
+      ...(a.font_size ? { fontSize: `${Number(a.font_size)}px` } : {}),
+      ...(a.highlight ? { highlight: softColor(String(a.highlight)) } : {}),
+      ...(a.bold ? { bold: true } : {}),
+      ...(a.italic ? { italic: true } : {}),
+      ...(a.underline ? { underline: true } : {}),
+      ...(a.strike ? { strike: true } : {}),
     }
+    const allowed = specAttrs(spec)
+    if (!allowed.size) throw new ToolError('No style given. Pass color, highlight, bold, italic, underline, strike or font_size.')
+    const whole = a.whole_cell || !a.find
     let total = 0
     const touched: string[] = []
+    const changes: Change[] = []
     await editPage(env, pid, (p) => {
       const targets = a.cell_id === '*' ? p.cells.map((c) => c.id) : [findCell(p, a.cell_id).id]
       return {
         ...p,
         cells: p.cells.map((c) => {
           if (!targets.includes(c.id)) return c
-          const r = a.whole_cell || !a.find
-            ? transformText(c.html, String.raw`\S(?:[\s\S]*\S)?`, { all: true, wrap, regex: true })
-            : transformText(c.html, String(a.find), { all: a.all !== false, wrap, caseSensitive: Boolean(a.case_sensitive) })
+          const r = styleText(c.html, whole ? null : String(a.find), spec, { all: a.all !== false, caseSensitive: Boolean(a.case_sensitive) })
           if (!r.count) return c
+          const l = ledgerOf(c.html, r.html)
+          const stray = [...l.texts, ...l.blocks, ...l.styles.filter((x) => !allowed.has(x.attr || ''))]
+          if (stray.length)
+            throw new ToolError(`Stopped before saving: styling "${c.title || c.id}" would also have changed ${stray.slice(0, 4).map(describe).join('; ')}. Nothing was changed. Report this to the user.`)
           total += r.count
           touched.push(c.id)
-          return { ...c, html: a.highlight ? softenMarks(r.html) : r.html, updatedAt: now() }
+          changes.push(...l.styles)
+          return { ...c, html: r.html, updatedAt: now() }
         }),
       }
     }, a.cell_id === '*' ? undefined : [String(a.cell_id)])
     if (!total) return { ...ok(`"${a.find}" not found.`, `Could not find "${a.find}"`), ok: false }
-    return ok(`Styled ${total} occurrence(s) in ${touched.length} cell(s).`, a.whole_cell || !a.find ? `Styled ${touched.length === 1 ? "the cell" : `${touched.length} cells`}` : `Styled "${a.find}" (${total}x)`, { pageId: pid, cellId: touched[0], anchor: a.find ? String(a.find) : undefined })
+    const effect = effectLines(changes)
+    const same = changes.length ? '' : '\nIt already had that style, so it looks the same as before.'
+    return {
+      ...ok(`Styled ${total} occurrence(s) in ${touched.length} cell(s).\n${effect}${same}`, whole ? `Styled ${touched.length === 1 ? 'the cell' : `${touched.length} cells`}` : `Styled "${a.find}" (${total}x)`, { pageId: pid, cellId: touched[0], anchor: a.find ? String(a.find) : undefined }),
+      changes: chatChanges(changes),
+    }
   },
 
   async delete_cells(a, env) {
@@ -1271,15 +1440,11 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
   },
 
   async check_drawing(a, env) {
-    const pid = await pageOfCell(a.cell_id, a.page_id)
-    const c = findCell(await loadPage(pid), a.cell_id)
-    const all = drawingsIn(c.html)
-    if (!all.length) throw new ToolError(`Cell [${c.id}] has no drawing (no mermaid, wavedrom, chart, kmap, graphviz, tikz or widget block).`)
-    const d = all[(Number(a.index) || 1) - 1]
-    if (!d) throw new ToolError(`Cell [${c.id}] has ${all.length} drawing(s); index starts at 1.`)
-    const shot = await shootDrawing(d, c.w)
+    const { pid, c, d } = await drawingOf(a)
+    const shot = await shootDrawing(d, c.w, Number(a.from_y) || 0)
     if (!shot.ok || !shot.png) throw new ToolError(`Could not draw it (${shot.error || 'no picture'}).`)
     const errors =
+      stretchNote(shot) +
       (shot.errors?.length ? `\nERRORS while drawing: ${shot.errors.join(' | ')}` : '') +
       (shot.lint?.length ? `\nMEASURED PROBLEMS (exact, from the rendered geometry; fix every one): ${shot.lint.join(' ')}` : '\nMeasured: no overlapping text, no lines through text, nothing cut off.') +
       kmapNote(d)
@@ -1323,11 +1488,71 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     }
   },
 
+  async read_drawing(a) {
+    const { pid, c, d } = await drawingOf(a)
+    const src = d.src
+    const version = sourceVersion(src)
+    const head = `Drawing ${d.index} (${FENCE_OF[d.kind]}) in cell [${c.id}]: ${src.length} chars, ${src.split('\n').length} lines, version ${version}.`
+    const done = (body: string, label: string) => ok(`${head}\n${body}`, label, { pageId: pid, cellId: c.id })
+    if (a.find) {
+      let found
+      try {
+        found = searchSource(src, String(a.find), { regex: Boolean(a.regex), caseSensitive: Boolean(a.case_sensitive), from: a.offset, to: a.offset !== undefined && a.length ? Number(a.offset) + Number(a.length) : undefined })
+      } catch (e) {
+        throw new ToolError(String((e as Error).message))
+      }
+      if (!found.total) return done(`"${a.find}" is not in the source or the text on screen.`, 'Searched the drawing')
+      const more = found.total > found.hits.length ? `\nFirst ${found.hits.length} shown. Narrow it with offset and length.` : ''
+      return done(`${found.total} match(es) in the ${found.where}, the match between ⟦ ⟧:\n${found.hits.map((h) => `[${h.at}-${h.end}] ${h.context}`).join('\n')}${more}`, 'Searched the drawing')
+    }
+    if (a.offset !== undefined || a.length !== undefined) {
+      const from = Math.min(src.length, Math.max(0, Number(a.offset) || 0))
+      const to = Math.min(src.length, from + Math.min(MAX_READ, Math.max(1, Number(a.length) || MAX_READ)))
+      return done(`Chars ${from}-${to}:\n${src.slice(from, to)}${to < src.length ? `\n(continues: next offset ${to})` : '\n(end of source)'}`, 'Read part of the drawing')
+    }
+    if (src.length <= BIG_SOURCE || (a.full && src.length <= MAX_FULL_READ)) return done(src, 'Read the drawing')
+    const why = a.full ? `It is over ${MAX_FULL_READ} chars, too big to read at once. ` : ''
+    return done(`${why}Map of its parts, [start-end] offsets, with what each one says:\n${outlineSource(src, d.kind).join('\n')}\nRead a part with offset and length, or find something with find.`, 'Mapped the drawing')
+  },
+
+  async edit_drawing(a, env) {
+    const { pid, c, d } = await drawingOf(a)
+    const edits: SourceEdit[] = Array.isArray(a.edits) ? a.edits : a.find !== undefined || a.from !== undefined ? [a as SourceEdit] : []
+    const r = applySourceEdits(d.src, edits, a.version ? String(a.version) : undefined)
+    if (!r.ok) throw new ToolError(`Nothing was changed.\n${r.errors.join('\n')}`)
+    const problems = sourceProblems(d.src, r.next, d.kind)
+    if (problems.length) throw new ToolError(`Nothing was changed: ${problems.join(' ')} Fix the edit and call again.`)
+    // Drawn before it is saved: a change that stops the drawing from working never reaches the note.
+    const shot = await shootDrawing({ ...d, src: r.next }, c.w).catch(() => null)
+    if (shot?.ok && shot.errors?.length) {
+      const before = await shootDrawing(d, c.w).catch(() => null)
+      if (before?.ok && !before.errors?.length) throw new ToolError(`Nothing was changed: with these edits the drawing fails to draw: ${shot.errors.slice(0, 3).join(' | ').slice(0, 600)}`)
+    }
+    const size = `${d.src.length} to ${r.next.length} chars`
+    if (a.dry_run) return ok(`Would apply ${r.applied} change(s), ${size}, and nothing breaks:\n${r.report.join('\n')}`, 'Tried an edit to the drawing', { pageId: pid, cellId: c.id })
+    let html = ''
+    await editPage(env, pid, (p) => {
+      const cell = findCell(p, c.id)
+      html = withSource(cell.html || '', d.index - 1, d.src, r.next)
+      return { ...p, cells: p.cells.map((x) => (x.id === cell.id ? { ...x, html, updatedAt: now() } : x)) }
+    }, [c.id])
+    const drawings = await drawingReport([{ id: c.id, html, w: c.w }])
+    return ok({ edited: c.id, drawing: d.index, applied: r.applied, size, version: sourceVersion(r.next), places: r.report, ...(drawings ? { drawings } : {}) }, `Edited the drawing in "${c.title || 'cell'}" (${r.applied} ${r.applied === 1 ? 'change' : 'changes'})`, { pageId: pid, cellId: c.id })
+  },
+
   async update_drawing(a, env) {
     const pid = await pageOfCell(a.cell_id, a.page_id)
     const index = Number(a.index) || 1
     const source = String(a.source ?? '').replace(/^\s*(`{3,}|~{3,})[^\n]*\n([\s\S]*?)\n\s*\1\s*$/, '$2')
     if (!source.trim()) throw new ToolError('Give the new source.')
+    if (keptIndex(source) !== null) throw new ToolError('That is the stand-in for the source, not the source. Use read_drawing to see it and edit_drawing to change it.')
+    const current = drawingsIn(findCell(await loadPage(pid), a.cell_id).html)[index - 1]
+    if (current && !a.rewrite && current.src.length > BIG_SOURCE) {
+      const slip = suspiciousRewrite(current.src, source)
+      if (slip) throw new ToolError(`Nothing was changed. ${slip}`)
+      const problems = a.kind ? [] : sourceProblems(current.src, source, current.kind)
+      if (problems.length) throw new ToolError(`Nothing was changed: ${problems.join(' ')} Use edit_drawing to change part of it.`)
+    }
     let title = ''
     let cid = ''
     let after = null as { id: string; html: string; w: number } | null
@@ -1618,4 +1843,4 @@ export async function runTool(name: string, args: Args, env: ToolEnv): Promise<T
 }
 
 /** Tools that only read: they never need an undo point. */
-export const READ_ONLY = new Set(['view_image', 'check_drawing', 'web_search', 'web_fetch', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'recent_notes', 'get_settings', 'ask_user', 'focus'])
+export const READ_ONLY = new Set(['view_image', 'check_drawing', 'read_drawing', 'web_search', 'web_fetch', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'recent_notes', 'get_settings', 'ask_user', 'focus'])

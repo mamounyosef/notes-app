@@ -3,7 +3,7 @@
  * parameters). Two services run them:
  *  - Ollama Cloud: facts from Ollama's /api/show and prices from
  *    ollama.com/pricing (US dollars per million tokens), checked 19 October 2026.
- *  - OpenRouter (free models): context and date added from openrouter.ai's
+ *  - OpenRouter (free models): context from openrouter.ai's
  *    model list, architecture from each model's Hugging Face config.json or
  *    model card, checked 20 October 2026. Free models allow 50 requests a day
  *    on a key without credits.
@@ -52,7 +52,7 @@ export interface ModelInfo {
   /** Active parameters per token for mixture-of-experts models; absent means dense. */
   active?: string
   context: number
-  /** When the model was published on the service. */
+  /** When the model itself was released (its maker's launch or open weights), checked on the web 29 October 2026. */
   released: string
   /** Mixture-of-experts routing per MoE layer, from the model's config. */
   experts?: Experts
@@ -123,21 +123,6 @@ export const MODELS: ModelInfo[] = [
     note: 'Price not listed on Ollama yet.',
   },
   {
-    id: 'minimax/minimax-m3.1-flash:free',
-    name: 'MiniMax M3.1 Flash',
-    provider: 'openrouter',
-    params: '~428B',
-    active: '~23B',
-    context: 1_000_000,
-    released: '2026-10-19',
-    experts: { total: 128, active: 4, shared: 1 },
-    arch: ['60 layers', 'dim 6144', 'sparse attention', 'built-in vision encoder', 'always reasons'],
-    vision: true,
-    think: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'max' },
-    price: FREE,
-    note: 'Newest. Size reported, not confirmed by MiniMax. Also sees video.',
-  },
-  {
     id: 'dots-studio/dots-3-note-preview:free',
     name: 'Dots3-Note Preview',
     provider: 'openrouter',
@@ -182,20 +167,6 @@ export const MODELS: ModelInfo[] = [
     price: { input: 0.015, cached: 0.015, output: 0.6 },
   },
   {
-    id: 'nvidia/nemotron-3-super-120b-a12b:free',
-    name: 'Nemotron 3 Super',
-    provider: 'openrouter',
-    params: '120B',
-    active: '12B',
-    context: 262_144,
-    released: '2026-03-11',
-    experts: SUPER_EXPERTS,
-    arch: SUPER_ARCH,
-    vision: false,
-    think: { levels: ['off', 'low', 'medium'], default: 'medium', budget: true },
-    price: FREE,
-  },
-  {
     id: 'poolside/laguna-s-2.1:free',
     name: 'Laguna S 2.1',
     provider: 'openrouter',
@@ -230,7 +201,7 @@ export const MODELS: ModelInfo[] = [
     provider: 'ollama',
     params: '32.7B',
     context: 262_144,
-    released: '2026-04-02',
+    released: '2026-03-31',
     arch: GEMMA_31B_ARCH,
     vision: true,
     think: { levels: ['off', 'on'], default: 'off' },
@@ -243,7 +214,7 @@ export const MODELS: ModelInfo[] = [
     provider: 'openrouter',
     params: '32.7B',
     context: 262_144,
-    released: '2026-04-02',
+    released: '2026-03-31',
     arch: GEMMA_31B_ARCH,
     vision: true,
     think: { levels: ['off', 'on'], default: 'off' },
@@ -256,7 +227,7 @@ export const MODELS: ModelInfo[] = [
     params: '29B',
     active: '4B',
     context: 262_144,
-    released: '2026-10-16',
+    released: '2026-09-16',
     experts: { total: 64, active: 4, shared: 1 },
     arch: ['40 layers', 'dim 3584', 'latent attention (MLA style), 32 heads', 'multi-token prediction'],
     vision: false,
@@ -271,7 +242,7 @@ export const MODELS: ModelInfo[] = [
     params: '25.2B',
     active: '3.8B',
     context: 262_144,
-    released: '2026-04-03',
+    released: '2026-03-31',
     experts: { total: 128, active: 8 },
     arch: ['30 layers (25 sliding, 5 full)', 'dim 2816', 'GQA: 16 query heads, 8 KV heads', 'sliding window 1024'],
     vision: true,

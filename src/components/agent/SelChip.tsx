@@ -2,7 +2,7 @@ import React, { useMemo } from 'react'
 import katex from 'katex'
 import type { PickedNode, SentSelection } from '../../agent/api'
 import { goToSelection } from '../../agent/selection'
-import { X } from '../Icons'
+import { TableI, X } from '../Icons'
 
 /** A small picture of what is selected: the image itself, or the equation drawn by KaTeX. */
 function Preview({ node }: { node?: PickedNode }) {
@@ -15,6 +15,12 @@ function Preview({ node }: { node?: PickedNode }) {
     }
   }, [node?.type, node?.latex])
   if (node?.type === 'image' && node.src) return <img className="ag-sel-thumb" src={node.src} alt="" draggable={false} />
+  if (node?.type === 'table')
+    return (
+      <span className="ag-sel-table" aria-hidden="true">
+        <TableI size={12} />
+      </span>
+    )
   if (math) return <span className="ag-sel-math" dangerouslySetInnerHTML={{ __html: math }} />
   return <span className={`ag-sel-dot ${node ? node.type : ''}`} />
 }

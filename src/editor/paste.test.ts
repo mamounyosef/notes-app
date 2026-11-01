@@ -1,5 +1,5 @@
 // Run: npm run test:paste
-import { classifyPaste, proseRatio } from './pasteClassify.ts'
+import { classifyPaste, looksLikeHtmlFragment, proseRatio } from './pasteClassify.ts'
 import { extractMath } from './mathExtract.ts'
 
 let failed = 0
@@ -38,6 +38,13 @@ A big shortcut exists. It would not automatically prove P = NP.
 - $NP$ = **Nondeterministic Polynomial time**: problems whose answer can be *checked* quickly.
 
 Status: unsolved. It is a Millennium Prize problem worth $1 million. Most experts believe $P \\neq NP$.`
+
+// Styled HTML with no <html> around it renders; a snippet showing tags stays code.
+const box = '<div style="padding:4px"><b>x</b></div>\n'
+eq('styled fragment renders', looksLikeHtmlFragment(`<div style="margin:0">\n${box}${box}${box}</div>`), true)
+eq('style block fragment renders', looksLikeHtmlFragment('<style>.a{color:red}</style>\n<div class="a"><p>one</p><p>two</p><p>three</p><p>four</p></div>'), true)
+eq('tag snippet stays code', looksLikeHtmlFragment('<div class="card">\n  <h2>Title</h2>\n  <p>Text</p>\n</div>'), false)
+eq('text after the markup is not a fragment', looksLikeHtmlFragment(`<div style="a">${box}${box}${box}</div>\nthat is the layout`), false)
 
 eq('claude answer is markdown', kind(answer), 'markdown')
 eq('claude answer is markdown even with code-styled html', kind(answer, true), 'markdown')

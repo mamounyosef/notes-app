@@ -20,7 +20,7 @@ import { DOMSerializer } from '@tiptap/pm/model'
 import { BlockMath, InlineMath } from './math'
 import { ListAfterBreak } from './listAfterBreak'
 import { htmlToMarkdown, markdownToHtml } from './markdown'
-import { classifyPaste } from './pasteClassify'
+import { classifyPaste, looksLikeHtmlFragment } from './pasteClassify'
 import { latexDocumentToHtml, looksLikeLatexDocument } from './latexDocument'
 import { storage } from '../lib/storage'
 import { useStore } from '../store'
@@ -29,6 +29,7 @@ import { ColumnsKit } from './columns'
 import { WordFormatting } from './wordFormatting'
 import { ConfigurableShortcuts } from './shortcuts'
 import { ClickBelowBlock } from './clickBelow'
+import { TablePick } from './tablePick'
 import { HtmlEmbed, looksLikeHtmlDocument } from './HtmlEmbed'
 import {
   CustomCodeBlockLowlight,
@@ -153,6 +154,13 @@ export const SmartPaste = Extension.create({
               return true
             }
 
+            // Made a whole page so it keeps its own look, free of the widget base styles.
+            if (looksLikeHtmlFragment(text)) {
+              event.preventDefault()
+              ;(editor.commands as any).insertHtmlEmbed(`<!doctype html>\n<html><body>\n${text.trim()}\n</body></html>`)
+              return true
+            }
+
             // Code only when the clipboard is code from end to end (a code block, an editor)
             // or the plain text is a snippet. Prose with an inline `code` span stays Markdown.
             const kind = classifyPaste(text, isWhollyCodeHtml(html), extractLanguageFromHtml(html))
@@ -192,7 +200,7 @@ export const SmartPaste = Extension.create({
                 if (style && /pre/.test(style)) {
                   const walker = doc.createTreeWalker(node, NodeFilter.SHOW_TEXT)
                   const textNodes: Text[] = []
-                  let cur: Node | null
+                  let cur: globalThis.Node | null
                   while ((cur = walker.nextNode())) {
                     if (cur.nodeValue && cur.nodeValue.includes('\n')) {
                       textNodes.push(cur as Text)
@@ -373,7 +381,8 @@ export function buildExtensions(placeholder: string) {
     CustomCodeBlockLowlight,
     DraggableHorizontalRule,
     Underline,
-    TextStyle,
+    // A span inside a styled span keeps the outer size/color unless it sets its own.
+    TextStyle.configure({ mergeNestedSpanStyles: true }),
     Color,
     FontSize,
     Kbd,
@@ -417,6 +426,7 @@ export function buildExtensions(placeholder: string) {
     ThickHorizontalRule,
     HtmlEmbed,
     ClickBelowBlock,
+    TablePick,
     // includeChildren marks the empty line inside a new side column so CSS can hint there.
     Placeholder.configure({ placeholder, includeChildren: true }),
   ]

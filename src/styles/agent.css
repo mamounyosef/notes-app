@@ -422,7 +422,7 @@
 .md th { background: var(--bg-2); }
 .md mark { background: color-mix(in srgb, #ffd75e 35%, transparent); color: inherit; border-radius: 3px; padding: 0 2px; }
 .md hr { border: none; border-top: 1px solid var(--line); margin: 10px 0; }
-.md .katex-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; }
+.md .katex-display { margin: 9px 0;overflow-x: auto; overflow-y: hidden; }
 .md.live > :last-child::after {
   content: '';
   display: inline-block;
@@ -569,6 +569,77 @@
 
 .ag-helper .ag-chev { transform: none; }
 .ag-helper.open .ag-chev { transform: rotate(90deg); }
+
+/* what an edit really changed, read back from the note (ledger.ts) */
+.ag-changes {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin: 0 0 4px 13px;
+  padding: 1px 0 1px 13px;
+  border-left: 2px solid var(--line);
+  font-size: 11.5px;
+  color: var(--text-faint);
+}
+
+.ag-change {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ag-change-on {
+  color: var(--text-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+
+.ag-change-arrow { opacity: 0.6; }
+
+.ag-change del {
+  color: #e06c75;
+  text-decoration-color: color-mix(in srgb, #e06c75 60%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ag-change ins {
+  color: #98c379;
+  text-decoration: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ag-swatch {
+  width: 11px;
+  height: 11px;
+  flex: none;
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text) 25%, transparent);
+}
+
+/* no color: a slashed empty box */
+.ag-swatch.none {
+  background: linear-gradient(135deg, transparent 45%, var(--text-faint) 45% 55%, transparent 55%);
+}
+
+/* a side effect the app caught and put back */
+.ag-change.kept { color: #d19a66; }
+
+.ag-change-tag {
+  flex: none;
+  padding: 0 5px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  background: color-mix(in srgb, #d19a66 18%, transparent);
+  color: #d19a66;
+}
 
 .ag-helper-body {
   margin: 2px 0 4px 13px;
@@ -2339,7 +2410,18 @@
   mask-image: linear-gradient(90deg, #000 80%, transparent);
 }
 .ag-sel-math .katex { font-size: 1em; }
-.ag-sel.has-image, .ag-sel.has-math { max-width: 240px; }
+.ag-sel-table {
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  margin-left: -4px;
+  border-radius: 4px;
+  flex: none;
+  color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+}
+.ag-sel.has-image, .ag-sel.has-math, .ag-sel.has-table { max-width: 240px; }
 
 /* ---------- model picker ---------- */
 

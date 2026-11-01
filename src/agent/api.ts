@@ -19,8 +19,8 @@ export interface ChatAttachment {
 
 /** One picture or equation picked inside a cell: which one, so the agent and a later click find exactly it. */
 export interface PickedNode {
-  type: 'image' | 'math'
-  /** Its place among the cell's images (or equations), 0 first. */
+  type: 'image' | 'math' | 'table'
+  /** Its place among the cell's images (or equations, or tables), 0 first. */
   nth: number
   /** Of how many in the cell. */
   of: number
@@ -29,11 +29,15 @@ export interface PickedNode {
   latex?: string
   /** Block equation (its own line) rather than inline. */
   display?: boolean
+  /** A table's size, and its first row's text to find it again. */
+  rows?: number
+  cols?: number
+  head?: string
 }
 
 /** What the user had selected when sending, as kept with the message. */
 export interface SentSelection {
-  kind: 'text' | 'cells' | 'image' | 'math'
+  kind: 'text' | 'cells' | 'image' | 'math' | 'table'
   label: string
   text: string
   cellIds: string[]
@@ -214,7 +218,7 @@ export const agentApi = {
   complete: (body: unknown): Promise<{ ok: boolean; content?: string; error?: string; switched?: KeySwitch }> =>
     desk?.agent ? desk.agent.complete(withProvider(body)) : Promise.resolve({ ok: false }),
   /** Draws an HTML block off screen: a PNG (base64) of it, its size and the errors it reported. */
-  renderWidget: (body: { html: string; width?: number }): Promise<{ ok: boolean; png?: string; width?: number; height?: number; errors?: string[]; lint?: string[]; done?: boolean; error?: string }> =>
+  renderWidget: (body: { html: string; width?: number; fromY?: number }): Promise<{ ok: boolean; png?: string; width?: number; height?: number; fullHeight?: number; fromY?: number; errors?: string[]; lint?: string[]; done?: boolean; error?: string }> =>
     desk?.agent?.renderWidget ? desk.agent.renderWidget(body) : Promise.resolve({ ok: false, error: 'Checking a drawing needs the desktop app.' }),
   onChunk: (cb: (reqId: string, chunk: any) => void): (() => void) => (desk?.agent ? desk.agent.onChunk(cb) : () => {}),
   web: (kind: 'search' | 'fetch', arg: unknown): Promise<{ ok: boolean; data?: any; error?: string }> =>

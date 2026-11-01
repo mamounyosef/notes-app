@@ -9,11 +9,14 @@ import { useActiveEditor } from '../editor/activeEditor'
 import { htmlToAgent } from './content'
 import { useAgent } from './store'
 import type { PickedNode } from './api'
+import { getHTMLFromFragment } from '@tiptap/core'
+import { Fragment } from '@tiptap/pm/model'
+import { TextSelection } from '@tiptap/pm/state'
 
 export interface LiveSelection {
   /** Changes whenever the selection changes, so a dismissal lasts only for that selection. */
   key: string
-  kind: 'text' | 'cells' | 'image' | 'math'
+  kind: 'text' | 'cells' | 'image' | 'math' | 'table'
   text: string
   cellIds: string[]
   label: string
@@ -36,6 +39,9 @@ function cellOf(node: Node | null): string | null {
 
 const isMath = (n: any) => n.type.name === 'inlineMath' || n.type.name === 'blockMath'
 const isImage = (n: any) => n.type.name === 'image'
+const isTable = (n: any) => n.type.name === 'table'
+const kindOf = (n: any) => (isImage(n) ? 'image' : isMath(n) ? 'math' : isTable(n) ? 'table' : null)
+const WORD = { image: 'image', math: 'equation', table: 'table' } as const
 
 /** How leaf nodes read in selected text: equations as LaTeX, pictures as a marker, instead of nothing. */
 const leafText = (n: any) =>
@@ -43,17 +49,20 @@ const leafText = (n: any) =>
 
 /** The picked picture or equation: which one it is in the cell, and the words around it. */
 function pickedNode(doc: any, pos: number, node: any) {
-  const same = isImage(node) ? isImage : isMath
+  const type = kindOf(node)!
   let nth = 0
   let of = 0
   doc.descendants((n: any, p: number) => {
-    if (!same(n)) return
+    if (kindOf(n) !== type) return
     if (p < pos) nth++
     of++
   })
-  const picked: PickedNode = isImage(node)
-    ? { type: 'image', nth, of, src: node.attrs.src || '', alt: node.attrs.alt || undefined }
-    : { type: 'math', nth, of, latex: node.attrs.latex || '', display: node.type.name === 'blockMath' }
+  const picked: PickedNode =
+    type === 'image'
+      ? { type, nth, of, src: node.attrs.src || '', alt: node.attrs.alt || undefined }
+      : type === 'math'
+        ? { type, nth, of, latex: node.attrs.latex || '', display: node.type.name === 'blockMath' }
+        : { type, nth, of, rows: node.childCount, cols: node.firstChild?.childCount || 0, head: (node.firstChild?.textContent || '').slice(0, 200) }
   const before = doc.textBetween(Math.max(0, pos - 240), pos, '\n', leafText).trim()
   const after = doc.textBetween(pos + node.nodeSize, Math.min(doc.content.size, pos + node.nodeSize + 240), '\n', leafText).trim()
   return { picked, before, after }
@@ -73,28 +82,59 @@ export function readSelection(): LiveSelection | null {
     const doc = ed.state.doc
     const node = sel.node
     cellId = cellOf(ed.view?.dom) || st.editingCellId
-    const picked = node && (isImage(node) || isMath(node))
-    // A picture or equation picked in a cell you have since left is not the selection any more.
+    const picked = node && kindOf(node)
+    // A picture, equation or table picked in a cell you have since left is not the selection any more.
     const live = ed.isFocused || cellId === st.editingCellId || !!document.activeElement?.closest('.agent-panel, .math-inline, .math-block')
     if (picked && live) {
       const cell = st.page?.cells.find((c) => c.id === cellId)
       const { picked, before, after } = pickedNode(doc, from, node)
-      const where = `${picked.of > 1 ? `${ordinal(picked.nth + 1)} of ${plural(picked.of, picked.type === 'image' ? 'image' : 'equation')} in` : 'in'} cell ${cellId ? `[${cellId}]` : ''}${cell?.title ? ` "${cell.title}"` : ''}`
+      const where = `${picked.of > 1 ? `${ordinal(picked.nth + 1)} of ${plural(picked.of, WORD[picked.type])} in` : 'in'} cell ${cellId ? `[${cellId}]` : ''}${cell?.title ? ` "${cell.title}"` : ''}`
+      const inTable: string[] = []
+      if (picked.type === 'table') node.descendants((n: any) => void (isImage(n) && n.attrs.src && inTable.push(n.attrs.src)))
       const what =
         picked.type === 'image'
           ? `the image ![${picked.alt || 'image'}](${picked.src}), the ${where}.`
-          : `the ${picked.display ? 'block' : 'inline'} equation ${picked.display ? `$$${picked.latex}$$` : `$${picked.latex}$`}, the ${where}.`
+          : picked.type === 'math'
+            ? `the ${picked.display ? 'block' : 'inline'} equation ${picked.display ? `$$${picked.latex}$$` : `$${picked.latex}$`}, the ${where}.`
+            : `the whole table (${picked.rows} rows x ${picked.cols} columns), the ${where}:\n${htmlToAgent(getHTMLFromFragment(Fragment.from(node), ed.schema))}`
       return {
-        key: `n:${cellId}:${from}:${picked.type}:${(picked.src || picked.latex || '').slice(-80)}`,
+        key: `n:${cellId}:${from}:${picked.type}:${(picked.src || picked.latex || picked.head || '').slice(-80)}:${node.nodeSize}`,
         kind: picked.type,
         text: `${what}${before ? `\nRight before it: """${before.slice(-240)}"""` : ''}${after ? `\nRight after it: """${after.slice(0, 240)}"""` : ''}`,
         cellIds: cellId ? [cellId] : [],
         cellTitle: cell?.title || undefined,
         pageId: st.page?.id,
         node: picked,
-        imageSrcs: picked.type === 'image' && picked.src ? [picked.src] : [],
-        label: picked.type === 'image' ? (picked.alt ? `Image "${picked.alt.slice(0, 20)}"` : 'Image') : picked.display ? 'Equation' : 'Inline equation',
+        imageSrcs: picked.type === 'image' && picked.src ? [picked.src] : [...new Set(inTable)].slice(0, 4),
+        label:
+          picked.type === 'image'
+            ? picked.alt ? `Image "${picked.alt.slice(0, 20)}"` : 'Image'
+            : picked.type === 'math'
+              ? picked.display ? 'Equation' : 'Inline equation'
+              : `Table ${picked.rows} x ${picked.cols}`,
       }
+    }
+    // Cells dragged across in a table: their text, row by row.
+    if (sel.$anchorCell && !picked) {
+      const rows = new Map<number, string[]>()
+      let n = 0
+      sel.forEachCell((c: any, p: number) => {
+        const row = doc.resolve(p).index(doc.resolve(p).depth - 1)
+        rows.set(row, [...(rows.get(row) || []), doc.textBetween(p, p + c.nodeSize, ' ', leafText).trim()])
+        n++
+      })
+      const cell = st.page?.cells.find((c) => c.id === cellId)
+      const t = [...rows.values()].map((r) => `| ${r.join(' | ')} |`).join('\n')
+      if (t.trim())
+        return {
+          key: `tc:${cellId}:${from}:${to}`,
+          kind: 'text',
+          text: `These table cells (selected in a table, row by row):\n${t}`,
+          cellIds: cellId ? [cellId] : [],
+          cellTitle: cell?.title || undefined,
+          pageId: st.page?.id,
+          label: `${plural(n, 'table cell')} selected`,
+        }
     }
     if (to > from && !picked) {
       text = doc.textBetween(from, to, '\n', leafText)
@@ -165,15 +205,16 @@ export function trackSelection() {
   }
   const onDom = () => update()
   document.addEventListener('selectionchange', onDom)
-  // A picked equation or picture stays picked in its editor after the editor loses focus:
-  // a click anywhere else (empty canvas, another cell, the toolbar) lets go of it.
+  // A picked equation, picture or table stays picked in its editor after the editor loses
+  // focus: a click anywhere else (empty canvas, another cell, the toolbar) lets go of it.
   const onDown = (e: PointerEvent) => {
     const ed = useActiveEditor.getState().editor as any
     const node = ed && !ed.isDestroyed ? ed.state.selection.node : null
-    if (!node || !(isImage(node) || isMath(node))) return
+    if (!node || !kindOf(node)) return
     const t = e.target as HTMLElement | null
-    if (!t || ed.view.dom.contains(t) || t.closest('.agent-panel, .math-inline-popover, .math-block-editor, .popover, .lb')) return
-    ed.commands.setTextSelection(ed.state.selection.to)
+    if (!t || ed.view.dom.contains(t) || t.closest('.agent-panel, .math-inline-popover, .math-block-editor, .popover, .lb, .table-pick')) return
+    const { state } = ed.view
+    ed.view.dispatch(state.tr.setSelection(TextSelection.near(state.doc.resolve(state.selection.to))))
     update(true)
   }
   document.addEventListener('pointerdown', onDown, true)
@@ -193,9 +234,10 @@ export function trackSelection() {
 
 /** The element of a picked picture or equation in a cell: the same one when it is still there. */
 function nodeEl(cell: HTMLElement, node: PickedNode): HTMLElement | null {
-  const all = [...cell.querySelectorAll<HTMLElement>(node.type === 'image' ? '.ProseMirror img' : '.math-inline, .math-block')]
-  const value = (el: HTMLElement) => (node.type === 'image' ? el.getAttribute('src') : el.dataset.latex) || ''
-  const want = node.type === 'image' ? node.src : node.latex
+  const all = [...cell.querySelectorAll<HTMLElement>(node.type === 'image' ? '.ProseMirror img' : node.type === 'math' ? '.math-inline, .math-block' : '.ProseMirror table')]
+  const value = (el: HTMLElement) =>
+    (node.type === 'image' ? el.getAttribute('src') : node.type === 'math' ? el.dataset.latex : el.querySelector('tr')?.textContent?.slice(0, 200)) || ''
+  const want = node.type === 'image' ? node.src : node.type === 'math' ? node.latex : node.head
   const same = all.filter((el) => value(el) === want)
   // Several alike: the one nearest the place it had.
   if (same.length) return same.reduce((best, el) => (Math.abs(all.indexOf(el) - node.nth) < Math.abs(all.indexOf(best) - node.nth) ? el : best))

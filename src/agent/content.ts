@@ -6,6 +6,7 @@
 import TurndownService from 'turndown'
 import { markdownToHtml, extractMath, escapeAttr } from '../editor/markdown'
 import { FENCE_OF, KIND_OF_FENCE, fromBase64, kindOf, toBase64 } from '../widgets/widget'
+import { BIG_SOURCE, keptStub } from './sourceEdit'
 
 const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', hr: '---' })
 
@@ -114,7 +115,9 @@ td.addRule('widget', {
       el.getAttribute('data-height') && `height=${el.getAttribute('data-height')}`,
       el.getAttribute('data-align') && `align=${el.getAttribute('data-align')}`,
     ].filter(Boolean)
-    const body = fromBase64(el.getAttribute('data-html-src') || '')
+    const full = fromBase64(el.getAttribute('data-html-src') || '')
+    // A big source stays out of every read, so one drawing cannot fill the model's context.
+    const body = full.length > BIG_SOURCE ? keptStub([...el.ownerDocument.querySelectorAll('[data-html-embed]')].indexOf(el) + 1, full.length) : full
     const fence = body.includes('```') ? '~~~~' : '```'
     return `\n\n${fence}${FENCE_OF[kind]}${opts.length ? ' ' + opts.join(' ') : ''}\n${body}\n${fence}\n\n`
   },
@@ -133,8 +136,11 @@ export function htmlToAgent(html: string): string {
     // Math nodes are empty elements that Turndown would drop, and it would
     // escape the backslashes of LaTeX: swap them for tokens and put them back.
     const math: string[] = []
-    const prepared = html.replace(/<(span|div)\b[^>]*\bdata-latex="([^"]*)"[^>]*>[\s\S]*?<\/\1>/g, (_m, tag: string, tex: string) => {
-      math.push(tag === 'div' ? `\n\n$$${unattr(tex)}$$\n\n` : `$${unattr(tex)}$`)
+    const prepared = html.replace(/<(span|div)\b[^>]*\bdata-latex="([^"]*)"[^>]*>[\s\S]*?<\/\1>/g, (m: string, tag: string, tex: string) => {
+      // A formula drawn bigger or smaller says so right after it: $$x$${scale=1.5}
+      const s = parseFloat(/\sdata-scale="([^"]*)"/.exec(m)?.[1] || '')
+      const size = s > 0 && s !== 1 ? `{scale=${s}}` : ''
+      math.push(tag === 'div' ? `\n\n$$${unattr(tex)}$$${size}\n\n` : `$${unattr(tex)}$${size}`)
       return tag === 'div' ? `<p>MATHTOKEN${math.length - 1}X</p>` : `MATHTOKEN${math.length - 1}X`
     })
     let md = td.turndown(prepared)
@@ -235,7 +241,12 @@ function contentToHtml(src: string): string {
     .join('')
   // Put the math back so markdownToHtml handles it the usual way.
   math.forEach((m, i) => {
-    prepared = prepared.split(`xx0math${i}xx0`).join(m.display ? `$$${m.latex}$$` : `$${m.latex}$`)
+    // $$x$${scale=1.5} keeps a formula's size: carried through as a marker at the start of its LaTeX.
+    prepared = prepared.replace(new RegExp(`xx0math${i}xx0(?:\\{\\s*(?:scale|size)\\s*=\\s*([\\d.]+)\\s*x?\\s*\\})?`, 'g'), (_t, s?: string) => {
+      const scale = parseFloat(s || '')
+      const tex = scale > 0 && scale !== 1 ? `${SCALE_MARK}${Math.min(4, Math.max(0.5, scale))}${SCALE_MARK}${m.latex}` : m.latex
+      return m.display ? `$$${tex}$$` : `$${tex}$`
+    })
   })
   // Display math alone in a paragraph would leave empty lines around it.
   return softenMarks(markdownToHtml(prepared))
@@ -243,7 +254,10 @@ function contentToHtml(src: string): string {
     .replace(/(?:<br>\s*)?(<div data-latex="[^"]*"><\/div>)\s*<\/p>/g, '</p>$1')
     .replace(/<p>\s*<\/p>/g, '')
     .replace(/>\s*\n\s*</g, '><')
+    .replace(new RegExp(`<(div|span) data-latex="${SCALE_MARK}([\\d.]+)${SCALE_MARK}`, 'g'), '<$1 data-scale="$2" style="--math-scale: $2" data-latex="')
 }
+
+const SCALE_MARK = 'zzmathscalezz'
 
 /**
  * Models mix the two forms: <span style="color:...">**word**</span>. Markdown
@@ -271,10 +285,17 @@ function inlineMarkdownInHtml(html: string): string {
 /** Solid highlight colors become translucent, so the text on them stays readable in every theme. */
 export function softenMarks(html: string): string {
   return html.replace(/<mark data-color="#([0-9a-f]{6})"(?: style="[^"]*")?>/gi, (_m, hex: string) => {
-    const n = parseInt(hex, 16)
-    const c = `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0.35)`
+    const c = softColor(`#${hex}`)
     return `<mark data-color="${c}" style="background-color: ${c}; color: inherit">`
   })
+}
+
+/** "#e5c07b" → "rgba(229,192,123,0.35)"; anything else as given. */
+export function softColor(color: string): string {
+  const m = /^#([0-9a-f]{6})$/i.exec(color.trim())
+  if (!m) return color
+  const n = parseInt(m[1], 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},0.35)`
 }
 
 /** Inline content (no wrapping paragraph), for replacements inside a line. */

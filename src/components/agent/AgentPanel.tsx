@@ -9,6 +9,7 @@ import { pathTo, useStore } from '../../store'
 import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
 import Composer from './Composer'
 import SelChip from './SelChip'
+import ChangeList from './ChangeList'
 import { RunMark, SessionStrip, runLine } from './Sessions'
 import { AttachmentTray, useAddFiles } from './AttachmentTray'
 import { ContextRing, ContextInspector } from './ContextMeter'
@@ -201,6 +202,13 @@ function ToolChip({ m }: { m: ChatMessage }) {
             ))}
           </div>
         )}
+      </div>
+    )
+  if (!helper && (meta?.changes?.length || meta?.restored?.length))
+    return (
+      <div className="ag-tool-row">
+        {chip}
+        <ChangeList changes={meta.changes} restored={meta.restored} />
       </div>
     )
   if (!helper) return chip

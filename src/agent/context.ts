@@ -7,6 +7,7 @@
 import { useStore, pathTo, walk, findNode } from '../store'
 import { useActiveEditor } from '../editor/activeEditor'
 import { htmlToAgent, htmlToText } from './content'
+import { mathReport } from './mathSize'
 import type { Cell, TreeNode } from '../types'
 
 /** Last place the mouse was over the page, in page coordinates. */
@@ -202,7 +203,8 @@ export function buildContext(opts: { mentions?: { id: string; kind: string }[]; 
       const head = `### Cell [${c.id}] "${c.title || ''}" - ${state}\n${cellLine(c)}`
       const long = md.length > 12000
       const body = long ? `${md.slice(0, 12000)}\n...(cut, ${md.length} chars; use read_cell for all of it)` : md
-      all.push(`${head}\n${body || '(empty)'}`)
+      const math = c.kind === 'ink' ? '' : mathReport(c.id, c.html, 12)
+      all.push(`${head}\n${body || '(empty)'}${math ? `\n${math}` : ''}`)
       if (v?.state === 'full') visible.push(`[${c.id}] "${c.title || htmlToText(c.html).slice(0, 50)}"`)
       if (v?.state === 'partial') {
         visible.push(`[${c.id}] "${c.title || ''}" (partly)`)

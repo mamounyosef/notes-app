@@ -611,7 +611,7 @@ export function setupAgent(opts: {
    * Draws an HTML block off screen and returns a picture of it, its size and
    * any errors it reported, so the agent can check a diagram it just made.
    */
-  ipcMain.handle('agent:renderWidget', async (_e, body: { html: string; width?: number }) => {
+  ipcMain.handle('agent:renderWidget', async (_e, body: { html: string; width?: number; fromY?: number }) => {
     const width = Math.max(240, Math.min(1600, Math.round(Number(body?.width) || 760)))
     const file = path.join(app.getPath('temp'), `notes-widget-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.html`)
     const win = new BrowserWindow({
@@ -631,13 +631,20 @@ export function setupAgent(opts: {
         await new Promise((r) => setTimeout(r, 150))
         info = await win.webContents.executeJavaScript('window.__widget || null', true).catch(() => null)
       }
-      const height = Math.max(40, Math.min(3000, Math.ceil(info?.h || 400) + 4))
+      // One picture shows at most 3000px; a taller drawing is seen a stretch at a time.
+      const fullHeight = Math.max(40, Math.ceil(info?.h || 400) + 4)
+      const height = Math.min(3000, fullHeight)
+      const fromY = Math.max(0, Math.min(fullHeight - height, Math.round(Number(body?.fromY) || 0)))
       win.setContentSize(width, height)
       await new Promise((r) => setTimeout(r, 350))
       // Measured problems (overlaps, lines through text, parts cut off), at the final size.
       const lint = await win.webContents.executeJavaScript('window.__lint ? window.__lint() : []', true).catch(() => [])
+      if (fromY) {
+        await win.webContents.executeJavaScript(`scrollTo(0, ${fromY})`, true).catch(() => {})
+        await new Promise((r) => setTimeout(r, 120))
+      }
       const img = await win.webContents.capturePage()
-      return { ok: true, png: img.toPNG().toString('base64'), width, height, errors: info?.errors || [], lint: Array.isArray(lint) ? lint : [], done: Boolean(info?.done) }
+      return { ok: true, png: img.toPNG().toString('base64'), width, height, fullHeight, fromY, errors: info?.errors || [], lint: Array.isArray(lint) ? lint : [], done: Boolean(info?.done) }
     } catch (e: any) {
       return { ok: false, error: e?.message || String(e) }
     } finally {

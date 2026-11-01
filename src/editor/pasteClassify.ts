@@ -124,6 +124,20 @@ export function looksLikeCode(text: string): { isCode: boolean; language: string
 }
 
 /**
+ * A finished piece of styled HTML without <html>/<head> (what AI tools write): the
+ * whole text is markup that carries its own look. A short snippet that only shows
+ * some tags has no such styling, so it stays code.
+ */
+export function looksLikeHtmlFragment(text: string): boolean {
+  const t = (text || '').trim()
+  if (!/^<(?:div|section|article|main|table|figure|center|style)\b/i.test(t)) return false
+  if (!/<\/[a-z][a-z0-9-]*>$/i.test(t)) return false
+  const tags = (t.match(/<[a-z][a-z0-9-]*\b/gi) || []).length
+  const styled = (t.match(/<[a-z][^<>]*\sstyle\s*=/gi) || []).length
+  return tags >= 6 && (styled >= 3 || /<style[\s>]/i.test(t))
+}
+
+/**
  * Checks if the text has mixed markdown prose around code blocks
  * (in which case it should be processed by the full markdown parser).
  */

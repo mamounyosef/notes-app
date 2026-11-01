@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-type WidgetShot = { ok: boolean; png?: string; width?: number; height?: number; errors?: string[]; lint?: string[]; done?: boolean; error?: string }
+type WidgetShot = { ok: boolean; png?: string; width?: number; height?: number; fullHeight?: number; fromY?: number; errors?: string[]; lint?: string[]; done?: boolean; error?: string }
 
 const api = {
   isDesktop: true,
@@ -103,7 +103,7 @@ const api = {
     web: (kind: 'search' | 'fetch', arg: unknown) =>
       ipcRenderer.invoke('agent:web', kind, arg) as Promise<{ ok: boolean; data?: any; error?: string }>,
     complete: (body: unknown) => ipcRenderer.invoke('agent:complete', body) as Promise<{ ok: boolean; content?: string; error?: string; switched?: { provider: string; key: number; keys: number; reason: string } }>,
-    renderWidget: (body: { html: string; width?: number }) => ipcRenderer.invoke('agent:renderWidget', body) as Promise<WidgetShot>,
+    renderWidget: (body: { html: string; width?: number; fromY?: number }) => ipcRenderer.invoke('agent:renderWidget', body) as Promise<WidgetShot>,
     /** Streamed chunks of a running chat request. Returns an unsubscribe. */
     onChunk: (cb: (reqId: string, chunk: any) => void) => {
       const fn = (_e: unknown, reqId: string, chunk: any) => cb(reqId, chunk)
