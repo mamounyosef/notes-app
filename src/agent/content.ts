@@ -198,8 +198,39 @@ function widgetBlock(lang: string, opts: string, body: string) {
   )
 }
 
+/**
+ * Models sometimes write a widget as bare HTML with its <style> / <script> and no
+ * ```widget fence. The editor has no place for those tags, so the drawing would fall
+ * apart into loose lines of text: the run of HTML lines around them becomes a widget.
+ */
+export function fenceBareWidgets(raw: string): string {
+  if (!/<(?:style|script)\b/i.test(raw)) return raw
+  return raw
+    .split(/(^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]*\2[ \t]*$)/m)
+    .map((part, i) => (i % 3 ? part : fencePart(part)))
+    .filter((_p, i) => i % 3 !== 2)
+    .join('')
+}
+
+function fencePart(part: string): string {
+  if (!/<(?:style|script)\b/i.test(part)) return part
+  const lines = part.split('\n')
+  const start = lines.findIndex((l) => /^[ \t]*<(?:div|section|article|main|figure|center|svg|style|script)\b/i.test(l))
+  if (start < 0) return part
+  let end = -1
+  for (let i = lines.length - 1; i >= start; i--) {
+    if (/<\/(?:script|style)>\s*$/i.test(lines[i])) { end = i; break }
+  }
+  if (end < 0) return part
+  // Plain HTML lines right after the script (a closing </div>) belong to the drawing too.
+  while (end + 1 < lines.length && /^[ \t]*<\/?[a-z][^\n]*>\s*$/i.test(lines[end + 1])) end++
+  const body = lines.slice(start, end + 1).join('\n')
+  if (!/<(?:style|script)\b/i.test(body)) return part
+  return [...lines.slice(0, start), '```widget', body, '```', ...lines.slice(end + 1)].join('\n')
+}
+
 export function agentToHtml(text: string): string {
-  const raw = unescapeNewlines(String(text ?? '').replace(/\r\n/g, '\n'))
+  const raw = fenceBareWidgets(unescapeNewlines(String(text ?? '').replace(/\r\n/g, '\n')))
   if (!raw.trim()) return ''
   if (!WIDGET_FENCE.test(raw)) return contentToHtml(raw)
   WIDGET_FENCE.lastIndex = 0

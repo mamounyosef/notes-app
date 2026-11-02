@@ -393,6 +393,17 @@ const WIRES = String.raw`(function () {
       var sa = o.from || (route === 'around-right' ? 'right' : route === 'around-left' ? 'left' : f[0]);
       var sb = o.to || (route === 'around-right' ? 'right' : route === 'around-left' ? 'left' : f[1]);
       var p = at(A, sa), q = at(B, sb), pts = [p];
+      // Boxes stacked over each other (inputs into a block, a block into its outputs) join with
+      // a straight vertical line where they overlap, as drawn by hand, not center to center. Same sideways.
+      function shared(a0, a1, ac, b0, b1, bc) {
+        if (ac >= b0 + 4 && ac <= b1 - 4) return ac; if (bc >= a0 + 4 && bc <= a1 - 4) return bc;
+        var lo = Math.max(a0, b0), hi = Math.min(a1, b1); return hi - lo >= 12 ? (lo + hi) / 2 : null;
+      }
+      if (route === 'straight') {
+        var vs = (sa === 'top' || sa === 'bottom') && (sb === 'top' || sb === 'bottom'), hs = (sa === 'left' || sa === 'right') && (sb === 'left' || sb === 'right'), s;
+        if (vs && (s = shared(A.l, A.r, A.cx, B.l, B.r, B.cx)) != null) { p[0] = s; q[0] = s }
+        else if (hs && (s = shared(A.t, A.b, A.cy, B.t, B.b, B.cy)) != null) { p[1] = s; q[1] = s }
+      }
       if (route === 'around-right' || route === 'around-left') {
         var x = route === 'around-right' ? Math.max(A.r, B.r) + gap : Math.min(A.l, B.l) - gap;
         var vert = sa === 'top' || sa === 'bottom';

@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
+import { NodeSelection, TextSelection } from '@tiptap/pm/state'
 import { buildExtensions } from '../editor/extensions'
 import { useActiveEditor } from '../editor/activeEditor'
 import { migrateLegacyHtml } from '../editor/columns'
@@ -73,6 +74,15 @@ export default function RichEditor({
       onFocus({ editor }) {
         setActive(editor)
         onFocus?.()
+      },
+      // A picked equation, image or drawing would stay outlined after a click on the
+      // canvas or another cell: let go of it. Focus moving to a control (the assistant's
+      // box, a toolbar) keeps it, since that control acts on it.
+      onBlur({ editor, event }) {
+        const to = (event as FocusEvent).relatedTarget as HTMLElement | null
+        const sel = editor.state.selection
+        if (!(sel instanceof NodeSelection) || (to && (!to.closest('.ProseMirror') || editor.view.dom.contains(to)))) return
+        editor.view.dispatch(editor.state.tr.setSelection(TextSelection.near(editor.state.doc.resolve(sel.to))))
       },
     },
     [extensions],
