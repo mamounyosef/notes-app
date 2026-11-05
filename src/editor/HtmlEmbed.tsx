@@ -12,7 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Node, mergeAttributes } from '@tiptap/core'
 import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewProps } from '@tiptap/react'
 import { CodeI, Pen, AlignLeft, AlignCenter, AlignRight, FitI } from '../components/Icons'
-import { buildWidgetDoc, currentTheme, fromBase64, KIND_LABEL, kindOf, looksLikeHtmlDocument, toBase64, type WidgetKind } from '../widgets/widget'
+import { buildWidgetDoc, currentTheme, fromBase64, KIND_LABEL, kindOf, looksLikeHtmlDocument, sniffKind, toBase64, type WidgetKind } from '../widgets/widget'
 
 export { looksLikeHtmlDocument }
 
@@ -60,8 +60,8 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
   const frameId = useMemo(() => `w${Math.random().toString(36).slice(2, 10)}`, [])
   const themeKey = useThemeKey()
 
-  const kind = kindOf(node.attrs.kind)
   const htmlSrc = fromBase64(node.attrs.src || '')
+  const kind = sniffKind(kindOf(node.attrs.kind), htmlSrc)
   // Diagrams sit in the note like a figure; pasted pages keep their own frame.
   const figure = kind !== 'html' || !looksLikeHtmlDocument(htmlSrc)
   const storedW = (node.attrs.width as number | null) || null

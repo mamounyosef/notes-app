@@ -5,7 +5,7 @@
  */
 import TurndownService from 'turndown'
 import { markdownToHtml, extractMath, escapeAttr } from '../editor/markdown'
-import { FENCE_OF, KIND_OF_FENCE, fromBase64, kindOf, toBase64 } from '../widgets/widget'
+import { FENCE_OF, KIND_OF_FENCE, fromBase64, kindOf, sniffKind, toBase64 } from '../widgets/widget'
 import { BIG_SOURCE, keptStub } from './sourceEdit'
 
 const td = new TurndownService({ headingStyle: 'atx', codeBlockStyle: 'fenced', bulletListMarker: '-', hr: '---' })
@@ -109,7 +109,7 @@ td.addRule('widget', {
   filter: (node) => node.nodeType === 1 && (node as HTMLElement).hasAttribute('data-html-embed'),
   replacement: (_c, node) => {
     const el = node as HTMLElement
-    const kind = kindOf(el.getAttribute('data-kind'))
+    const kind = sniffKind(kindOf(el.getAttribute('data-kind')), fromBase64(el.getAttribute('data-html-src') || ''))
     const opts = [
       el.getAttribute('data-width') && `width=${el.getAttribute('data-width')}`,
       el.getAttribute('data-height') && `height=${el.getAttribute('data-height')}`,
@@ -185,7 +185,7 @@ function unescapeNewlines(s: string) {
 const WIDGET_FENCE = /^([ \t]*)(`{3,}|~{3,})[ \t]*(mermaid|wavedrom|chartjs|chart|html-widget|widget|kmap|karnaugh|graphviz|dot|tikz)\b([^\n]*)\n([\s\S]*?)\n[ \t]*\2[ \t]*$/gm
 
 function widgetBlock(lang: string, opts: string, body: string) {
-  const kind = KIND_OF_FENCE[lang] || 'html'
+  const kind = sniffKind(KIND_OF_FENCE[lang] || 'html', body)
   const attr = (k: string) => new RegExp(`\\b${k}\\s*=\\s*["']?([\\w.%-]+)`, 'i').exec(opts)?.[1]
   const width = parseInt(attr('width') || '', 10)
   const height = parseInt(attr('height') || '', 10)

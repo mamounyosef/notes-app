@@ -34,6 +34,18 @@ export function fromBase64(b64: string): string {
 }
 export const kindOf = (k: unknown): WidgetKind => (WIDGET_KINDS.includes(k as WidgetKind) ? (k as WidgetKind) : 'html')
 
+/**
+ * Models sometimes put TikZ or Graphviz source in a plain HTML widget, which then
+ * shows as a wall of text. Source with no HTML tags that is plainly one of those is
+ * drawn as that kind.
+ */
+export function sniffKind(kind: WidgetKind, src: string): WidgetKind {
+  if (kind !== 'html' || /<[a-z!][^>]*>/i.test(src)) return kind
+  if (/\\begin\s*\{tikzpicture\}/.test(src)) return 'tikz'
+  if (/^\s*(?:\/\/[^\n]*\n\s*)*(?:strict\s+)?(?:di)?graph\b[^{]*\{/i.test(src)) return 'graphviz'
+  return kind
+}
+
 /** The Markdown fence name the agent writes for each kind. */
 export const FENCE_OF: Record<WidgetKind, string> = { html: 'widget', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart', kmap: 'kmap', graphviz: 'graphviz', tikz: 'tikz' }
 export const KIND_OF_FENCE: Record<string, WidgetKind> = { widget: 'html', 'html-widget': 'html', mermaid: 'mermaid', wavedrom: 'wavedrom', chart: 'chart', chartjs: 'chart', kmap: 'kmap', karnaugh: 'kmap', graphviz: 'graphviz', dot: 'graphviz', tikz: 'tikz' }

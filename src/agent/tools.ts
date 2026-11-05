@@ -15,7 +15,7 @@ import { chatChanges, describe, effectLines, effectsOf, guard, ledgerOf, specAtt
 import { buildContext } from './context'
 import { agentApi, chatApi, type ChatAttachment } from './api'
 import { DEFAULT_MODEL, VISION_MODEL, modelInfo } from './models'
-import { buildWidgetDoc, currentTheme, FENCE_OF, fromBase64, KIND_OF_FENCE, kindOf, toBase64, type WidgetKind } from '../widgets/widget'
+import { buildWidgetDoc, currentTheme, FENCE_OF, fromBase64, KIND_OF_FENCE, kindOf, sniffKind, toBase64, type WidgetKind } from '../widgets/widget'
 import { describeKmap } from '../widgets/kmap'
 import { scrollToCell } from './reveal'
 import { SET_MATH_SIZE_DEF, keepMathScales, mathReport, setMathSize } from './mathSize'
@@ -429,12 +429,10 @@ interface Drawing {
 /** The HTML blocks in a cell, in order (index starts at 1). */
 function drawingsIn(html: string): Drawing[] {
   const doc = new DOMParser().parseFromString(`<body>${html || ''}</body>`, 'text/html')
-  return [...doc.querySelectorAll('div[data-html-embed]')].map((el, i) => ({
-    index: i + 1,
-    kind: kindOf(el.getAttribute('data-kind')),
-    src: fromBase64(el.getAttribute('data-html-src') || ''),
-    width: Number(el.getAttribute('data-width')) || null,
-  }))
+  return [...doc.querySelectorAll('div[data-html-embed]')].map((el, i) => {
+    const src = fromBase64(el.getAttribute('data-html-src') || '')
+    return { index: i + 1, kind: sniffKind(kindOf(el.getAttribute('data-kind')), src), src, width: Number(el.getAttribute('data-width')) || null }
+  })
 }
 
 /**
@@ -1565,11 +1563,9 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       const el = blocks[index - 1]
       if (!el) throw new ToolError(`Cell [${c.id}] has ${blocks.length} drawing(s); index starts at 1.`)
       el.setAttribute('data-html-src', toBase64(source.replace(/\s+$/, '')))
-      if (a.kind) {
-        const k = KIND_OF_FENCE[String(a.kind)] || 'html'
-        if (k === 'html') el.removeAttribute('data-kind')
-        else el.setAttribute('data-kind', k)
-      }
+      const k = sniffKind(a.kind ? KIND_OF_FENCE[String(a.kind)] || 'html' : kindOf(el.getAttribute('data-kind')), source)
+      if (k === 'html') el.removeAttribute('data-kind')
+      else el.setAttribute('data-kind', k)
       const html = doc.body.innerHTML
       after = { id: c.id, html, w: c.w }
       return { ...p, cells: p.cells.map((x) => (x.id === c.id ? { ...x, html, updatedAt: now() } : x)) }
