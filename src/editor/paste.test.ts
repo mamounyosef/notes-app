@@ -1,5 +1,5 @@
 // Run: npm run test:paste
-import { classifyPaste, looksLikeHtmlFragment, proseRatio } from './pasteClassify.ts'
+import { classifyPaste, looksLikeHtmlFragment, looksLikeSvgDrawing, proseRatio } from './pasteClassify.ts'
 import { extractMath } from './mathExtract.ts'
 
 let failed = 0
@@ -44,6 +44,10 @@ const box = '<div style="padding:4px"><b>x</b></div>\n'
 eq('styled fragment renders', looksLikeHtmlFragment(`<div style="margin:0">\n${box}${box}${box}</div>`), true)
 eq('style block fragment renders', looksLikeHtmlFragment('<style>.a{color:red}</style>\n<div class="a"><p>one</p><p>two</p><p>three</p><p>four</p></div>'), true)
 eq('tag snippet stays code', looksLikeHtmlFragment('<div class="card">\n  <h2>Title</h2>\n  <p>Text</p>\n</div>'), false)
+const svg = '<svg viewBox="0 0 10 10"\n  fill="none">\n  <!-- a -->\n  <path d="M0,0 H5"/>\n  <text x="1" y="2">a &gt; b</text>\n</svg>'
+eq('raw svg is a drawing', looksLikeSvgDrawing(svg), true)
+eq('svg with xml prolog is a drawing', looksLikeSvgDrawing(`<?xml version="1.0"?>\n${svg}`), true)
+eq('svg then prose is not a drawing', looksLikeSvgDrawing(`${svg}\nthat is it`), false)
 eq('text after the markup is not a fragment', looksLikeHtmlFragment(`<div style="a">${box}${box}${box}</div>\nthat is the layout`), false)
 
 eq('claude answer is markdown', kind(answer), 'markdown')

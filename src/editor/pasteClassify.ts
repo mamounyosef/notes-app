@@ -137,6 +137,15 @@ export function looksLikeHtmlFragment(text: string): boolean {
   return tags >= 6 && (styled >= 3 || /<style[\s>]/i.test(t))
 }
 
+/** The whole text is one SVG drawing (an optional XML prolog or comments before it). */
+export function looksLikeSvgDrawing(text: string): boolean {
+  const t = (text || '')
+    .trim()
+    .replace(/^<\?xml[^>]*\?>\s*/i, '')
+    .replace(/^(?:<!--[\s\S]*?-->\s*|<!DOCTYPE\s+svg[^>]*>\s*)*/i, '')
+  return /^<svg\b[^>]*>/i.test(t) && /<\/svg>$/i.test(t) && (t.match(/<svg\b/gi) || []).length === 1
+}
+
 /**
  * Checks if the text has mixed markdown prose around code blocks
  * (in which case it should be processed by the full markdown parser).

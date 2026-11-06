@@ -20,7 +20,7 @@ import { DOMSerializer } from '@tiptap/pm/model'
 import { BlockMath, InlineMath } from './math'
 import { ListAfterBreak } from './listAfterBreak'
 import { htmlToMarkdown, markdownToHtml } from './markdown'
-import { classifyPaste, looksLikeHtmlFragment } from './pasteClassify'
+import { classifyPaste, looksLikeHtmlFragment, looksLikeSvgDrawing } from './pasteClassify'
 import { latexDocumentToHtml, looksLikeLatexDocument } from './latexDocument'
 import { storage } from '../lib/storage'
 import { useStore } from '../store'
@@ -151,6 +151,13 @@ export const SmartPaste = Extension.create({
             if (looksLikeHtmlDocument(text)) {
               event.preventDefault()
               ;(editor.commands as any).insertHtmlEmbed(text)
+              return true
+            }
+
+            // A raw SVG drawing: show it drawn, not as markup.
+            if (looksLikeSvgDrawing(text)) {
+              event.preventDefault()
+              ;(editor.commands as any).insertHtmlEmbed(text.replace(/\r\n?/g, '\n').trim())
               return true
             }
 
