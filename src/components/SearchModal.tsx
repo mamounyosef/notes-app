@@ -1,8 +1,9 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { pathTo, useStore } from '../store'
 import { storage, type SearchHit } from '../lib/storage'
-import { suggestion } from '../../shared/search-core.mjs'
-import { Archive, Search } from './Icons'
+import { parseQuery, suggestion } from '../../shared/search-core.mjs'
+import type { TreeNode } from '../types'
+import { Archive, File, Search } from './Icons'
 
 /** One row the arrow keys move through: a page, or one of its cells. */
 interface Row {
@@ -116,12 +117,7 @@ export default function SearchModal({ onClose }: { onClose(): void }) {
                   onMouseEnter={() => setActive(pageRow)}
                   onClick={() => open(r.pageId, r.hits[0]?.cellId)}
                 >
-                  <div className="r-title">
-                    <Marked text={r.title || 'Untitled'} marks={r.titleMarks} />
-                    {r.archived && <span className="r-badge"><Archive size={11} /> Archived</span>}
-                  </div>
-                  <div className="r-path">{pathTo(workspace.tree, r.pageId).slice(0, -1).map((n) => n.title).join('  /  ')}</div>
-                  <MatchInfo r={r} />
+                  <PlaceHeader r={r} tree={workspace.tree} q={q} />
                 </div>
                 {r.hits.map((h) => {
                   const i = ++rowIndex
@@ -157,6 +153,100 @@ export default function SearchModal({ onClose }: { onClose(): void }) {
   )
 }
 
+/**
+ * A result's header. Pages are often just called "Main", so where the page lives leads:
+ * the place it belongs to (its section or parent) is the big line, the notebook path sits
+ * small before it, and the page name follows underneath.
+ */
+function PlaceHeader({ r, tree, q }: { r: SearchHit; tree: TreeNode[]; q: string }) {
+  const chain = pathTo(tree, r.pageId)
+  const ancestors = chain.slice(0, -1)
+  const place = ancestors[ancestors.length - 1]
+  const lead = ancestors.slice(0, -1)
+  const color = [...chain].reverse().find((n) => n.color)?.color
+  const terms = queryTerms(q)
+  const cells = r.hits.length
+  const page = (
+    <>
+      <File size={12} />
+      <span className="r-page-name">
+        <Marked text={r.title || 'Untitled'} marks={r.titleMarks} />
+      </span>
+    </>
+  )
+  return (
+    <div className="r-head" style={color ? ({ '--place': color } as React.CSSProperties) : undefined}>
+      <span className="r-bar" />
+      <div className="r-main">
+        {place ? (
+          <>
+            <div className="r-place">
+              {lead.map((n) => (
+                <span key={n.id} className="r-crumb">
+                  <Marked text={n.title} marks={markTerms(n.title, terms)} />
+                  <span className="r-sep">/</span>
+                </span>
+              ))}
+              <span className="r-place-name">
+                <Marked text={place.title} marks={markTerms(place.title, terms)} />
+              </span>
+            </div>
+            <div className="r-page">
+              {page}
+              {r.archived && <span className="r-badge"><Archive size={11} /> Archived</span>}
+              <MatchInfo r={r} />
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="r-place">
+              <span className="r-place-name">
+                <Marked text={r.title || 'Untitled'} marks={r.titleMarks} />
+              </span>
+            </div>
+            <div className="r-page">
+              {r.archived && <span className="r-badge"><Archive size={11} /> Archived</span>}
+              <MatchInfo r={r} />
+            </div>
+          </>
+        )}
+      </div>
+      {cells > 0 && (
+        <span className="r-count" title={`${cells} matching ${cells === 1 ? 'cell' : 'cells'}`}>
+          {cells} {cells === 1 ? 'cell' : 'cells'}
+        </span>
+      )}
+    </div>
+  )
+}
+
+/** The words and "phrases" of a query, lowercased, for highlighting names the engine does not mark. */
+function queryTerms(q: string): string[] {
+  const { terms, phrases } = parseQuery(q)
+  return [...phrases, ...terms].map((t) => t.toLowerCase()).filter((t) => t.length >= 2)
+}
+
+/** Ranges in `text` where a query word starts a word (or a phrase appears), merged and sorted. */
+function markTerms(text: string, terms: string[]): [number, number][] {
+  const low = text.toLowerCase()
+  const found: [number, number][] = []
+  for (const t of terms) {
+    let i = low.indexOf(t)
+    while (i !== -1) {
+      if (i === 0 || !/[\p{L}\p{N}]/u.test(low[i - 1])) found.push([i, i + t.length])
+      i = low.indexOf(t, i + 1)
+    }
+  }
+  found.sort((a, b) => a[0] - b[0])
+  const merged: [number, number][] = []
+  for (const m of found) {
+    const last = merged[merged.length - 1]
+    if (last && m[0] <= last[1]) last[1] = Math.max(last[1], m[1])
+    else merged.push([...m])
+  }
+  return merged
+}
+
 /** One line on how a page matched: where, which words were close spellings, which were missing. */
 function MatchInfo({ r }: { r: SearchHit }) {
   const parts: React.ReactNode[] = []
@@ -178,8 +268,10 @@ function MatchInfo({ r }: { r: SearchHit }) {
         Missing: {r.missing.join(', ')}
       </span>,
     )
-  if (!parts.length && r.matchedIn.length) {
-    const where = r.matchedIn.map((w) => (w === 'title' ? 'page title' : w === 'notebook' ? 'notebook or section name' : 'cells'))
+  // Cell matches already show as a count and the rows below, so only name the other places.
+  const named = r.matchedIn.filter((w) => w !== 'text')
+  if (!parts.length && named.length) {
+    const where = named.map((w) => (w === 'title' ? 'page title' : w === 'notebook' ? 'notebook or section name' : 'cells'))
     parts.push(
       <span key="in" className="mi">
         Found in {where.join(', ')}
