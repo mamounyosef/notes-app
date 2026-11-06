@@ -509,3 +509,148 @@ export const effectsOf = (l: Ledger): Change[] => [...l.texts, ...l.styles, ...l
 
 /** Small enough to keep in the chat message. */
 export const chatChanges = (cs: Change[], max = 6) => cs.slice(0, max).map((c) => ({ ...c, text: cut(c.text, 60), from: c.from && cut(c.from, 60), to: c.to && cut(c.to, 60) }))
+
+/* ---------------- blocks the user placed ---------------- */
+
+/** Blocks a rewrite has no reason to lose: lines the user drew and pictures. */
+const PLACED = new Set(['horizontalRule', 'thickHorizontalRule', 'image'])
+const isLine = (n: PMNode) => n.type.name === 'horizontalRule' || n.type.name === 'thickHorizontalRule'
+const squash = (s: string) => s.replace(/\s+/g, '').toLowerCase()
+
+/** What identifies a top level block when looking for it again in a rewrite. */
+function blockKey(n: PMNode): string {
+  if (n.type.name === 'blockMath') return `m:${squash(String(n.attrs.latex || ''))}`
+  if (n.type.name === 'image') return `i:${n.attrs.src || ''}`
+  if (n.isAtom || n.isLeaf) return `a:${n.type.name}`
+  return `t:${squash(n.textContent)}`
+}
+
+/** Where block `i` of `from` sits among the blocks of `to`, or -1. */
+function findBlock(from: PMNode[], i: number, to: PMNode[]): number {
+  const n = from[i]
+  const key = blockKey(n)
+  const same = (list: PMNode[], k: string) => list.map((b, j) => (blockKey(b) === k ? j : -1)).filter((j) => j >= 0)
+  const hits = same(to, key)
+  if (hits.length && !key.endsWith(':')) {
+    // The same ordinal among equal blocks, else the first.
+    const nth = same(from, key).indexOf(i)
+    return hits[Math.min(Math.max(nth, 0), hits.length - 1)]
+  }
+  // Reworded: the nth block of its type, when both have as many of that type.
+  const ofType = (list: PMNode[]) => list.map((b, j) => (b.type === n.type ? j : -1)).filter((j) => j >= 0)
+  const a = ofType(from)
+  const b = ofType(to)
+  if (a.length && a.length === b.length) return b[a.indexOf(i)]
+  // Text that still starts the same way.
+  const head = key.slice(0, 26)
+  if (key.startsWith('t:') && head.length > 8) {
+    const j = to.findIndex((x) => blockKey(x).startsWith(head))
+    if (j >= 0) return j
+  }
+  return -1
+}
+
+const shortText = (n: PMNode | undefined) => {
+  if (!n) return ''
+  const t = n.type.name === 'blockMath' ? `$$${n.attrs.latex}$$` : n.textContent
+  const s = t.replace(/\s+/g, ' ').trim()
+  return s.length > 40 ? s.slice(0, 39) + '…' : s
+}
+
+/**
+ * Lines and pictures that a rewrite of a cell left out go back where they were,
+ * next to the block they sat after (or before). A weak model rewriting a whole
+ * cell often drops a line the user just drew: that is never what was asked.
+ */
+export function keepPlacedBlocks(beforeHtml: string, afterHtml: string): { html: string; kept: string[] } {
+  const before = parseCell(beforeHtml)
+  const after = parseCell(afterHtml)
+  const old: PMNode[] = []
+  const now: PMNode[] = []
+  before.forEach((n) => void old.push(n))
+  after.forEach((n) => void now.push(n))
+  if (!old.some((n) => PLACED.has(n.type.name))) return { html: afterHtml, kept: [] }
+
+  const srcs = new Set<string>()
+  after.descendants((n) => void (n.type.name === 'image' && srcs.add(String(n.attrs.src || ''))))
+  const missing = new Set<number>()
+  old.forEach((n, i) => {
+    if (n.type.name === 'image' && n.attrs.src && !srcs.has(String(n.attrs.src))) missing.add(i)
+  })
+  for (const type of ['horizontalRule', 'thickHorizontalRule']) {
+    const count = (list: PMNode[]) => list.filter((n) => n.type.name === type).length
+    let deficit = count(old) - count(now)
+    if (deficit <= 0) continue
+    // A line counts as kept when the block it followed is still followed by one.
+    old.forEach((n, i) => {
+      if (deficit <= 0 || n.type.name !== type) return
+      const j = i > 0 ? findBlock(old, i - 1, now) : -1
+      const there = i > 0 ? j >= 0 && now[j + 1]?.type.name === type : now[0]?.type.name === type
+      if (!there) (missing.add(i), deficit--)
+    })
+  }
+  if (!missing.size) return { html: afterHtml, kept: [] }
+
+  // Where each goes: an index among the new blocks to insert before.
+  const places: { at: number; i: number }[] = []
+  const kept: string[] = []
+  for (const i of [...missing].sort((x, y) => x - y)) {
+    let at = -1
+    for (let k = i - 1; k >= 0 && at < 0; k--) {
+      if (missing.has(k)) continue
+      const j = findBlock(old, k, now)
+      if (j >= 0) at = j + 1
+    }
+    for (let k = i + 1; k < old.length && at < 0; k++) {
+      if (missing.has(k)) continue
+      const j = findBlock(old, k, now)
+      if (j >= 0) at = j
+    }
+    if (at < 0) at = i === 0 ? 0 : now.length
+    places.push({ at, i })
+    const n = old[i]
+    const prev = old.slice(0, i).reverse().find((b) => !PLACED.has(b.type.name))
+    kept.push(isLine(n) ? `the ${n.type.name === 'thickHorizontalRule' ? 'thick ' : ''}line${prev ? ` after "${shortText(prev)}"` : ''}` : `the image${n.attrs.alt ? ` "${n.attrs.alt}"` : ''}`)
+  }
+  const offsets: number[] = []
+  let pos = 0
+  for (const n of now) (offsets.push(pos), (pos += n.nodeSize))
+  offsets.push(pos)
+  const tr = new Transform(after)
+  // From the end back, so earlier positions stay right; same place keeps their order.
+  for (const p of [...places].sort((x, y) => y.at - x.at || y.i - x.i)) tr.insert(offsets[p.at], old[p.i])
+  return { html: cellHtml(tr.doc), kept }
+}
+
+/** True when a piece of Markdown means "the line": ---, ***, ___ or an <hr>. */
+const LINE_RE = /^(?:-{3,}|\*{3,}|_{3,}|<hr\b[^>]*>)$/i
+
+/**
+ * New blocks put right after one block of the cell, found by its text (or "---" for
+ * a line, "$$...$$" or LaTeX for an equation). Everything else stays exactly as it was.
+ */
+export function insertAfterBlock(cellHtmlNow: string, newHtml: string, after: string, nth = 1): string {
+  const doc = parseCell(cellHtmlNow)
+  const add = parseCell(newHtml)
+  const want = after.trim()
+  const line = LINE_RE.test(want)
+  const wantMath = squash(want.replace(/^\$\$?|\$\$?$/g, ''))
+  const wantText = squash(want.replace(/[*_`#>]/g, ''))
+  const hits: number[] = []
+  let pos = 0
+  doc.forEach((n) => {
+    const end = pos + n.nodeSize
+    const ok = line
+      ? isLine(n)
+      : n.type.name === 'blockMath'
+        ? !!wantMath && squash(String(n.attrs.latex || '')).includes(wantMath)
+        : !!wantText && squash(n.textContent).includes(wantText)
+    if (ok) hits.push(end)
+    pos = end
+  })
+  if (!hits.length) throw new Error(`No block of the cell matches "${want.slice(0, 80)}". Use text from the block itself (or --- for a line), or read_cell first. Nothing was changed.`)
+  const at = hits[Math.min(Math.max(1, nth), hits.length) - 1]
+  const tr = new Transform(doc)
+  tr.insert(at, add.content)
+  return cellHtml(tr.doc)
+}

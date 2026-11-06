@@ -267,7 +267,15 @@ function contentToHtml(src: string): string {
   // Code blocks are left exactly as written.
   prepared = prepared
     .split(/(^[ \t]*(`{3,}|~{3,})[^\n]*\n[\s\S]*?^[ \t]*\2[ \t]*$)/m)
-    .map((part, i) => (i % 3 ? part : part.replace(/^[ \t]{0,3}<(p|h[1-6]|div|blockquote|span|li|td|th|strong|em)\b[^\n]*$/gim, (line) => inlineMarkdownInHtml(line))))
+    .map((part, i) =>
+      i % 3
+        ? part
+        : part
+            .replace(/^[ \t]{0,3}<(p|h[1-6]|div|blockquote|span|li|td|th|strong|em)\b[^\n]*$/gim, (line) => inlineMarkdownInHtml(line))
+            // A --- right under a line of text is meant as a horizontal line, not as Markdown's
+            // "underline makes a heading" (which would also swallow the line).
+            .replace(/([^\n])\n([ \t]{0,3}-{3,}[ \t]*)(?=\n|$)/g, '$1\n\n$2'),
+    )
     .filter((_p, i) => i % 3 !== 2)
     .join('')
   // Put the math back so markdownToHtml handles it the usual way.

@@ -11,7 +11,7 @@ import { useStore, findNode, findParent, pathTo, walk } from '../store'
 import { storage } from '../lib/storage'
 import { DEFAULT_SETTINGS, type Cell, type Page, type Settings, type TreeNode } from '../types'
 import { agentInlineToHtml, agentToHtml, htmlToAgent, htmlToText, softColor } from './content'
-import { chatChanges, describe, effectLines, effectsOf, guard, ledgerOf, specAttrs, styleText, type Change, type StyleSpec } from './ledger'
+import { chatChanges, describe, effectLines, effectsOf, guard, insertAfterBlock, keepPlacedBlocks, ledgerOf, specAttrs, styleText, type Change, type StyleSpec } from './ledger'
 import { buildContext } from './context'
 import { agentApi, chatApi, type ChatAttachment } from './api'
 import { DEFAULT_MODEL, VISION_MODEL, modelInfo } from './models'
@@ -662,7 +662,10 @@ export const TOOL_DEFS = [
     page_id: str('Page id. Omit for the open page.'),
     title: str('New title.'),
     content: str('New content in Markdown (see create_cells). When replacing, start from the cell as it is NOW (read_cell if it changed since you last saw it) and keep its colors, highlights and sizes as inline HTML.'),
-    content_mode: { type: 'string', enum: ['replace', 'append', 'prepend'], description: 'How to use content. Default replace.' },
+    content_mode: { type: 'string', enum: ['replace', 'append', 'prepend', 'after'], description: 'How to use content. Default replace. "after" puts content right after one block of the cell (named by `after`) and leaves the rest exactly as it is: the safe way to add something in the middle, like "under this line" or "after the formula".' },
+    after: str('With content_mode "after": text from the block to put the content after (a few words of that paragraph or heading, part of the LaTeX of an equation, or --- for a horizontal line).'),
+    after_nth: num('With content_mode "after": which match when several blocks match `after` (1 = first). Default 1.'),
+    drop_blocks: { type: 'boolean', description: 'Only when the user asked to remove a horizontal line or a picture: lets a replace drop it. By default lines and pictures your content left out are put back where they were.' },
     drop_styles: { type: 'boolean', description: 'Only when the user asked to remove colors/highlights: lets a replace drop them. By default styled text whose style your content left out keeps it.' },
     drop_drawings: { type: 'boolean', description: 'Only when the user asked to remove a big drawing: lets a replace delete it. By default that is refused.' },
     x: num('New x.'),
@@ -1079,6 +1082,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     let cid = ''
     const changes: string[] = []
     let kept: string[] = []
+    let keptBlocks: string[] = []
     let after = null as { id: string; html: string; w: number } | null
     let beforeHtml = ''
     let anchor: string | undefined
@@ -1099,7 +1103,20 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
           html = keepMathScales(c.html || '', r.html)
           kept = r.kept
         }
-        patch.html = mode === 'append' ? (c.html || '') + html : mode === 'prepend' ? html + (c.html || '') : html
+        // A line the user drew or a picture they put in, left out of a rewrite, goes back.
+        if (mode === 'replace' && !a.drop_blocks) {
+          const b = keepPlacedBlocks(c.html || '', html)
+          html = b.html
+          keptBlocks = b.kept
+        }
+        if (mode === 'after') {
+          if (!String(a.after ?? '').trim()) throw new ToolError('content_mode "after" needs `after`: text from the block to put the content after (or --- for a line). Nothing was changed.')
+          try {
+            patch.html = insertAfterBlock(c.html || '', html, String(a.after), Number(a.after_nth) || 1)
+          } catch (e) {
+            throw new ToolError(e instanceof Error ? e.message : String(e))
+          }
+        } else patch.html = mode === 'append' ? (c.html || '') + html : mode === 'prepend' ? html + (c.html || '') : html
         // A rewrite may restyle on purpose, but a style that silently fell off unchanged text goes back.
         // Adding text before or after leaves the old text exactly as it was.
         if (a.drop_styles) effects = effectsOf(ledgerOf(c.html || '', patch.html))
@@ -1109,7 +1126,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
           effects = effectsOf(g.ledger)
           restored = g.restored
         }
-        changes.push(mode === 'replace' ? 'content' : `${mode}ed text`)
+        changes.push(mode === 'replace' ? 'content' : mode === 'after' ? 'inserted text' : `${mode}ed text`)
       }
       for (const k of ['x', 'y', 'w', 'h'] as const) {
         if (typeof a[k] === 'number') {
@@ -1127,9 +1144,11 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
       }
       return { ...p, cells: p.cells.map((x) => (x.id === c.id ? { ...x, ...patch, updatedAt: now() } : x)) }
     }, [String(a.cell_id)])
-    const note = kept.length
-      ? `Your content dropped the color/highlight/size on ${kept.join(', ')}; it was kept. To really remove it, call again with drop_styles: true.`
-      : undefined
+    const notes = [
+      kept.length ? `Your content dropped the color/highlight/size on ${kept.join(', ')}; it was kept. To really remove it, call again with drop_styles: true.` : '',
+      keptBlocks.length ? `Your content left out ${keptBlocks.join(', ')}; it was put back where it was. Next time keep it in your content, or add things with content_mode "after". Only if the user asked to remove it, call again with drop_blocks: true.` : '',
+    ].filter(Boolean)
+    const note = notes.length ? notes.join(' ') : undefined
     const drawings = after ? await drawingReport([after]) : undefined
     const fx = effects as Change[] | null
     const effect = fx ? effectLines(fx, restored) : undefined
@@ -1138,7 +1157,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     if (html === undefined) return done
     return {
       ...done,
-      detail: factsLine(html, beforeHtml) + (kept.length || restored.length ? ' · kept your colors' : ''),
+      detail: factsLine(html, beforeHtml) + (kept.length || restored.length ? ' · kept your colors' : '') + (keptBlocks.length ? ` · kept your ${keptBlocks.some((k) => k.startsWith('the image')) ? (keptBlocks.length > 1 ? 'lines and images' : 'image') : keptBlocks.length > 1 ? 'lines' : 'line'}` : ''),
       // Text rewrites show as the word count above; the chat lists style and block changes.
       ...(fx ? { changes: chatChanges(fx.filter((ch) => ch.kind !== 'text')) } : {}),
       ...(restored.length ? { restored: chatChanges(restored) } : {}),
