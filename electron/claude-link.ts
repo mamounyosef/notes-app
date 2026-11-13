@@ -24,10 +24,19 @@ import type { ClaudeHost, ToolDef } from './claude'
 /** Tools that make no sense from outside: questions go in Claude's own chat. */
 const NOT_OUTSIDE = new Set(['ask_user'])
 
+/**
+ * Tools that only read or look (the same set as READ_ONLY in src/agent/tools.ts,
+ * minus the ones not offered outside). Every other tool changes the notes.
+ * focus moves the user's view, so it is also only for when they ask to be shown something.
+ */
+const OUTSIDE_READS = new Set(['view_image', 'check_drawing', 'read_drawing', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'recent_notes', 'get_settings'])
+
+const WRITE_PREFIX = 'CHANGES the user\'s notes: call it only when the user explicitly asked for this change, in the place they named (see notes_guide, "When to change the notes"). '
+
 const GUIDE_TOOL: ToolDef = {
   name: 'notes_guide',
   description:
-    'How to work with the Notes app: its structure (notebooks, sections, pages, cells on a canvas), the Markdown content format, how notes must look, how to draw diagrams and charts, and how to cite notes. Call it once before writing or editing notes.',
+    'How to work with the Notes app: WHEN you may change notes (only on the user\'s explicit request), its structure (notebooks, sections, pages, cells on a canvas), the Markdown content format, how notes must look, how to draw diagrams and charts, and how to cite notes. Call it once before working with notes.',
   inputSchema: { type: 'object', properties: {}, required: [] },
 }
 
@@ -45,7 +54,19 @@ export function setupClaudeLink(host: ClaudeHost, opts: { log(...a: unknown[]): 
     opts.log('claude link: could not write the MCP bridge', e?.message)
   }
 
-  const outsideTools = () => [GUIDE_TOOL, ...host.tools().filter((t) => !NOT_OUTSIDE.has(t.name))]
+  // Every tool that changes the notes says so first: Claude outside the app writes only when the user asked.
+  const outsideTools = () => [
+    GUIDE_TOOL,
+    ...host.tools()
+      .filter((t) => !NOT_OUTSIDE.has(t.name))
+      .map((t) =>
+        OUTSIDE_READS.has(t.name)
+          ? t
+          : t.name === 'focus'
+            ? { ...t, description: 'MOVES what the user sees in Notes: only when they ask to be shown or taken somewhere. ' + t.description }
+            : { ...t, description: WRITE_PREFIX + t.description },
+      ),
+  ]
 
   // Saved so Claude can list the tools while Notes is closed (Notes opens on the first call).
   host.onTools(() => {
