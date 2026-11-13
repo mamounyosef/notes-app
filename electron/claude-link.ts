@@ -31,7 +31,7 @@ const NOT_OUTSIDE = new Set(['ask_user'])
  */
 const OUTSIDE_READS = new Set(['view_image', 'check_drawing', 'read_drawing', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'recent_notes', 'get_settings'])
 
-const WRITE_PREFIX = 'CHANGES the user\'s notes: call it only when the user explicitly asked for this change, in the place they named (see notes_guide, "When to change the notes"). '
+const WRITE_PREFIX = 'CHANGES the user\'s notes: only when they explicitly asked for this change. '
 
 const GUIDE_TOOL: ToolDef = {
   name: 'notes_guide',
@@ -63,7 +63,7 @@ export function setupClaudeLink(host: ClaudeHost, opts: { log(...a: unknown[]): 
         OUTSIDE_READS.has(t.name)
           ? t
           : t.name === 'focus'
-            ? { ...t, description: 'MOVES what the user sees in Notes: only when they ask to be shown or taken somewhere. ' + t.description }
+            ? { ...t, description: 'MOVES the user\'s view: only when they ask to be shown something. ' + t.description }
             : { ...t, description: WRITE_PREFIX + t.description },
       ),
   ]
