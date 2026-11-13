@@ -293,17 +293,19 @@ async function exportPageMarkdown(pageId: string, title: string) {
 }
 
 export function CellCount({ pageId }: { pageId: string }) {
-  const counts = useStore((s) => s.pageCellCounts)
-  const activePageId = useStore((s) => s.activePageId)
-  const page = useStore((s) => s.page)
+  // Narrow picks: every page row has one of these, and subscribing to the whole page
+  // or the whole count table redrew every row on each keystroke and page switch.
+  const stored = useStore((s) => s.pageCellCounts[pageId])
+  const isActive = useStore((s) => s.activePageId === pageId)
+  const liveCount = useStore((s) => (s.activePageId === pageId && s.page ? s.page.cells.length : undefined))
   const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    if (pageId === activePageId && page) {
-      useStore.getState().setPageCellCount(pageId, page.cells.length)
+    if (isActive && liveCount !== undefined) {
+      useStore.getState().setPageCellCount(pageId, liveCount)
       return
     }
-    if (counts[pageId] === undefined) {
+    if (stored === undefined) {
       let cancelled = false
       setLoading(true)
       import('../lib/storage').then(({ storage }) =>
@@ -325,9 +327,9 @@ export function CellCount({ pageId }: { pageId: string }) {
         cancelled = true
       }
     }
-  }, [pageId, activePageId, page?.cells?.length, counts[pageId]])
+  }, [pageId, isActive, liveCount, stored])
 
-  const known = pageId === activePageId && page ? page.cells.length : counts[pageId]
+  const known = isActive && liveCount !== undefined ? liveCount : stored
   if (known === undefined) {
     return <span className="cell-count pending">{loading ? '...' : ''}</span>
   }

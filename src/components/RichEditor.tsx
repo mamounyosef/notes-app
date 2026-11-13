@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import { EditorContent, useEditor } from '@tiptap/react'
 import { NodeSelection, Selection, TextSelection } from '@tiptap/pm/state'
 import { buildExtensions } from '../editor/extensions'
@@ -40,6 +40,9 @@ export default function RichEditor({
       extensions,
       content: migrateLegacyHtml(html),
       editable,
+      // Nothing here draws from the editor state (the toolbar listens through bump), so
+      // the component does not need to redraw on every keystroke and caret move.
+      shouldRerenderOnTransaction: false,
       editorProps: {
         attributes: { spellcheck: String(spellcheck) },
         handlePaste() {
@@ -87,6 +90,17 @@ export default function RichEditor({
     },
     [extensions],
   )
+  if (editor) skipNeedlessViewRebuild(editor)
+
+  // Let go of the editor before tiptap's EditorContent unmounts: that would first redraw
+  // the whole cell without its blocks, only for the editor to be destroyed right after.
+  // (Not in development, where React mounts everything twice on purpose.)
+  useLayoutEffect(() => {
+    if (!editor || import.meta.env.DEV) return
+    return () => {
+      if (!editor.isDestroyed) editor.destroy()
+    }
+  }, [editor])
 
   // Outside changes (undo, page switch) push new content in without
   // stomping on what the user is currently typing.
@@ -131,17 +145,16 @@ export default function RichEditor({
 
   // Report the natural content height and width so cells can auto-grow.
   useEffect(() => {
-    if (!wrapRef.current) return
-    const ro = new ResizeObserver(() => {
-      const pm = wrapRef.current?.querySelector('.ProseMirror') as HTMLElement | null
-      const h = pm ? pm.scrollHeight : wrapRef.current!.scrollHeight
-      const w = pm ? pm.scrollWidth : wrapRef.current!.scrollWidth
-      onSizeRef.current?.(w, h)
-    })
+    const wrap = wrapRef.current
+    if (!wrap) return
     // The ProseMirror element might be added asynchronously by Tiptap.
     // Observing the wrapper ensures we catch the change when PM is mounted and when it grows.
-    ro.observe(wrapRef.current)
-    return () => ro.disconnect()
+    return watchSize(wrap, () => {
+      const pm = wrap.querySelector('.ProseMirror') as HTMLElement | null
+      const h = pm ? pm.scrollHeight : wrap.scrollHeight
+      const w = pm ? pm.scrollWidth : wrap.scrollWidth
+      onSizeRef.current?.(w, h)
+    })
   }, [editor])
 
   useEffect(() => {
@@ -155,6 +168,60 @@ export default function RichEditor({
       <EditorContent editor={editor} />
     </div>
   )
+}
+
+/**
+ * tiptap's EditorContent builds every node view again once it mounts, which draws the whole
+ * cell a second time. That is only needed for blocks drawn by React (pictures, diagrams):
+ * before there is a place to draw them they decline (a view without a DOM node) and show as
+ * plain HTML until the rebuild. A cell without any such block skips it.
+ */
+const viewsChecked = new WeakSet<object>()
+function skipNeedlessViewRebuild(editor: any) {
+  if (viewsChecked.has(editor)) return
+  viewsChecked.add(editor)
+  const rebuild = editor.createNodeViews.bind(editor)
+  let first = true
+  editor.createNodeViews = () => {
+    const skip = first && !editor.isDestroyed && !hasDeclinedView(editor.view?.docView)
+    first = false
+    if (!skip) rebuild()
+  }
+}
+
+/** True when some node view in the drawn document declined to draw (or when unsure). */
+function hasDeclinedView(desc: any): boolean {
+  try {
+    if (!desc) return true
+    const walk = (d: any): boolean => {
+      for (const c of d.children || []) {
+        if (c.spec && !c.spec.dom) return true
+        if (walk(c)) return true
+      }
+      return false
+    }
+    return walk(desc)
+  } catch {
+    return true
+  }
+}
+
+/**
+ * One ResizeObserver for every editor. A page opening sizes all its cells in one callback,
+ * so the store changes in one go and the page redraws once, not once per cell.
+ */
+const sizeWatchers = new Map<Element, () => void>()
+let sizeObserver: ResizeObserver | null = null
+function watchSize(el: Element, fn: () => void): () => void {
+  sizeObserver ??= new ResizeObserver((entries) => {
+    for (const e of entries) sizeWatchers.get(e.target)?.()
+  })
+  sizeWatchers.set(el, fn)
+  sizeObserver.observe(el)
+  return () => {
+    if (sizeWatchers.get(el) === fn) sizeWatchers.delete(el)
+    sizeObserver?.unobserve(el)
+  }
 }
 
 /** Controls that act on a picked equation or image: a click in them keeps it picked. */

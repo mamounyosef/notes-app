@@ -393,6 +393,13 @@ export default function Canvas() {
     return () => el.removeEventListener('wheel', onWheel)
   }, [page !== null])
 
+  // Each cell gets the same callbacks on every render, so CellView's memo can skip the
+  // cells that did not change (typing in one cell used to redraw every cell on the page).
+  // The callbacks run the latest code below through this ref.
+  const impl = useRef<CellImpl | null>(null)
+  const handlersRef = useRef(new Map<string, CellHandlers>())
+  const cellOf = useRef<Cell[]>([])
+
   if (!page) {
     return (
       <div className="canvas-wrap">
@@ -482,6 +489,148 @@ export default function Canvas() {
     }
   }
 
+  impl.current = {
+    onSelect(cell, e) {
+      if (panPointerRef.current || dragRef.current.mode === 'pan' || e.button !== 0) {
+        e.preventDefault()
+        return
+      }
+      const st = store.getState()
+      // Clicking the frame rather than the text selects the cell, so
+      // Delete removes it instead of typing into it.
+      const inText = (e.target as HTMLElement).closest('.ProseMirror, .cell-title')
+      if (!inText) {
+        ; (document.activeElement as HTMLElement | null)?.blur()
+        store.setState({ editingCellId: null })
+      }
+      if (e.shiftKey || e.ctrlKey) {
+        st.setSelection(
+          selection.includes(cell.id) ? selection.filter((i) => i !== cell.id) : [...selection, cell.id],
+        )
+      } else if (!selection.includes(cell.id)) {
+        st.setSelection([cell.id])
+      }
+    },
+    onStartEdit(cell) {
+      store.setState({ editingCellId: cell.id, selection: [cell.id] })
+    },
+    onDragStart(cell, e) {
+      if (cell.locked || e.button !== 0) return
+      e.preventDefault()
+      const st = store.getState()
+
+        // Ensure we exit text editing mode so Delete removes the cell, not text.
+        ; (document.activeElement as HTMLElement | null)?.blur()
+      store.setState({ editingCellId: null })
+
+      const ids = st.selection.includes(cell.id) ? st.selection : [cell.id]
+      if (!st.selection.includes(cell.id)) st.setSelection([cell.id])
+      st.pushHistory()
+      const p = toCanvas(e)
+      const origin: Record<string, { x: number; y: number }> = {}
+      for (const c of page.cells) if (ids.includes(c.id)) origin[c.id] = { x: c.x, y: c.y }
+      setDrag({ mode: 'move', startX: p.x, startY: p.y, origin })
+    },
+    onResizeStart(cell, e, dir) {
+      if (cell.locked || e.button !== 0) return
+      e.preventDefault()
+      e.stopPropagation()
+      const st = store.getState()
+
+        // Ensure we exit text editing mode.
+        ; (document.activeElement as HTMLElement | null)?.blur()
+      store.setState({ editingCellId: null })
+
+      st.pushHistory()
+      const p = toCanvas(e)
+      setDrag({ mode: 'resize', id: cell.id, dir, startX: p.x, startY: p.y, box: { ...cell } })
+    },
+    onContextMenu(cell, e) {
+      e.preventDefault()
+      e.stopPropagation()
+      if (suppressContextMenuRef.current) {
+        suppressContextMenuRef.current = false
+        return
+      }
+      // Right-clicking an artifact link gets an artifact-specific menu
+      const artifactAnchor = (e.target as HTMLElement).closest('a[href^="artifact:"]') as HTMLAnchorElement | null
+      if (artifactAnchor) {
+        const href = artifactAnchor.getAttribute('href') || ''
+        let rel = href.replace(/^artifact:\/\//i, '')
+        if (rel.toLowerCase().startsWith('local/')) rel = rel.slice(6)
+        rel = decodeURIComponent(rel)
+        setMenu({
+          x: e.clientX,
+          y: e.clientY,
+          items: [
+            {
+              label: 'Open artifact',
+              icon: <ArtifactI />,
+              onClick: () => storage.openExternal(href),
+            },
+            {
+              label: 'Edit artifact...',
+              onClick: () => {
+                useActiveEditor.getState().setArtifactModalOpen(true)
+              },
+            },
+            {
+              label: 'Show in File Explorer',
+              onClick: () => {
+                storage.revealArtifact(rel)
+              },
+            },
+            { separator: true },
+            {
+              label: 'Copy artifact path',
+              onClick: () => {
+                navigator.clipboard.writeText(rel)
+              },
+            },
+          ],
+        })
+        return
+      }
+
+      // Right-clicking a vertical line or column gap gets its own menu.
+      const lineItems = columnLineMenu(e.target)
+      if (lineItems) {
+        setMenu({ x: e.clientX, y: e.clientY, items: lineItems })
+        return
+      }
+      setMenu({ x: e.clientX, y: e.clientY, items: cellMenu(cell, e) })
+    },
+  }
+  const renderedCells = page.cells
+  const handlersFor = (id: string): CellHandlers => {
+    let h = handlersRef.current.get(id)
+    if (h) return h
+    // The cell as last drawn, so a handler acts on what the person sees.
+    const run = (fn: (cell: Cell) => void) => {
+      const cell = cellOf.current.find((c) => c.id === id)
+      if (cell) fn(cell)
+    }
+    h = {
+      onSelect: (e) => run((c) => impl.current!.onSelect(c, e)),
+      onStartEdit: () => run((c) => impl.current!.onStartEdit(c)),
+      onDragStart: (e) => run((c) => impl.current!.onDragStart(c, e)),
+      onResizeStart: (e, dir) => run((c) => impl.current!.onResizeStart(c, e, dir)),
+      onContextMenu: (e) => run((c) => impl.current!.onContextMenu(c, e)),
+      onChange: (patch) => store.getState().updateCell(id, patch),
+      onAutoSize: (patch) => store.getState().updateCell(id, patch, false, true, true),
+      onResolveConflict: (action) => store.getState().resolveConflict(id, action),
+      onDeleteSelf: () => store.getState().deleteCells([id]),
+    }
+    handlersRef.current.set(id, h)
+    return h
+  }
+  cellOf.current = renderedCells
+  // Forget handlers of cells that are gone (another page, deleted cells).
+  if (handlersRef.current.size > renderedCells.length * 2 + 50) {
+    const keep = new Set(renderedCells.map((c) => c.id))
+    for (const k of handlersRef.current.keys()) if (!keep.has(k)) handlersRef.current.delete(k)
+  }
+
   return (
     <div className="canvas-area">
     <div
@@ -559,128 +708,28 @@ export default function Canvas() {
             ))}
           </svg>
 
-          {cells.map((cell) => (
-            <CellView
-              key={cell.id}
-              cell={cell}
-              settings={settings}
-              tool={tool}
-              selected={selection.includes(cell.id)}
-              editing={editingCellId === cell.id}
-              onSelect={(e) => {
-                if (panPointerRef.current || dragRef.current.mode === 'pan' || e.button !== 0) {
-                  e.preventDefault()
-                  return
-                }
-                const st = store.getState()
-                // Clicking the frame rather than the text selects the cell, so
-                // Delete removes it instead of typing into it.
-                const inText = (e.target as HTMLElement).closest('.ProseMirror, .cell-title')
-                if (!inText) {
-                  ; (document.activeElement as HTMLElement | null)?.blur()
-                  store.setState({ editingCellId: null })
-                }
-                if (e.shiftKey || e.ctrlKey) {
-                  st.setSelection(
-                    selection.includes(cell.id) ? selection.filter((i) => i !== cell.id) : [...selection, cell.id],
-                  )
-                } else if (!selection.includes(cell.id)) {
-                  st.setSelection([cell.id])
-                }
-              }}
-              onStartEdit={() => store.setState({ editingCellId: cell.id, selection: [cell.id] })}
-              onDragStart={(e) => {
-                if (cell.locked || e.button !== 0) return
-                e.preventDefault()
-                const st = store.getState()
-
-                  // Ensure we exit text editing mode so Delete removes the cell, not text.
-                  ; (document.activeElement as HTMLElement | null)?.blur()
-                store.setState({ editingCellId: null })
-
-                const ids = st.selection.includes(cell.id) ? st.selection : [cell.id]
-                if (!st.selection.includes(cell.id)) st.setSelection([cell.id])
-                st.pushHistory()
-                const p = toCanvas(e)
-                const origin: Record<string, { x: number; y: number }> = {}
-                for (const c of page.cells) if (ids.includes(c.id)) origin[c.id] = { x: c.x, y: c.y }
-                setDrag({ mode: 'move', startX: p.x, startY: p.y, origin })
-              }}
-              onResizeStart={(e, dir) => {
-                if (cell.locked || e.button !== 0) return
-                e.preventDefault()
-                e.stopPropagation()
-                const st = store.getState()
-
-                  // Ensure we exit text editing mode.
-                  ; (document.activeElement as HTMLElement | null)?.blur()
-                store.setState({ editingCellId: null })
-
-                st.pushHistory()
-                const p = toCanvas(e)
-                setDrag({ mode: 'resize', id: cell.id, dir, startX: p.x, startY: p.y, box: { ...cell } })
-              }}
-              onChange={(patch) => store.getState().updateCell(cell.id, patch)}
-              onAutoSize={(patch) => store.getState().updateCell(cell.id, patch, false, true, true)}
-              onResolveConflict={(action) => store.getState().resolveConflict(cell.id, action)}
-              onContextMenu={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                if (suppressContextMenuRef.current) {
-                  suppressContextMenuRef.current = false
-                  return
-                }
-                // Right-clicking an artifact link gets an artifact-specific menu
-                const artifactAnchor = (e.target as HTMLElement).closest('a[href^="artifact:"]') as HTMLAnchorElement | null
-                if (artifactAnchor) {
-                  const href = artifactAnchor.getAttribute('href') || ''
-                  let rel = href.replace(/^artifact:\/\//i, '')
-                  if (rel.toLowerCase().startsWith('local/')) rel = rel.slice(6)
-                  rel = decodeURIComponent(rel)
-                  setMenu({
-                    x: e.clientX,
-                    y: e.clientY,
-                    items: [
-                      {
-                        label: 'Open artifact',
-                        icon: <ArtifactI />,
-                        onClick: () => storage.openExternal(href),
-                      },
-                      {
-                        label: 'Edit artifact...',
-                        onClick: () => {
-                          useActiveEditor.getState().setArtifactModalOpen(true)
-                        },
-                      },
-                      {
-                        label: 'Show in File Explorer',
-                        onClick: () => {
-                          storage.revealArtifact(rel)
-                        },
-                      },
-                      { separator: true },
-                      {
-                        label: 'Copy artifact path',
-                        onClick: () => {
-                          navigator.clipboard.writeText(rel)
-                        },
-                      },
-                    ],
-                  })
-                  return
-                }
-
-                // Right-clicking a vertical line or column gap gets its own menu.
-                const lineItems = columnLineMenu(e.target)
-                if (lineItems) {
-                  setMenu({ x: e.clientX, y: e.clientY, items: lineItems })
-                  return
-                }
-                setMenu({ x: e.clientX, y: e.clientY, items: cellMenu(cell, e) })
-              }}
-              onDeleteSelf={() => store.getState().deleteCells([cell.id])}
-            />
-          ))}
+          {cells.map((cell) => {
+            const h = handlersFor(cell.id)
+            return (
+              <CellView
+                key={cell.id}
+                cell={cell}
+                settings={settings}
+                tool={tool}
+                selected={selection.includes(cell.id)}
+                editing={editingCellId === cell.id}
+                onSelect={h.onSelect}
+                onStartEdit={h.onStartEdit}
+                onDragStart={h.onDragStart}
+                onResizeStart={h.onResizeStart}
+                onChange={h.onChange}
+                onAutoSize={h.onAutoSize}
+                onResolveConflict={h.onResolveConflict}
+                onContextMenu={h.onContextMenu}
+                onDeleteSelf={h.onDeleteSelf}
+              />
+            )
+          })}
 
           {drag.mode === 'marquee' && (
             <div
@@ -725,6 +774,28 @@ export default function Canvas() {
     {settings.showMinimap !== false && <Minimap wrap={wrapEl} page={page} size={size} zoom={zoom} />}
     </div>
   )
+}
+
+/** What Canvas does for a cell, written against the latest render. */
+interface CellImpl {
+  onSelect(cell: Cell, e: React.MouseEvent): void
+  onStartEdit(cell: Cell): void
+  onDragStart(cell: Cell, e: React.PointerEvent): void
+  onResizeStart(cell: Cell, e: React.PointerEvent, dir: string): void
+  onContextMenu(cell: Cell, e: React.MouseEvent): void
+}
+
+/** The callbacks one cell keeps for as long as it is on the page. */
+interface CellHandlers {
+  onSelect(e: React.MouseEvent): void
+  onStartEdit(): void
+  onDragStart(e: React.PointerEvent): void
+  onResizeStart(e: React.PointerEvent, dir: string): void
+  onChange(patch: Partial<Cell>): void
+  onAutoSize(patch: Partial<Cell>): void
+  onResolveConflict(action: 'keep-both' | 'use-this' | 'discard' | 'keep' | 'delete'): void
+  onContextMenu(e: React.MouseEvent): void
+  onDeleteSelf(): void
 }
 
 function pairs(pts: number[]) {

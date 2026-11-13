@@ -632,8 +632,7 @@ function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(
 
 function Suggestions({ onVoice }: { onVoice?(): void }) {
   const send = useAgent((s) => s.send)
-  const page = useStore((s) => s.page)
-  const has = Boolean(page?.cells.length)
+  const has = useStore((s) => Boolean(s.page?.cells.length))
   const list = has
     ? [
         'Summarize what is on my screen',

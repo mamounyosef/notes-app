@@ -468,7 +468,9 @@ export const useStore = create<State>((set, get) => ({
   ready: false,
   workspace: emptyWorkspace(),
   pageCellCounts: {},
-  setPageCellCount: (id, n) => set((s) => ({ pageCellCounts: { ...s.pageCellCounts, [id]: n } })),
+  setPageCellCount: (id, n) => {
+    if (get().pageCellCounts[id] !== n) set((s) => ({ pageCellCounts: { ...s.pageCellCounts, [id]: n } }))
+  },
   settings: DEFAULT_SETTINGS,
   page: null,
   activePageId: null,

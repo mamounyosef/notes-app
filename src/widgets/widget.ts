@@ -214,8 +214,24 @@ function mermaidConfig(t: WidgetTheme) {
   }
 }
 
+/**
+ * Drawings already made, by source and theme. Going back to a page (or a tab) shows its
+ * diagrams without laying them out again, which is the slow part of opening such a page.
+ */
+const mermaidDone = new Map<string, string>()
+const MERMAID_KEEP = 60
+
 /** Mermaid text to SVG. Throws with Mermaid's own message on a syntax error. */
 export function renderMermaid(code: string, t: WidgetTheme): Promise<string> {
+  const key = `${JSON.stringify(t)}
+${code.trim()}`
+  const done = mermaidDone.get(key)
+  if (done !== undefined) {
+    // Most recently used goes last, so the oldest is the one dropped.
+    mermaidDone.delete(key)
+    mermaidDone.set(key, done)
+    return Promise.resolve(done)
+  }
   mermaidMod = mermaidMod || import('mermaid').then((m) => m.default)
   const job = queue.then(async () => {
     const mermaid = await mermaidMod!
@@ -223,6 +239,8 @@ export function renderMermaid(code: string, t: WidgetTheme): Promise<string> {
     const id = `wmmd${Date.now().toString(36)}${seq++}`
     try {
       const { svg } = await mermaid.render(id, code.trim())
+      mermaidDone.set(key, svg)
+      if (mermaidDone.size > MERMAID_KEEP) mermaidDone.delete(mermaidDone.keys().next().value!)
       return svg as string
     } finally {
       document.getElementById(id)?.remove()

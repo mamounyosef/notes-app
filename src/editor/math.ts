@@ -407,10 +407,12 @@ function makeNodeView(display: boolean) {
       ignoreMutation: () => true,
       update(updated: any) {
         if (updated.type.name !== node.type.name) return false
+        // KaTeX is the slow part: draw again only when the formula changed (or after editing).
+        const same = updated.attrs.latex === node.attrs.latex && view.childNodes.length > 0
         node = updated
         dom.dataset.latex = updated.attrs.latex
         applyScale(dom, updated.attrs.scale)
-        if (!editing) render(view, updated.attrs.latex, display)
+        if (!editing && !same) render(view, updated.attrs.latex, display)
         return true
       },
       destroy() {

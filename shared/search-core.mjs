@@ -88,13 +88,43 @@ function distance(a, b, max) {
 
 const allowedTypos = (t) => (t.length >= 8 ? 2 : t.length >= 4 ? 1 : 0)
 
-/** Words of a folded text with their positions. */
+/**
+ * Distinct words of a folded text, each with the position it first appears at. A repeat
+ * can never match better than its first appearance, so matching skips repeats.
+ */
 function wordsOf(text) {
   const out = []
+  const seen = new Set()
   const re = /[\p{L}\p{N}]+/gu
   let m
-  while ((m = re.exec(text))) out.push({ w: m[0], i: m.index })
+  while ((m = re.exec(text))) {
+    if (seen.has(m[0])) continue
+    seen.add(m[0])
+    out.push({ w: m[0], i: m.index })
+  }
   return out
+}
+
+/** A text made ready to match: folded, and its words. */
+function prepare(text) {
+  const folded = fold(text)
+  return { folded, words: wordsOf(folded) }
+}
+
+/**
+ * A cell's plain text, prepared, kept with the cell object until its HTML changes. The
+ * desktop app keeps parsed pages between searches, so each query reuses this work.
+ */
+const cellCache = new WeakMap()
+function cellBody(cell) {
+  const html = cell.html || ''
+  let c = cellCache.get(cell)
+  if (!c || c.html !== html) {
+    const text = stripHtml(html)
+    c = { html, text, prep: prepare(text) }
+    if (cell && typeof cell === 'object') cellCache.set(cell, c)
+  }
+  return c
 }
 
 /**
@@ -131,9 +161,8 @@ function matchTerm(term, text, words) {
 }
 
 /** Scores one field; returns { score, matched: Set<term>, marks: [start,end][] }. */
-function scoreField(q, text, weight) {
-  const folded = fold(text)
-  const words = wordsOf(folded)
+function scoreField(q, text, weight, prep = prepare(text)) {
+  const { folded, words } = prep
   const matched = new Set()
   const marks = []
   /** How each term matched here, and the word it matched (shown for near matches). */
@@ -232,8 +261,8 @@ export function searchPages(query, pages, now = Date.now()) {
     const bodies = []
     for (const cell of page.cells || []) {
       const ct = scoreField(q, cell.title || '', FIELD_WEIGHT.cellTitle)
-      const text = stripHtml(cell.html)
-      const body = scoreField(q, text, FIELD_WEIGHT.body)
+      const { text, prep } = cellBody(cell)
+      const body = scoreField(q, text, FIELD_WEIGHT.body, prep)
       if (!ct.score && !body.score) continue
       ct.matched.forEach((t) => pageMatched.add(t))
       body.matched.forEach((t) => pageMatched.add(t))

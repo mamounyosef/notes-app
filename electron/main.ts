@@ -634,17 +634,28 @@ ipcMain.handle('asset:import', async (_e, filePath: string) => {
 
 /** Parsed page files, kept until the file changes, so each keystroke searches from memory. */
 const searchCache = new Map<string, { mtime: number; page: any }>()
+/** The tree's page index, kept until workspace.json changes. */
+let treeCache: { file: string; mtime: number; size: number; index: ReturnType<typeof pageIndex> } | null = null
+
+async function searchIndex() {
+  const file = path.join(vaultPath, 'workspace.json')
+  try {
+    const st = await fsp.stat(file)
+    if (treeCache && treeCache.file === file && treeCache.mtime === st.mtimeMs && treeCache.size === st.size) return treeCache.index
+    const index = pageIndex(JSON.parse(await fsp.readFile(file, 'utf8')).tree || [])
+    treeCache = { file, mtime: st.mtimeMs, size: st.size, index }
+    return index
+  } catch {
+    /* no tree yet */
+    treeCache = null
+    return pageIndex([])
+  }
+}
 
 /** Ranked, typo tolerant search over every page in the tree (see shared/search-core.mjs). */
 ipcMain.handle('search:all', async (_e, query: string) => {
   if (!String(query || '').trim()) return []
-  let tree: any[] = []
-  try {
-    tree = JSON.parse(await fsp.readFile(path.join(vaultPath, 'workspace.json'), 'utf8')).tree || []
-  } catch {
-    /* no tree yet */
-  }
-  const index = pageIndex(tree)
+  const index = await searchIndex()
   const dir = path.join(vaultPath, 'pages')
   const pages: any[] = []
   await Promise.all(

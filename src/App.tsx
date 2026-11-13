@@ -36,10 +36,11 @@ export default function App() {
   const settings = useStore((s) => s.settings)
   const setSettings = useStore((s) => s.setSettings)
   const workspace = useStore((s) => s.workspace)
-  const page = useStore((s) => s.page)
+  // Only what the frame shows of the open page: subscribing to the page itself would
+  // redraw the whole window (panes, tabs, toolbar) on every keystroke.
+  const pageId = useStore((s) => s.page?.id ?? null)
   const activePageId = useStore((s) => s.activePageId)
   const zoom = useStore((s) => s.zoom)
-  const dirty = useStore((s) => s.dirty)
   const canGoBack = useStore((s) => s.navBack.length > 0)
   const canGoForward = useStore((s) => s.navForward.length > 0)
   const syncCount = useStore((s) => s.conflicts.cells.length + s.conflicts.orphans.length)
@@ -566,8 +567,8 @@ export default function App() {
         </button>
         <button className="tb-btn" title="Search (Ctrl+F)" onClick={() => setShowSearch(true)}><SearchIcon /> Search</button>
         <TabStrip onNewTab={openNewTab} />
-        <span className="tb-path" title={page ? pathTo(workspace.tree, page.id).map((n) => n.title).join('  /  ') : ''}>
-          {page ? pathTo(workspace.tree, page.id).slice(0, -1).map((n) => n.title).join('  /  ') : ''}
+        <span className="tb-path" title={pageId ? pathTo(workspace.tree, pageId).map((n) => n.title).join('  /  ') : ''}>
+          {pageId ? pathTo(workspace.tree, pageId).slice(0, -1).map((n) => n.title).join('  /  ') : ''}
         </span>
         {(syncCount > 0 || syncProblem) && (
           <button
@@ -635,14 +636,7 @@ export default function App() {
         >
           <ErrorBoundary label="the toolbar"><Toolbar /></ErrorBoundary>
           <ErrorBoundary label="the page"><Canvas /></ErrorBoundary>
-          {settings.showStatusBar && (
-            <div className="statusbar">
-              <span>{page ? `${page.cells.length} cells` : 'No page'}</span>
-              <span className={syncError ? 'status-error' : ''}>{syncError ? 'Not saved yet, retrying' : dirty ? 'Saving...' : 'Saved'}</span>
-              <div className="spacer" />
-              <button title="Keyboard shortcuts" onClick={() => setShowKeys(true)}>Shortcuts</button>
-            </div>
-          )}
+          {settings.showStatusBar && <StatusBar onShortcuts={() => setShowKeys(true)} />}
         </div>
         {agentOpen && <ErrorBoundary label="the assistant"><AgentPanel /></ErrorBoundary>}
       </div>
@@ -660,6 +654,22 @@ export default function App() {
       <NoteImageHost />
       {toast && <div className="toast">{toast}</div>}
       <ClaudeOutside />
+    </div>
+  )
+}
+
+/** Its own component, so "Saving..." and "Saved" do not redraw the whole window. */
+function StatusBar({ onShortcuts }: { onShortcuts(): void }) {
+  const hasPage = useStore((s) => Boolean(s.page))
+  const cells = useStore((s) => s.page?.cells.length ?? 0)
+  const dirty = useStore((s) => s.dirty)
+  const syncError = useStore((s) => s.syncError)
+  return (
+    <div className="statusbar">
+      <span>{hasPage ? `${cells} cells` : 'No page'}</span>
+      <span className={syncError ? 'status-error' : ''}>{syncError ? 'Not saved yet, retrying' : dirty ? 'Saving...' : 'Saved'}</span>
+      <div className="spacer" />
+      <button title="Keyboard shortcuts" onClick={onShortcuts}>Shortcuts</button>
     </div>
   )
 }
