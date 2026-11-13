@@ -3,6 +3,7 @@ import { agentApi, type KeyInfo } from '../../agent/api'
 import { thinkSettingOf, useAgent } from '../../agent/store'
 import { MODELS, DEFAULT_MODEL, PROVIDER_LABEL, canStopThinking, modelInfo, fmtCtx, paramsLabel, type Provider } from '../../agent/models'
 import { ThinkLevels } from './ThinkControl'
+import { claudeApi, claudeAvailable, useClaude } from '../../agent/claude'
 
 const timeOf = (ms: number) => new Date(ms).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 
@@ -96,6 +97,84 @@ function KeyRow({ provider, hint }: { provider: Provider; hint: string }) {
   )
 }
 
+type LinkStatus = Awaited<ReturnType<typeof claudeApi.linkStatus>>
+
+/**
+ * Claude: the models inside Notes (Claude Code on this computer) and Notes
+ * inside Claude (the desktop app's chats and Claude Code, through the
+ * Notes MCP server).
+ */
+function ClaudeRow() {
+  const installed = useClaude((s) => s.installed)
+  const version = useClaude((s) => s.version)
+  const limits = useClaude((s) => s.limits)
+  const [link, setLink] = useState<LinkStatus | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+  const [msg, setMsg] = useState('')
+
+  const refresh = async () => {
+    useClaude.getState().refresh(true)
+    useClaude.getState().refreshUsage()
+    if (claudeAvailable) setLink(await claudeApi.linkStatus().catch(() => null))
+  }
+  useEffect(() => {
+    refresh()
+  }, [])
+
+  const toggle = async (target: 'desktop' | 'code', on: boolean) => {
+    setBusy(target)
+    setMsg('')
+    const r = await claudeApi.connect(target, on)
+    setBusy(null)
+    if (!r.ok) setMsg(r.error || 'Failed.')
+    else if (target === 'desktop') setMsg(on ? 'Added to the Claude app. Quit Claude fully (tray icon, Quit) and open it again to load Notes.' : 'Removed from the Claude app. Restart Claude to unload it.')
+    else setMsg(on ? 'Added to Claude Code for all your projects. New Claude Code sessions have the Notes tools.' : 'Removed from Claude Code.')
+    refresh()
+  }
+
+  const row = (target: 'desktop' | 'code', title: string, sub: string, st?: { connected: boolean; current: boolean }) => (
+    <div className="set-row">
+      <label>
+        {title}
+        <span className="sub">
+          {sub} {st?.connected ? (st.current ? 'Connected.' : 'Connected to another copy of Notes: connect again to point it here.') : 'Not connected.'}
+        </span>
+      </label>
+      <div className="row-inline">
+        {st?.connected && st.current ? (
+          <button className="btn" disabled={busy !== null} onClick={() => toggle(target, false)}>Disconnect</button>
+        ) : (
+          <button className="btn primary" disabled={busy !== null || !installed || link?.packaged === false} onClick={() => toggle(target, true)}>
+            {busy === target ? 'Connecting...' : 'Connect'}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+
+  return (
+    <>
+      <div className="set-row">
+        <label>
+          Claude
+          <span className="sub">
+            {installed === null
+              ? 'Looking for Claude Code...'
+              : installed
+                ? `Claude Code ${version || ''} found. Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5 are at the top of the model menu, on your own Claude plan${limits?.plan ? ` (${limits.plan})` : ''}: no API key needed.`
+                : 'Claude Code is not installed. Install it from claude.com/code, run "claude" once in a terminal to sign in, then press Check.'}
+          </span>
+        </label>
+        <button className="btn" onClick={refresh}>Check</button>
+      </div>
+      {row('desktop', 'Notes in the Claude app', 'Lets chats in the Claude desktop app read, search, write and draw in your notes.', link?.desktop)}
+      {row('code', 'Notes in Claude Code', 'Lets Claude Code (terminal and the desktop Code tab) work on your notes too.', link?.code)}
+      {link?.packaged === false && <div className="empty-hint" style={{ padding: "2px 0 8px" }}>Connect from the installed Notes app; a development run would register the wrong program.</div>}
+      {msg && <div className="empty-hint" style={{ padding: "2px 0 8px" }}>{msg}</div>}
+    </>
+  )
+}
+
 /** Settings, AI: the service keys (this computer only), model and thinking. */
 export default function AiSettings() {
   const prefs = useAgent((s) => s.prefs)
@@ -103,6 +182,7 @@ export default function AiSettings() {
   return (
     <div className="set-group ai-settings">
       <h3>Assistant</h3>
+      <ClaudeRow />
       <KeyRow provider="ollama" hint="Create one at ollama.com, Settings, Keys." />
       <KeyRow provider="openrouter" hint="For the free OpenRouter models. Create one at openrouter.ai, Keys." />
       <div className="set-row">

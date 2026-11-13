@@ -1,0 +1,119 @@
+/* ---------- Claude: header pill, details popover, model menu, outside edits ---------- */
+
+:root {
+  --claude: #d97757;
+}
+
+.cl-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 8px 0 5px;
+  border-radius: 14px;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-faint);
+}
+.cl-pill:hover,
+.cl-pill.on { background: var(--bg-3); color: var(--text); }
+
+.cl-cache .arc { stroke: var(--claude); transition: stroke-dasharray 1s linear; }
+.cl-cache.ok { color: var(--claude); }
+.cl-cache.warm { color: #e5c07b; }
+.cl-cache.warm .arc { stroke: #e5c07b; }
+.cl-cache.cold { color: var(--text-faint); }
+.cl-cache.busy { color: var(--claude); animation: cl-breathe 1.6s ease-in-out infinite; }
+.cl-cache.busy .arc { stroke-dasharray: 44 44 !important; }
+@keyframes cl-breathe { 50% { opacity: 0.45; } }
+.cl-cache-t { min-width: 22px; }
+
+.cl-plan {
+  position: relative;
+  width: 26px;
+  height: 5px;
+  border-radius: 3px;
+  background: var(--line);
+  overflow: hidden;
+}
+.cl-plan i { position: absolute; inset: 0 auto 0 0; border-radius: 3px; background: var(--claude); }
+.cl-plan.warm i { background: #e5c07b; }
+.cl-plan.hot i { background: #e06c75; }
+
+.cl-pop .ci-body { padding-bottom: 14px; }
+.cl-sec-t {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 14px 0 6px;
+  font-size: 10.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+.cl-sec-t:first-child { margin-top: 2px; }
+.cl-bars { display: grid; gap: 10px; }
+.cl-bar-head { display: flex; justify-content: space-between; font-size: 12.5px; }
+.cl-bar-head b { font-variant-numeric: tabular-nums; }
+.cl-bar-head b.warm { color: #e5c07b; }
+.cl-bar-head b.hot { color: #e06c75; }
+.cl-track { height: 7px; margin: 4px 0 3px; border-radius: 4px; background: var(--bg-3); overflow: hidden; }
+.cl-track i { display: block; height: 100%; border-radius: 4px; background: var(--claude); transition: width 0.4s ease; }
+.cl-track.warm i { background: #e5c07b; }
+.cl-track.hot i { background: #e06c75; }
+.cl-bar-sub { font-size: 11px; color: var(--text-faint); }
+.cl-break { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 8px; font-size: 11px; color: var(--text-faint); }
+.cl-break b { color: var(--text-dim); font-weight: 600; }
+
+.cl-cache-big { display: flex; align-items: baseline; gap: 6px; }
+.cl-cache-big .n { font-size: 22px; font-weight: 650; font-variant-numeric: tabular-nums; }
+.cl-cache-big.warm .n { color: var(--claude); }
+.cl-cache-big.cold .n,
+.cl-cache-big.none .n { color: var(--text-faint); }
+.cl-cache-big .of { font-size: 12px; color: var(--text-faint); }
+.ci-note.dim { opacity: 0.75; margin-top: 12px; }
+
+.ag-icon-btn.sm { width: 22px; height: 22px; }
+.spin { animation: cl-spin 0.9s linear infinite; }
+@keyframes cl-spin { to { transform: rotate(360deg); } }
+
+/* Model menu */
+.mp-sec.claude { color: var(--claude); }
+.mp-claude-mark { font-size: 12px; line-height: 1; }
+.mp-sec-sub { text-transform: none; letter-spacing: 0; color: var(--text-faint); font-size: 10.5px; margin-left: 2px; }
+.mp-prov.claude {
+  color: var(--claude);
+  background: color-mix(in srgb, var(--claude) 15%, transparent);
+}
+.mp-price.plan { color: var(--claude); }
+
+/* Changes made from the Claude app or Claude Code */
+.cl-outs {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 300;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: min(380px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.cl-out {
+  pointer-events: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 6px 8px 12px;
+  border-radius: 12px;
+  background: var(--bg-2);
+  border: 1px solid color-mix(in srgb, var(--claude) 40%, var(--line));
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  animation: ci-pop 0.18s cubic-bezier(.2, .9, .3, 1.2);
+  font-size: 12.5px;
+}
+.cl-out.undone { opacity: 0.7; }
+.cl-out-mark { color: var(--claude); font-size: 14px; }
+.cl-out-t { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.cl-out-t b { font-size: 11px; color: var(--claude); font-weight: 600; }
+.cl-out-t span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text); }

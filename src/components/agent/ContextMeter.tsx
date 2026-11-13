@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from 'react'
 import { useAgent, contextBreakdown, estimateTokens, chatCost, thinkSettingOf } from '../../agent/store'
-import { modelInfo, costOf, fmtMoney, fmtCtx, fmtDate, paramsLabel, fmtBudget, THINK_LABEL } from '../../agent/models'
+import { modelInfo, costOf, fmtMoney, fmtCtx, fmtDate, paramsLabel, fmtBudget, THINK_LABEL, isClaude } from '../../agent/models'
+import { useClaude, claudeSystemPrompt, claudeToolDefs } from '../../agent/claude'
 import { SYSTEM_PROMPT } from '../../agent/prompt'
 import { TOOL_DEFS } from '../../agent/tools'
 import { buildContext } from '../../agent/context'
@@ -19,19 +20,34 @@ const COLORS: Record<string, string> = {
 
 export const fmtTokens = (n: number) => (n >= 100_000 ? `${Math.round(n / 1000)}K` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n))
 
-function useBreakdown() {
+/** Colors for Claude Code's own categories, in its order. */
+const CLAUDE_COLORS = ['#c678dd', '#61afef', '#56b6c2', '#e06c75', '#98c379', '#e5c07b', '#d19a66', '#be8cff']
+
+type Part = { key: string; label: string; tokens: number; detail?: string; color?: string }
+
+function useBreakdown(): { parts: Part[]; total: number; exact: boolean; limit: number; claude: boolean } {
   const chat = useAgent((s) => s.chat)
   const usage = useAgent((s) => s.usage)
   const busy = useAgent((s) => s.busy)
   const model = useAgent((s) => s.prefs.model)
+  const claudeCtx = useClaude((s) => (chat ? s.ctx[chat.id] : undefined))
   // Recompute when messages change or a request finishes.
-  return useMemo(() => contextBreakdown(chat, undefined, model), [chat, usage, busy, model])
+  return useMemo(() => {
+    // Claude chats: Claude Code's own count, by its own categories (what it really sends).
+    if (isClaude(model) && claudeCtx && chat?.claude?.head) {
+      const parts = claudeCtx.parts
+        .filter((p) => !/free space|autocompact buffer/i.test(p.name))
+        .map((p, i) => ({ key: `c${i}`, label: p.name, tokens: p.tokens, color: CLAUDE_COLORS[i % CLAUDE_COLORS.length] }))
+      return { parts, total: claudeCtx.total, exact: true, limit: claudeCtx.max || modelInfo(model).context, claude: true }
+    }
+    return { ...contextBreakdown(chat, undefined, model), limit: modelInfo(model).context, claude: false }
+  }, [chat, usage, busy, model, claudeCtx])
 }
 
 /** Small ring in the header: how full the context window is. */
 export function ContextRing({ onClick, active }: { onClick(): void; active?: boolean }) {
-  const { total, exact } = useBreakdown()
-  const CONTEXT_LIMIT = modelInfo(useAgent((s) => s.prefs.model)).context
+  const { total, exact, limit } = useBreakdown()
+  const CONTEXT_LIMIT = limit
   const pct = Math.min(1, total / CONTEXT_LIMIT)
   const r = 8
   const c = 2 * Math.PI * r
@@ -94,14 +110,17 @@ function CopyBtn({ text }: { text: string }) {
 
 /** Full view of what goes to the model: usage, breakdown, prompt, tools, live context. */
 export function ContextInspector({ onClose }: { onClose(): void }) {
-  const { parts, total, exact } = useBreakdown()
+  const { parts, total, exact, limit, claude } = useBreakdown()
   const usage = useAgent((s) => s.usage)
   const prefs = useAgent((s) => s.prefs)
   const think = thinkSettingOf(prefs, prefs.model)
   const thinkLabel = think.budget ? `Up to ${fmtBudget(think.budget)} tokens` : THINK_LABEL[think.level]
   const chat = useAgent((s) => s.chat)
   const info = modelInfo(prefs.model)
-  const CONTEXT_LIMIT = info.context
+  const CONTEXT_LIMIT = limit
+  const onClaude = isClaude(prefs.model)
+  const shownPrompt = onClaude ? claudeSystemPrompt() : SYSTEM_PROMPT
+  const shownTools = onClaude ? claudeToolDefs().map((t) => ({ name: t.name, description: t.description })) : TOOL_DEFS.map((t) => ({ name: t.function.name, description: t.function.description }))
   const cost = chatCost(chat)
   const lastCost = usage ? costOf(usage.model || prefs.model, usage) : null
   const popRef = React.useRef<HTMLDivElement>(null)
@@ -146,17 +165,22 @@ export function ContextInspector({ onClose }: { onClose(): void }) {
         </div>
         <div className="ci-bar">
           {parts.map((p) => (
-            <i key={p.key} style={{ width: `${(p.tokens / CONTEXT_LIMIT) * 100}%`, background: COLORS[p.key] }} title={`${p.label}: ${p.tokens.toLocaleString()}`} />
+            <i key={p.key} style={{ width: `${(p.tokens / CONTEXT_LIMIT) * 100}%`, background: p.color || COLORS[p.key] }} title={`${p.label}: ${p.tokens.toLocaleString()}`} />
           ))}
         </div>
         <div className="ci-note">
-          {exact ? 'Exact count from Ollama for the last request, split by estimate.' : 'Estimated. The exact count appears after the next reply.'} {fmtTokens(free)} free.
+          {claude
+            ? 'Exact count from Claude Code, by its own categories. It compacts the conversation by itself near the limit.'
+            : exact
+              ? 'Exact count from Ollama for the last request, split by estimate.'
+              : 'Estimated. The exact count appears after the next reply.'}{' '}
+          {fmtTokens(free)} free.
         </div>
 
         <div className="ci-parts">
           {parts.map((p) => (
             <div key={p.key} className="ci-part">
-              <i style={{ background: COLORS[p.key] }} />
+              <i style={{ background: p.color || COLORS[p.key] }} />
               <div className="l">
                 <span>{p.label}</span>
                 {p.detail && <em>{p.detail}</em>}
@@ -175,23 +199,29 @@ export function ContextInspector({ onClose }: { onClose(): void }) {
             <div><em>Time</em><span>{(usage.ms / 1000).toFixed(1)}s</span></div>
           </div>
         )}
-        <div className="ci-stats two">
-          <div><em>Last request cost</em><span>{!usage ? '-' : lastCost === null ? 'not listed' : fmtMoney(lastCost)}</span></div>
-          <div><em>This chat so far</em><span>{fmtMoney(cost.total)}{cost.priced ? '' : ' +'}</span></div>
-        </div>
-        <div className="ci-note">{info.price ? `${info.name}: $${info.price.input} in, $${info.price.output} out per 1M tokens${info.price.cached !== null ? `, $${info.price.cached} cached` : ''}. Plan credits are used first.` : `${info.name} has no listed price yet.`}</div>
+        {onClaude ? (
+          <div className="ci-note">Included in your Claude plan: no per-token charge. The Claude pill in the header shows how much of the plan's limits is used and how long the prompt cache stays warm.</div>
+        ) : (
+          <>
+            <div className="ci-stats two">
+              <div><em>Last request cost</em><span>{!usage ? '-' : lastCost === null ? 'not listed' : fmtMoney(lastCost)}</span></div>
+              <div><em>This chat so far</em><span>{fmtMoney(cost.total)}{cost.priced ? '' : ' +'}</span></div>
+            </div>
+            <div className="ci-note">{info.price ? `${info.name}: $${info.price.input} in, $${info.price.output} out per 1M tokens${info.price.cached !== null ? `, $${info.price.cached} cached` : ''}. Plan credits are used first.` : `${info.name} has no listed price yet.`}</div>
+          </>
+        )}
 
-        <Section title="System prompt" meta={`${fmtTokens(estimateTokens(SYSTEM_PROMPT))} tokens`}>
-          <CopyBtn text={SYSTEM_PROMPT} />
-          <pre className="ci-pre">{SYSTEM_PROMPT}</pre>
+        <Section title="System prompt" meta={`${fmtTokens(estimateTokens(shownPrompt))} tokens`}>
+          <CopyBtn text={shownPrompt} />
+          <pre className="ci-pre">{shownPrompt}</pre>
         </Section>
 
-        <Section title="Tools" meta={`${TOOL_DEFS.length} tools`}>
+        <Section title="Tools" meta={`${shownTools.length} tools${onClaude ? ' + WebSearch, WebFetch' : ''}`}>
           <div className="ci-tools">
-            {TOOL_DEFS.map((t) => (
-              <div key={t.function.name} className="ci-tool">
-                <code>{t.function.name}</code>
-                <span>{t.function.description}</span>
+            {shownTools.map((t) => (
+              <div key={t.name} className="ci-tool">
+                <code>{t.name}</code>
+                <span>{t.description}</span>
               </div>
             ))}
           </div>
@@ -208,8 +238,14 @@ export function ContextInspector({ onClose }: { onClose(): void }) {
         <Section title="Settings" meta={`thinking ${thinkLabel.toLowerCase()}`}>
           <div className="ci-kv"><em>Model</em><span>{prefs.model}</span></div>
           <div className="ci-kv"><em>Thinking</em><span>{thinkLabel}</span></div>
-          <div className="ci-kv"><em>Temperature</em><span>0.4</span></div>
-          <div className="ci-kv"><em>Endpoint</em><span>ollama.com/api/chat</span></div>
+          {onClaude ? (
+            <div className="ci-kv"><em>Runs in</em><span>Claude Code on this computer (your Claude plan)</span></div>
+          ) : (
+            <>
+              <div className="ci-kv"><em>Temperature</em><span>0.4</span></div>
+              <div className="ci-kv"><em>Endpoint</em><span>{info.provider === 'openrouter' ? 'openrouter.ai/api/v1' : 'ollama.com/api/chat'}</span></div>
+            </>
+          )}
         </Section>
       </div>
     </div>

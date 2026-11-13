@@ -152,6 +152,12 @@ export interface Chat {
   chosen?: Record<string, { id: string; at: number }>
   /** A spoken conversation (voice mode). */
   voice?: boolean
+  /**
+   * Claude chats: the Claude Code conversations behind this chat. head is
+   * where the latest one stands (after which user message), so the next
+   * message continues it; sessions lists all of them, to delete with the chat.
+   */
+  claude?: { head?: { session: string; tip: string | null; after: string; at?: number }; sessions?: string[] }
 }
 
 export interface ChatSummary {

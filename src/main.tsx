@@ -11,9 +11,16 @@ import 'katex/dist/katex.min.css'
 import './styles/index.css'
 import './styles/agent.css'
 import './styles/voice.css'
+import './styles/claude.css'
+
+import { initClaudeBridge, useClaude, claudeSystemPrompt, claudeGuide } from './agent/claude'
+import { fileToAttachment } from './agent/files'
 
 // Handles for inspecting the app from DevTools and automated tests.
-;(window as any).__notesDebug = { useStore, useAgent, buildContext, keepDroppedStyles, runTool, TurnRecorder, agentToHtml, htmlToAgent, buildWidgetDoc, currentTheme, fromBase64, kindOf }
+;(window as any).__notesDebug = { useStore, useAgent, useClaude, claudeSystemPrompt, claudeGuide, fileToAttachment, buildContext, keepDroppedStyles, runTool, TurnRecorder, agentToHtml, htmlToAgent, buildWidgetDoc, currentTheme, fromBase64, kindOf }
+
+// Claude: runs note tools for chats here and for the Claude app or Claude Code outside Notes.
+initClaudeBridge()
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>

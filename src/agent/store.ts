@@ -17,7 +17,8 @@ import type { LiveSelection } from './selection'
 import { activePath, messageOrder, PENDING, parentKey, ROOT, tipOf, treeOf } from './branches'
 export { messageOrder }
 
-import { DEFAULT_MODEL, MODELS, PROVIDER_LABEL, VISION_MODEL, modelInfo, thinkFields, thinkValue, resolveThink, startLevel, lightestLevel, costOf, type Provider, type ThinkSetting } from './models'
+import { DEFAULT_MODEL, MODELS, PROVIDER_LABEL, VISION_MODEL, modelInfo, thinkFields, thinkValue, resolveThink, startLevel, lightestLevel, costOf, isClaude, claudeEffort, type Provider, type ThinkSetting } from './models'
+import { runClaudeTurn, claudeApi, sessionsOf, compactChat, friendlyError, useClaude } from './claude'
 import { readVoicePrefs, recordSpeed } from '../voice/voicePrefs'
 export { DEFAULT_MODEL }
 const MAX_STEPS = 30
@@ -165,6 +166,8 @@ interface AgentState {
 
   send(text?: string): Promise<void>
   answerAsk(answer: string): void
+  /** Claude chats: has Claude Code summarize the conversation so far, freeing context (/compact). */
+  compact(): Promise<void>
   /** Stops a chat's reply (the open chat by default). */
   stop(chatId?: string): void
   undo(turnId: string): Promise<void>
@@ -725,7 +728,100 @@ export const useAgent = create<AgentState>((set, get) => {
       }
       return map
     }
+    /** Runs one note tool and adds its chip to the chat: the same for every model, Claude included. */
+    const execTool = async (name: string, args: any) => {
+      const model = activeModel(get()).model
+      setS(id, { activity: labelFor(name, model) })
+      const env = {
+        rec,
+        attachments: attachmentsOf(),
+        model,
+        ask: (q: { question: string; options?: string[]; multi?: boolean }) =>
+          new Promise<string>((resolve) => {
+            const askMsg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', meta: { ask: { ...q } } }
+            pushMsg(id, askMsg)
+            setS(id, { pendingAsk: { messageId: askMsg.id, resolve }, activity: 'Waiting for your answer' })
+          }),
+      }
+      // The cells' text before the tool runs, so the reveal can point at exactly what it changed.
+      const before = id === openId && !READ_ONLY.has(name) ? cellTexts() : undefined
+      const result = await runTool(name, args || {}, env)
+      // The same call failing again and again: say so, so the model changes course instead of burning steps.
+      const key = `${name}:${JSON.stringify(args || {})}`
+      if (!result.ok) {
+        const n = (failed.get(key) || 0) + 1
+        failed.set(key, n)
+        if (n >= 2) result.content += `\n\nThis exact call has now failed ${n} times with the same arguments. Do not repeat it: change the arguments, use another tool, or tell the user what is blocking you.`
+      }
+      // Only the chat on screen moves your view; one in the background leaves it alone.
+      const toolMsgId = nanoid(14)
+      if (id === openId && !READ_ONLY.has(name) && rec.changed && result.ok && result.target?.cellId) {
+        const st = useStore.getState()
+        const t = result.target
+        if (st.page?.id === t.pageId)
+          scrollToCell(t.cellId!, {
+            before: before?.get(t.cellId!),
+            anchor: t.anchor,
+            // Remember the exact spot, so clicking this step later lands on it too.
+            onSpot: (spot) =>
+              update(id, (c) => ({
+                ...c,
+                messages: c.messages.map((m) => (m.id === toolMsgId && (m.meta as any)?.target ? { ...m, meta: { ...m.meta, target: { ...(m.meta as any).target, ...spot } } as any } : m)),
+              })),
+          })
+      }
+      pushMsg(id, {
+        id: toolMsgId,
+        at: stamp(),
+        v: 1,
+        role: 'tool',
+        toolName: name,
+        content: result.content,
+        meta: {
+          summary: result.summary,
+          ...(result.detail ? { detail: result.detail } : {}),
+          ...(result.changes?.length ? { changes: result.changes } : {}),
+          ...(result.restored?.length ? { restored: result.restored } : {}),
+          ok: result.ok,
+          ...(result.target ? { target: result.target } : {}),
+          ...(result.helper ? { helper: result.helper } : {}),
+          ...(result.images ? { images: result.images, eyes: modelInfo(model).name } : {}),
+        } as any,
+      })
+      return result
+    }
     try {
+      // Claude runs its own agent loop inside Claude Code; the note tools still run here, through execTool.
+      const am = activeModel(get())
+      if (isClaude(am.model)) {
+        const { effort, noThinking } = claudeEffort(am.model, am.setting)
+        const r = await runClaudeTurn({
+          chatId: id,
+          chat: () => s.chat,
+          model: am.model,
+          effort,
+          noThinking,
+          voice: Boolean(get().voiceOn && id === openId),
+          update: (fn) => update(id, fn),
+          pushMsg: (m) => {
+            // Voice mode times the first word, the same as for the other models.
+            if (id === openId && !turnTimed && m.role === 'assistant' && /\w/.test(m.content || '')) {
+              turnTimed = true
+              recordSpeed(am.model, am.think, Date.now() - turnStart)
+            }
+            pushMsg(id, m)
+          },
+          patchMsg: (mid, patch) => patchMsg(id, mid, patch),
+          setLive: (m) => setS(id, { live: m }),
+          setActivity: (a) => setS(id, { activity: a }),
+          setUsage: (u) => setS(id, { usage: u }),
+          runNoteTool: (name, args) => execTool(name, args),
+          stamp,
+        })
+        firstAssistantId = r.firstAssistantId
+        if (r.error && !s.stopped) setS(id, { error: r.error })
+        return
+      }
       for (let step = 0; step < MAX_STEPS && !s.stopped; step++) {
         // After an empty answer, ask again without thinking: models that reason at length sometimes never get to the reply.
         const reply = await streamOnce(id, emptyTries > 0)
@@ -751,63 +847,7 @@ export const useAgent = create<AgentState>((set, get) => {
         if (!reply.toolCalls?.length) break
         for (const call of reply.toolCalls) {
           if (s.stopped) break
-          setS(id, { activity: labelFor(call.name, activeModel(get()).model) })
-          const env = {
-            rec,
-            attachments: attachmentsOf(),
-            model: activeModel(get()).model,
-            ask: (q: { question: string; options?: string[]; multi?: boolean }) =>
-              new Promise<string>((resolve) => {
-                const askMsg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', meta: { ask: { ...q } } }
-                pushMsg(id, askMsg)
-                setS(id, { pendingAsk: { messageId: askMsg.id, resolve }, activity: 'Waiting for your answer' })
-              }),
-          }
-          // The cells' text before the tool runs, so the reveal can point at exactly what it changed.
-          const before = id === openId && !READ_ONLY.has(call.name) ? cellTexts() : undefined
-          const result = await runTool(call.name, call.arguments || {}, env)
-          // The same call failing again and again: say so, so the model changes course instead of burning steps.
-          const key = `${call.name}:${JSON.stringify(call.arguments || {})}`
-          if (!result.ok) {
-            const n = (failed.get(key) || 0) + 1
-            failed.set(key, n)
-            if (n >= 2) result.content += `\n\nThis exact call has now failed ${n} times with the same arguments. Do not repeat it: change the arguments, use another tool, or tell the user what is blocking you.`
-          }
-          // Only the chat on screen moves your view; one in the background leaves it alone.
-          const toolMsgId = nanoid(14)
-          if (id === openId && !READ_ONLY.has(call.name) && rec.changed && result.ok && result.target?.cellId) {
-            const st = useStore.getState()
-            const t = result.target
-            if (st.page?.id === t.pageId)
-              scrollToCell(t.cellId!, {
-                before: before?.get(t.cellId!),
-                anchor: t.anchor,
-                // Remember the exact spot, so clicking this step later lands on it too.
-                onSpot: (spot) =>
-                  update(id, (c) => ({
-                    ...c,
-                    messages: c.messages.map((m) => (m.id === toolMsgId && (m.meta as any)?.target ? { ...m, meta: { ...m.meta, target: { ...(m.meta as any).target, ...spot } } as any } : m)),
-                  })),
-              })
-          }
-          pushMsg(id, {
-            id: toolMsgId,
-            at: stamp(),
-            v: 1,
-            role: 'tool',
-            toolName: call.name,
-            content: result.content,
-            meta: {
-              summary: result.summary,
-              ...(result.detail ? { detail: result.detail } : {}),
-              ...(result.changes?.length ? { changes: result.changes } : {}),
-              ...(result.restored?.length ? { restored: result.restored } : {}),
-              ok: result.ok,
-              ...(result.target ? { target: result.target } : {}),
-              ...(result.helper ? { helper: result.helper } : {}),
-              ...(result.images ? { images: result.images, eyes: modelInfo(activeModel(get()).model).name } : {}),
-            } as any,
-          })
+          await execTool(call.name, call.arguments || {})
         }
       }
       // Still working when the step limit came: say so, rather than ending without a word.
@@ -843,7 +883,17 @@ export const useAgent = create<AgentState>((set, get) => {
   async function nameChat(c: Chat) {
     const first = activePath(c).find((m) => m.role === 'user')
     if (!first) return
-    const res = await agentApi.complete({
+    const outcome = [...activePath(c)].reverse().find((m) => m.role === 'assistant' && m.content)?.content.slice(0, 600) || ''
+    const titleRule =
+      'Name this chat in 2 to 6 words, describing its topic the way a person would label it in a list (examples: "Fix typos in Learning rate", "Gradient descent comparison table", "Photo of lecture notes"). Use the subject matter, not the action type, and never the words Request, Chat, Query, Conversation, Help or Assistance. Reply with the title only, no quotes, no punctuation at the end.'
+    // Claude chats are named by Claude Haiku on the same plan (one tiny request, no tools).
+    const res = isClaude(activeModel(get()).model)
+      ? await claudeApi.complete({
+          model: 'claude-haiku-5-5',
+          system: titleRule,
+          prompt: [`Message: ${first.content.slice(0, 1200) || first.attachments?.map((a) => a.name).join(', ') || '(attachment)'}`, first.meta?.brief ? `Where: ${first.meta.brief.slice(0, 300)}` : '', `Outcome: ${outcome}`].filter(Boolean).join('\n'),
+        })
+      : await agentApi.complete({
       model: activeModel(get()).model,
       // As light as the model goes: some always think, and refuse a plain off.
       ...thinkValue(activeModel(get()).model, false),
@@ -981,8 +1031,9 @@ export const useAgent = create<AgentState>((set, get) => {
     hasKey: null,
     async refreshKey() {
       // Either service's key lets the assistant run (a model whose service has no key says so when used).
-      const [ollama, openrouter] = await Promise.all([agentApi.keyStatus('ollama'), agentApi.keyStatus('openrouter')])
-      set({ hasKey: ollama.hasKey || openrouter.hasKey })
+      // Claude Code on this computer counts too: it needs no key here (it signs in with the user's own plan).
+      const [ollama, openrouter, claude] = await Promise.all([agentApi.keyStatus('ollama'), agentApi.keyStatus('openrouter'), claudeApi.status()])
+      set({ hasKey: ollama.hasKey || openrouter.hasKey || claude.installed })
     },
 
     chats: [],
@@ -1016,6 +1067,10 @@ export const useAgent = create<AgentState>((set, get) => {
       sessions.delete(id)
       refreshRun(id)
       setQueue(get().queue.filter((q) => q.chatId !== id))
+      // The Claude Code conversations behind it go too, so nothing piles up.
+      const stored = s?.chat || (await chatApi.get(id).catch(() => null))
+      const claudeSessions = sessionsOf(stored)
+      if (claudeSessions.length) claudeApi.forget(id, claudeSessions)
       await chatApi.remove(id)
       backIds = backIds.filter((x) => x !== id)
       forwardIds = forwardIds.filter((x) => x !== id)
@@ -1219,11 +1274,33 @@ export const useAgent = create<AgentState>((set, get) => {
       p.resolve(answer)
     },
 
+    async compact() {
+      const id = openId
+      const s = sessions.get(id)
+      if (!s || s.busy) return
+      const am = activeModel(get())
+      if (!isClaude(am.model)) return
+      const { effort, noThinking } = claudeEffort(am.model, am.setting)
+      setS(id, { busy: true, error: null, since: Date.now(), activity: 'Compacting the conversation' })
+      try {
+        const err = await compactChat({ chatId: id, chat: () => s.chat, model: am.model, effort, noThinking, update: (fn) => update(id, fn) }, (a) => setS(id, { activity: a }))
+        if (err) setS(id, { error: err })
+      } catch (e) {
+        setS(id, { error: friendlyError(e instanceof Error ? e.message : String(e)) })
+      } finally {
+        setS(id, { busy: false, activity: '' })
+        await flushPersist(s)
+        claudeApi.context(id).then((ctx) => ctx && useClaude.setState((st) => ({ ctx: { ...st.ctx, [id]: ctx } })))
+      }
+    },
+
     stop(chatId = openId) {
       const s = sessions.get(chatId)
       if (!s) return
       s.stopped = true
       if (s.currentReq) agentApi.abort(s.currentReq)
+      // A Claude reply runs in Claude Code: interrupt it there (no-op when none is running).
+      if (s.busy) claudeApi.interrupt(chatId)
       const p = s.pendingAsk
       if (p) {
         setS(chatId, { pendingAsk: null })

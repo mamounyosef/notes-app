@@ -13,6 +13,8 @@ import { setupAgent } from './agent'
 import { setupVoice } from './voice'
 import { setupUpdate } from './update'
 import { setupDiagrams } from './diagrams'
+import { setupClaude } from './claude'
+import { setupClaudeLink } from './claude-link'
 
 // Disable hardware acceleration and sandbox to prevent Chromium GPU/D3D11 crash (0xC0000005) on Windows 11
 app.disableHardwareAcceleration()
@@ -595,6 +597,10 @@ const agent = setupAgent({
   log: (...a) => debugLog(...a),
   saveAsset: saveAssetBytes,
 })
+
+// Claude (the user's own Claude Code and plan) inside Notes, and Notes for the Claude app and Claude Code outside it.
+const claude = setupClaude({ getWin: () => win, log: (...a) => debugLog(...a), readBlob: (sha) => agent.chats.readBlob(sha) })
+setupClaudeLink(claude, { log: (...a) => debugLog(...a) })
 
 setupVoice({ getWin: () => win, log: (...a) => debugLog(...a) })
 setupUpdate({ log: (...a) => debugLog(...a) })

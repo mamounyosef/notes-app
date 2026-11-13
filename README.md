@@ -110,6 +110,42 @@ Gemma 4 31B through Ollama Cloud.
 - **Chats sync** between computers through cloud sync (table `agent_chats`
   in `supabase/schema.sql`).
 
+### Claude
+
+Claude Opus 5.5, Sonnet 5.5 and Haiku 5.5 sit at the top of the model menu.
+They run in **Claude Code**, installed on the computer and signed in with your
+own Claude plan, through Anthropic's official Agent SDK: no API key, no
+per-token charge, and Notes never sees your login.
+
+- **Needs:** Claude Code installed (claude.com/code) and signed in once (run
+  `claude` in a terminal).
+- **Same tools:** Claude gets every note tool the other models have (as an
+  in-process MCP server), plus Claude Code's own WebSearch and WebFetch, and
+  Read for attached files only. Nothing else from your Claude Code setup is
+  loaded (no CLAUDE.md, hooks, plugins or other MCP servers).
+- **Light:** each chat gets one Claude Code process while in use, which keeps
+  the conversation and its prompt cache warm between messages. It closes after
+  12 minutes without messages.
+- **Header pill:** the clock ring counts down the prompt cache (one hour on a
+  plan: messages sent while it is warm cost a fraction of the usage); the bar
+  shows the plan's 5-hour window. Click it for the 5-hour and weekly limits,
+  the context window as Claude Code measures it, and **Compact**.
+- **Thinking:** effort Low to Max (Haiku can also switch thinking off).
+- **Edits and regenerations** branch the Claude Code conversation at the right
+  point, so every version continues from what it really saw. Switching models
+  mid-chat works: Claude gets the turns it missed as a transcript.
+- **Kept apart:** these conversations live in their own folder (not your
+  coding projects) and are deleted with the chat.
+
+**Notes in the Claude app and Claude Code.** Settings, AI, **Connect** adds
+the Notes MCP server to the Claude desktop app (`claude_desktop_config.json`,
+restart Claude after) and to Claude Code for all projects
+(`claude mcp add-json --scope user`). Their chats can then read, search, write
+and draw in your notes; each change shows in Notes with an Undo. The server is
+a tiny script run by Notes.exe itself (no Node install needed), started and
+stopped by Claude; when Notes is closed, the first tool call opens it.
+`npm run test:claude-link` tests its MCP protocol.
+
 ## Voice mode
 
 Talk with the assistant out loud and hear it answer. Start it with the

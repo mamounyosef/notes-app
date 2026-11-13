@@ -16,9 +16,17 @@
  *    (mandatory, default_enabled, supported_efforts, default_effort,
  *    supports_max_tokens). No supported_efforts means on/off only; mandatory
  *    means it cannot be switched off (openrouter.ai/docs, reasoning tokens).
+ *  - Claude: run by the user's own Claude Code and Claude plan (electron/claude.ts).
+ *    Facts from platform.claude.com/docs (models overview and effort pages),
+ *    checked 13 November 2026: all three have a 1M token context, 128K output,
+ *    vision and adaptive thinking steered by effort (low, medium, high, xhigh,
+ *    max). Opus 5.5 always thinks; Sonnet 5.5 rejects thinking "disabled";
+ *    Haiku 5.5 takes it at high effort or below. Defaults: medium on Opus 5.5
+ *    and Haiku 5.5, high on Sonnet 5.5. Anthropic does not publish parameter
+ *    counts or architecture.
  */
 
-export type Provider = 'ollama' | 'openrouter'
+export type Provider = 'claude' | 'ollama' | 'openrouter'
 
 /** How hard a model reasons before it answers, lightest first. "on" is a plain switch with no levels. */
 export type ThinkLevel = 'off' | 'minimal' | 'low' | 'on' | 'medium' | 'high' | 'xhigh' | 'max'
@@ -77,6 +85,42 @@ const SUPER_EXPERTS: Experts = { total: 512, active: 22, shared: 1 }
 const NANO_EXPERTS: Experts = { total: 128, active: 6, shared: 1 }
 
 export const MODELS: ModelInfo[] = [
+  {
+    id: 'claude-opus-5-5',
+    name: 'Claude Opus 5.5',
+    provider: 'claude',
+    params: '',
+    context: 1_000_000,
+    released: '',
+    vision: true,
+    think: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'medium' },
+    price: null,
+    note: 'Most capable. Uses your plan fastest.',
+  },
+  {
+    id: 'claude-sonnet-5-5',
+    name: 'Claude Sonnet 5.5',
+    provider: 'claude',
+    params: '',
+    context: 1_000_000,
+    released: '',
+    vision: true,
+    think: { levels: ['low', 'medium', 'high', 'xhigh', 'max'], default: 'high' },
+    price: null,
+    note: 'Best balance of speed and intelligence.',
+  },
+  {
+    id: 'claude-haiku-5-5',
+    name: 'Claude Haiku 5.5',
+    provider: 'claude',
+    params: '',
+    context: 1_000_000,
+    released: '',
+    vision: true,
+    think: { levels: ['off', 'low', 'medium', 'high', 'xhigh', 'max'], default: 'medium' },
+    price: null,
+    note: 'Fastest and lightest on your plan.',
+  },
   {
     id: 'nemotron-3-ultra',
     name: 'Nemotron 3 Ultra',
@@ -314,14 +358,17 @@ export const DEFAULT_MODEL = 'gemma4:31b'
 /** Reads images for models that cannot see: Gemma on Ollama (paid, so no daily cap). */
 export const VISION_MODEL = 'gemma4:31b'
 
-export const PROVIDER_LABEL: Record<Provider, string> = { ollama: 'Ollama', openrouter: 'OpenRouter' }
+export const PROVIDER_LABEL: Record<Provider, string> = { claude: 'Claude', ollama: 'Ollama', openrouter: 'OpenRouter' }
+
+/** Models run by the user's own Claude Code and Claude plan. */
+export const isClaude = (id: string) => modelInfo(id).provider === 'claude'
 
 export function modelInfo(id: string): ModelInfo {
   return (
     MODELS.find((m) => m.id === id) || {
       id,
       name: id,
-      provider: String(id || '').includes('/') ? 'openrouter' : 'ollama',
+      provider: /^claude-/.test(String(id || '')) ? 'claude' : String(id || '').includes('/') ? 'openrouter' : 'ollama',
       params: '?',
       context: 131_072,
       released: '',
@@ -402,6 +449,8 @@ export function resolveThink(id: string, s?: ThinkSetting | null): ThinkSetting 
 export function thinkFields(id: string, s: ThinkSetting): { think?: boolean | string; reasoning?: Record<string, unknown> } {
   const m = modelInfo(id)
   const { level, budget } = resolveThink(id, s)
+  // Claude's effort and thinking go to Claude Code directly (claudeEffort).
+  if (m.provider === 'claude') return {}
   if (m.provider === 'ollama') return { think: level === 'off' ? false : level === 'on' ? true : level }
   const hasEfforts = m.think.levels.some((l) => l !== 'off' && l !== 'on')
   if (level === 'off') return { reasoning: hasEfforts ? { effort: 'none' } : { enabled: false } }
@@ -447,8 +496,17 @@ export function fmtMoney(n: number) {
   return `$${n.toFixed(n < 1 ? 3 : 2)}`
 }
 
+/** Claude's effort and thinking for a level: "off" is effort medium with thinking switched off (Haiku only). */
+export function claudeEffort(id: string, s: ThinkSetting): { effort: 'low' | 'medium' | 'high' | 'xhigh' | 'max'; noThinking: boolean } {
+  const { level } = resolveThink(id, s)
+  if (level === 'off') return { effort: 'medium', noThinking: true }
+  const effort = level === 'minimal' ? 'low' : level === 'on' ? 'medium' : level
+  return { effort, noThinking: false }
+}
+
 /** "Dense, 32.7B" or "MoE, 501B total, 23B active". */
 export function paramsLabel(m: Pick<ModelInfo, 'params' | 'active'>) {
+  if (!m.params) return 'Anthropic'
   return m.active ? `MoE, ${m.params} total, ${m.active} active` : `Dense, ${m.params}`
 }
 

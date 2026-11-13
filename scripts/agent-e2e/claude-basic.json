@@ -1,0 +1,18 @@
+{
+  "fresh": true,
+  "setup": "setup-page.js",
+  "shots": ["start", "p1", "p2", "p3", "end"],
+  "before": [
+    "(() => { const a = __notesDebug.useAgent.getState(); a.setPrefs({ model: 'claude-haiku-5-5' }); a.setThink('claude-haiku-5-5', { level: 'low' }); return a.prefs.model })()"
+  ],
+  "prompts": [
+    "Fix the typo in the learning rate cell and make the word Too red in that cell",
+    "What is on my screen right now? Answer in two sentences.",
+    "Add a small diagram cell to the right of the learning rate cell showing the three gradient descent variants from the Variants cell as boxes with arrows from a 'Data' box, then check how it looks and fix anything wrong."
+  ],
+  "eval": [
+    "(() => { const c = __notesDebug.useAgent.getState().chat; return { claude: c.claude, users: c.messages.filter(m => m.role === 'user').map(m => m.meta && m.meta.claude), n: c.messages.length } })()",
+    "__notesDebug.useClaude.getState().limits",
+    "Object.values(__notesDebug.useClaude.getState().ctx).map(x => ({ total: x.total, max: x.max, pct: x.pct, parts: x.parts }))"
+  ]
+}

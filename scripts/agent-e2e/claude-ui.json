@@ -1,0 +1,11 @@
+{
+  "fresh": false,
+  "prompts": [],
+  "eval": [
+    "(() => { const a = __notesDebug.useAgent.getState(); a.setPrefs({ model: 'claude-sonnet-5-5' }); return a.prefs.model })()"
+  ],
+  "finalShots": [
+    { "name": "claude-panel", "eval": "(document.querySelector('.cl-pill').click(), new Promise(r => setTimeout(() => r(true), 6000)))" },
+    { "name": "model-menu", "eval": "(document.querySelector('.cl-pill').click(), document.querySelector('.mp-btn').click(), true)" }
+  ]
+}

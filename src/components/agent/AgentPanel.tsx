@@ -13,6 +13,7 @@ import ChangeList from './ChangeList'
 import { RunMark, SessionStrip, runLine } from './Sessions'
 import { AttachmentTray, useAddFiles } from './AttachmentTray'
 import { ContextRing, ContextInspector } from './ContextMeter'
+import { ClaudePill, ClaudePanel } from './ClaudeStatus'
 import {
   AssistantOrb, StopI, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock, AudioLines, Mic,
 } from '../Icons'
@@ -841,6 +842,7 @@ export default function AgentPanel() {
   const live = useAgent((s) => s.live)
   const [showHistory, setShowHistory] = useState(false)
   const [showCtx, setShowCtx] = useState(false)
+  const [showClaude, setShowClaude] = useState(false)
 
   // Voice mode: the same chat, heard and spoken. The dock takes the composer's place.
   const [voicePrefs] = useVoicePrefs()
@@ -968,7 +970,8 @@ export default function AgentPanel() {
               <AudioLines size={15} />
             </button>
           )}
-          {hasKey !== false && <ContextRing active={showCtx} onClick={() => setShowCtx(!showCtx)} />}
+          {hasKey !== false && <ClaudePill active={showClaude} onClick={() => { setShowClaude(!showClaude); setShowCtx(false) }} />}
+          {hasKey !== false && <ContextRing active={showCtx} onClick={() => { setShowCtx(!showCtx); setShowClaude(false) }} />}
           <button className="ag-icon-btn" title="New chat (Ctrl+Shift+J)" onClick={() => { newChat(); setShowHistory(false); setShowCtx(false) }}><Plus size={15} /></button>
           <button className={`ag-icon-btn ${showHistory ? 'on' : ''}`} title="Chat history" onClick={() => { setShowHistory(!showHistory); setShowCtx(false) }}><History size={15} /></button>
           <button
@@ -982,6 +985,7 @@ export default function AgentPanel() {
         </header>
 
         {showCtx && <ContextInspector onClose={() => setShowCtx(false)} />}
+        {showClaude && <ClaudePanel onClose={() => setShowClaude(false)} />}
         {!showHistory && <SessionStrip />}
         {showHistory ? (
           <HistoryView onClose={() => setShowHistory(false)} />

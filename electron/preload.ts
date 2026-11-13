@@ -124,6 +124,28 @@ const api = {
   diagram: {
     render: (kind: string, src: string, theme: unknown) => ipcRenderer.invoke('diagram:render', kind, src, theme) as Promise<{ ok: boolean; svg?: string; error?: string }>,
   },
+  /** Claude Code on this computer, run with the user's own Claude plan (electron/claude.ts). */
+  claude: {
+    setTools: (defs: unknown[], guide: string) => ipcRenderer.invoke('claude:setTools', defs, guide),
+    send: (reqId: string, spec: unknown) => ipcRenderer.invoke('claude:send', reqId, spec),
+    command: (reqId: string, chatId: string, command: string, resume: unknown, base: unknown) => ipcRenderer.invoke('claude:command', reqId, chatId, command, resume, base),
+    interrupt: (chatId: string) => ipcRenderer.invoke('claude:interrupt', chatId),
+    release: (chatId: string) => ipcRenderer.invoke('claude:release', chatId),
+    forget: (chatId: string, sessionIds: string[]) => ipcRenderer.invoke('claude:forget', chatId, sessionIds),
+    context: (chatId: string) => ipcRenderer.invoke('claude:context', chatId),
+    stageFile: (sha: string, name: string) => ipcRenderer.invoke('claude:stageFile', sha, name) as Promise<string | null>,
+    status: (fresh?: boolean) => ipcRenderer.invoke('claude:status', fresh),
+    usage: (fresh?: boolean) => ipcRenderer.invoke('claude:usage', fresh),
+    complete: (body: unknown) => ipcRenderer.invoke('claude:complete', body) as Promise<{ ok: boolean; content?: string; error?: string }>,
+    linkStatus: () => ipcRenderer.invoke('claude:linkStatus'),
+    connect: (target: 'desktop' | 'code', on: boolean) => ipcRenderer.invoke('claude:connect', target, on) as Promise<{ ok: boolean; error?: string; file?: string }>,
+    toolResult: (callId: string, result: unknown) => ipcRenderer.send('claude:toolResult', callId, result),
+    on: (channel: 'event' | 'tool' | 'ctx' | 'limits', cb: (...args: any[]) => void) => {
+      const fn = (_e: unknown, ...args: any[]) => cb(...args)
+      ipcRenderer.on(`claude:${channel}`, fn)
+      return () => ipcRenderer.removeListener(`claude:${channel}`, fn)
+    },
+  },
   chats: {
     list: () => ipcRenderer.invoke('chats:list'),
     get: (id: string) => ipcRenderer.invoke('chats:get', id),

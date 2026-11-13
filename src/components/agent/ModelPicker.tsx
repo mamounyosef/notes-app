@@ -5,10 +5,17 @@ import { Check, Chevron, ImageI, Gauge, Star } from '../Icons'
 import { fmtSec, useSpeeds, type ModelSpeed } from '../../voice/voicePrefs'
 import { runSpeedTest, useSpeedTest } from '../../voice/speedTest'
 import { ThinkTag } from './ThinkControl'
+import { useClaude } from '../../agent/claude'
 
 const money = (n: number | null | undefined) => (n === null || n === undefined ? '-' : `$${n < 0.1 ? n.toFixed(3) : n.toFixed(2)}`)
 
 function PriceLine({ m }: { m: ModelInfo }) {
+  if (m.provider === 'claude')
+    return (
+      <span className="mp-price plan" title="Runs in Claude Code on this computer with your own Claude plan: no API key, no per-token charge. Counts toward your plan's 5-hour and weekly limits.">
+        Included in your Claude plan
+      </span>
+    )
   if (!m.price) return <span className="mp-price none">Price not listed</span>
   if (m.provider === 'openrouter' && !m.price.input && !m.price.output)
     return (
@@ -58,10 +65,12 @@ export default function ModelPicker({ value, onPick, label, voiceThink }: { valu
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
   const cur = modelInfo(model)
-  // Starred models come first, each part still strongest first.
+  // Claude first (the user's own plan), then starred models, each part still strongest first.
+  const claudeInstalled = useClaude((s) => s.installed)
   const favSet = new Set(prefs.favModels)
-  const favs = MODELS.filter((m) => favSet.has(m.id))
-  const rest = MODELS.filter((m) => !favSet.has(m.id))
+  const claudeModels = MODELS.filter((m) => m.provider === 'claude')
+  const favs = MODELS.filter((m) => favSet.has(m.id) && m.provider !== 'claude')
+  const rest = MODELS.filter((m) => !favSet.has(m.id) && m.provider !== 'claude')
   // The row that just moved between the parts glows briefly, so the eye can follow it.
   const [moved, setMoved] = useState<string | null>(null)
   const pop = useRef<HTMLDivElement>(null)
@@ -128,21 +137,28 @@ export default function ModelPicker({ value, onPick, label, voiceThink }: { valu
                 : `Seconds until each model starts talking (${voiceThink ? 'thinking first' : 'quick answers'}), measured on this computer by the speed test and by every voice reply. Separate from the chat's model.`}
             </div>
           )}
+          <div className="mp-sec claude">
+            <span className="mp-claude-mark">✳</span> Claude <span className="mp-sec-sub">your Claude plan, through Claude Code</span>
+          </div>
+          {claudeInstalled === false && (
+            <div className="mp-voice-note">Claude Code is not installed on this computer. Install it from claude.com/code and sign in once (run "claude" in a terminal), then reopen this menu.</div>
+          )}
+          {claudeModels.map(row)}
           {favs.length > 0 && (
             <div className="mp-sec fav">
               <Star size={11} /> Favorites <span className="mp-sec-n">{favs.length}</span>
             </div>
           )}
           {favs.map(row)}
-          {favs.length > 0 && rest.length > 0 && (
+          {rest.length > 0 && (
             <div className="mp-sec line">
-              <span>All other models</span>
+              <span>{favs.length > 0 ? 'All other models' : 'Ollama and OpenRouter'}</span>
             </div>
           )}
           {rest.map(row)}
           <div className="mp-foot">
             {favs.length === 0 && <span className="mp-foot-hint"><Star size={10} /> Star a model to keep it at the top. </span>}
-            Ollama prices from ollama.com/pricing; your plan's monthly credits are used first. OpenRouter free models need an OpenRouter key (Settings, Assistant) and allow 50 requests a day.
+            Claude models run in Claude Code on this computer, signed in with your Claude plan. Ollama prices from ollama.com/pricing; your plan's monthly credits are used first. OpenRouter free models need an OpenRouter key (Settings, Assistant) and allow 50 requests a day.
           </div>
         </div>
       )}
@@ -164,7 +180,7 @@ export default function ModelPicker({ value, onPick, label, voiceThink }: { valu
       >
         <div className="mp-row1">
           <span className="mp-name">{m.name}</span>
-          <span className={`mp-prov ${m.provider}`} title={m.provider === 'openrouter' ? 'Runs on OpenRouter' : 'Runs on Ollama Cloud'}>
+          <span className={`mp-prov ${m.provider}`} title={m.provider === 'claude' ? 'Runs in Claude Code with your Claude plan' : m.provider === 'openrouter' ? 'Runs on OpenRouter' : 'Runs on Ollama Cloud'}>
             {PROVIDER_LABEL[m.provider]}
           </span>
           {m.vision && (
@@ -202,7 +218,7 @@ export default function ModelPicker({ value, onPick, label, voiceThink }: { valu
             </span>
           )}
           <span>{fmtCtx(m.context)} context</span>
-          <span>{fmtDate(m.released)}</span>
+          {m.released && <span>{fmtDate(m.released)}</span>}
         </div>
         <ThinkTag
           spec={m.think}

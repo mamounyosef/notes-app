@@ -20,7 +20,8 @@
     "test:sync": "node scripts/test-sync.mjs && node scripts/test-sync-converge.mjs && node scripts/test-vault-sync.mjs && node scripts/test-cloud-sync.mjs && node scripts/test-chat-sync.mjs",
     "test:voice": "node --experimental-strip-types --no-warnings src/voice/speechText.test.ts",
     "test:paste": "node --experimental-strip-types --no-warnings src/editor/paste.test.ts",
-    "test:source": "node --experimental-strip-types --no-warnings src/agent/sourceEdit.test.ts"
+    "test:source": "node --experimental-strip-types --no-warnings src/agent/sourceEdit.test.ts",
+    "test:claude-link": "node scripts/test-claude-link.mjs"
   },
   "dependencies": {
     "@hpcc-js/wasm-graphviz": "^1.30.0",
@@ -59,6 +60,8 @@
     "zustand": "^5.0.3"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.3.323",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@types/katex": "^0.16.7",
     "@types/node": "^22.10.5",
     "@types/react": "^18.3.18",
@@ -75,7 +78,8 @@
     "vite": "^6.0.7",
     "vite-plugin-electron": "^0.29.0",
     "vite-plugin-electron-renderer": "^0.14.6",
-    "wavedrom": "^3.7.0"
+    "wavedrom": "^3.7.0",
+    "zod": "^4.6.7"
   },
   "build": {
     "appId": "com.mamoun.notesapp",

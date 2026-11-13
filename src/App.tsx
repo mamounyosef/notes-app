@@ -15,6 +15,7 @@ import { NoteImageHost } from './components/NoteImages'
 import SyncPanel from './components/SyncPanel'
 import { useCloudProblem } from './components/CloudSync'
 import AgentPanel from './components/agent/AgentPanel'
+import ClaudeOutside from './components/agent/ClaudeOutside'
 import VoiceEngineChip from './components/voice/VoiceEngineChip'
 import { useAgent } from './agent/store'
 import { chatApi } from './agent/api'
@@ -658,6 +659,7 @@ export default function App() {
       {artifactModalOpen && <ArtifactModal onClose={() => setArtifactModalOpen(false)} />}
       <NoteImageHost />
       {toast && <div className="toast">{toast}</div>}
+      <ClaudeOutside />
     </div>
   )
 }

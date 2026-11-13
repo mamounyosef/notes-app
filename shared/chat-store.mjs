@@ -72,7 +72,17 @@ export function mergeChats(a, b) {
     messages,
     chosen: mergeChosen(a.chosen, b.chosen),
     ...(a.voice || b.voice ? { voice: true } : {}),
+    ...(a.claude || b.claude ? { claude: mergeClaude(a.claude, b.claude) } : {}),
   }
+}
+
+/** Claude chats: every Claude Code conversation either copy knows, and the latest head. */
+function mergeClaude(a, b) {
+  const ha = a?.head
+  const hb = b?.head
+  const head = !ha ? hb : !hb ? ha : (hb.at || 0) > (ha.at || 0) ? hb : ha
+  const sessions = [...new Set([...(a?.sessions || []), ...(b?.sessions || [])])]
+  return { ...(head ? { head } : {}), sessions }
 }
 
 /** Branch choices: per fork, the most recent choice wins. */

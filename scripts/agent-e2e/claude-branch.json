@@ -1,0 +1,29 @@
+{
+  "fresh": true,
+  "setup": "setup-page.js",
+  "shots": ["p1", "p2", "p3", "p4"],
+  "before": [
+    "(() => { const a = __notesDebug.useAgent.getState(); a.setPrefs({ model: 'claude-haiku-5-5' }); a.setThink('claude-haiku-5-5', { level: 'low' }); return a.prefs.model })()",
+    null,
+    "(async () => { const c = document.createElement('canvas'); c.width = 520; c.height = 160; const g = c.getContext('2d'); g.fillStyle = '#fff'; g.fillRect(0, 0, 520, 160); g.fillStyle = '#123'; g.font = 'bold 56px sans-serif'; g.fillText('BLUEBERRY 42', 30, 100); const blob = await new Promise((r) => c.toBlob(r, 'image/png')); const a = await __notesDebug.fileToAttachment(new File([blob], 'label.png', { type: 'image/png' })); __notesDebug.useAgent.getState().addAttachment(a); return a.sha })()"
+  ],
+  "during": [
+    { "at": 7000, "eval": "(__notesDebug.useAgent.getState().stop(), 'stopped')" },
+    { "at": 9000, "shot": "stopped" }
+  ],
+  "prompts": [
+    "Write me a long, detailed essay (about 600 words) on the history of gradient descent. Answer in the chat only, do not touch my notes.",
+    "In one short sentence: what did I ask you in my previous message?",
+    "What word and number are in the attached image? Answer in one line.",
+    "Add a cell titled Momentum to the right of the Variants cell, with a one line definition and a small diagram of the momentum update loop (gradient, velocity, parameters). Check how it looks."
+  ],
+  "eval": [
+    "(async () => { const s = __notesDebug.useAgent.getState(); const c = s.chat; const users = c.messages.filter(m => m.role === 'user'); const before = JSON.stringify(c.claude); await s.regenerate(users[1].id); const c2 = __notesDebug.useAgent.getState().chat; const path = c2.messages.filter(m => m.parent === users[1].id && m.role === 'assistant'); return { before, after: c2.claude, replies: path.map(m => (m.content || '').slice(0, 160)), error: __notesDebug.useAgent.getState().error } })()",
+    "(() => { const c = __notesDebug.useAgent.getState().chat; return c.messages.filter(m => m.role === 'user').map(m => ({ text: m.content.slice(0, 40), mark: m.meta && m.meta.claude })) })()",
+    "(() => { const p = __notesDebug.useStore.getState().page; const m = p.cells.find(c => c.title === 'Momentum'); return m ? (m.html.match(/data-kind=\"(\\w+)\"/) || [])[1] : 'no momentum cell' })()"
+  ],
+  "finalShots": [
+    { "name": "claude-panel", "eval": "(document.querySelector('.cl-pill').click(), true)" },
+    { "name": "model-menu", "eval": "(document.querySelector('.cl-pill').click(), document.querySelector('.mp-btn').click(), true)" }
+  ]
+}
