@@ -16,12 +16,46 @@ import { setupDiagrams } from './diagrams'
 import { setupClaude } from './claude'
 import { setupClaudeLink } from './claude-link'
 
-// Disable hardware acceleration and sandbox to prevent Chromium GPU/D3D11 crash (0xC0000005) on Windows 11
-app.disableHardwareAcceleration()
+/*
+ * Graphics card. Drawing in software is the default, since a Chromium GPU/D3D11 crash
+ * (0xC0000005) once hit on Windows 11. Settings, "Use graphics card" turns it on. If the GPU
+ * process then crashes, or the app dies before it is up, the next start is back in software.
+ */
+const gpuConfigFile = path.join(app.getPath('userData'), 'config.json')
+const gpuCfg = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(gpuConfigFile, 'utf8')) as { gpu?: boolean; gpuBoot?: number; gpuFailed?: { at: number; why: string } }
+  } catch {
+    return {} as { gpu?: boolean; gpuBoot?: number; gpuFailed?: { at: number; why: string } }
+  }
+})()
+function patchConfig(patch: Record<string, unknown>) {
+  let cur: Record<string, unknown> = {}
+  try {
+    cur = JSON.parse(fs.readFileSync(gpuConfigFile, 'utf8'))
+  } catch {
+    /* none yet */
+  }
+  const next = { ...cur, ...patch }
+  for (const [k, v] of Object.entries(next)) if (v === undefined) delete next[k]
+  fs.mkdirSync(path.dirname(gpuConfigFile), { recursive: true })
+  fs.writeFileSync(gpuConfigFile, JSON.stringify(next, null, 2), 'utf8')
+}
+// The last start with the graphics card on never got going: treat it as a crash.
+if (gpuCfg.gpu && gpuCfg.gpuBoot) {
+  gpuCfg.gpu = false
+  gpuCfg.gpuFailed = { at: Date.now(), why: 'Notes stopped while starting with the graphics card' }
+  patchConfig({ gpu: false, gpuBoot: undefined, gpuFailed: gpuCfg.gpuFailed })
+}
+const gpuOn = gpuCfg.gpu === true
+if (gpuOn) patchConfig({ gpuBoot: Date.now() })
+else {
+  app.disableHardwareAcceleration()
+  app.commandLine.appendSwitch('disable-gpu')
+  app.commandLine.appendSwitch('disable-software-rasterizer')
+}
 app.commandLine.appendSwitch('no-sandbox')
-app.commandLine.appendSwitch('disable-gpu')
 app.commandLine.appendSwitch('disable-gpu-sandbox')
-app.commandLine.appendSwitch('disable-software-rasterizer')
 
 const DIST_ELECTRON = __dirname
 const ROOT = path.join(DIST_ELECTRON, '..')
@@ -465,6 +499,19 @@ if (!gotLock) {
     createWindow()
     debugLog('createWindow returned')
 
+    if (gpuOn) {
+      // Up and running for 20 s with the graphics card: this start counts as good.
+      setTimeout(() => patchConfig({ gpuBoot: undefined }), 20_000)
+      // The GPU process crashed: back to software drawing, restarting (pending saves flush on quit).
+      app.on('child-process-gone', (_e, d) => {
+        if (d.type !== 'GPU' || d.reason === 'clean-exit') return
+        debugLog('GPU process gone', d.reason, d.exitCode)
+        patchConfig({ gpu: false, gpuBoot: undefined, gpuFailed: { at: Date.now(), why: `graphics process ${d.reason} (code ${d.exitCode})` } })
+        app.relaunch()
+        app.quit()
+      })
+    }
+
     app.on('activate', () => {
       debugLog('app.activate')
       if (BrowserWindow.getAllWindows().length === 0) createWindow()
@@ -684,6 +731,25 @@ ipcMain.handle('export:file', async (_e, suggestedName: string, content: string)
   if (res.canceled || !res.filePath) return null
   await fsp.writeFile(res.filePath, content, 'utf8')
   return res.filePath
+})
+
+/** Settings, "Use graphics card": what is asked for, what this run uses, and the last fallback. */
+ipcMain.handle('gpu:get', () => {
+  let cfg: any = {}
+  try {
+    cfg = JSON.parse(fs.readFileSync(gpuConfigFile, 'utf8'))
+  } catch {
+    /* none */
+  }
+  return { wanted: cfg.gpu === true, active: gpuOn, failed: cfg.gpuFailed || null, gpu: gpuOn ? app.getGPUFeatureStatus() : null }
+})
+ipcMain.handle('gpu:set', (_e, on: boolean) => {
+  patchConfig({ gpu: Boolean(on), gpuBoot: undefined, ...(on ? { gpuFailed: undefined } : {}) })
+  return { restart: Boolean(on) !== gpuOn }
+})
+ipcMain.handle('app:relaunch', () => {
+  app.relaunch()
+  app.quit()
 })
 
 ipcMain.handle('win:minimize', () => win?.minimize())

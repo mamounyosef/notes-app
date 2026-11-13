@@ -276,6 +276,48 @@ const FONT_CHOICES = [
 type Tab = 'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'ai' | 'voice' | 'storage' | 'update'
 const TABS: Tab[] = ['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'ai', 'voice', 'storage', 'update']
 
+/**
+ * Draw with the graphics card instead of in software. Off by default (a driver crash once
+ * hit); if it crashes while on, Notes turns it off by itself and restarts in software.
+ */
+function GpuToggle() {
+  const gpuApi = (window as any).notes?.gpu
+  const [st, setSt] = useState<{ wanted: boolean; active: boolean; failed: { at: number; why: string } | null } | null>(null)
+  useEffect(() => {
+    gpuApi?.get().then(setSt)
+  }, [])
+  if (!gpuApi || !st) return null
+  const pending = st.wanted !== st.active
+  return (
+    <div className="set-row">
+      <label>
+        Use graphics card
+        <span className="sub">
+          Smoother scrolling and zooming. If the graphics card crashes, Notes switches it off by itself and restarts.
+          {st.failed && !st.wanted ? ` Switched off on ${new Date(st.failed.at).toLocaleString()}: ${st.failed.why}.` : ''}
+          {pending ? ' Takes effect after a restart.' : st.active ? ' In use now.' : ''}
+        </span>
+      </label>
+      <div className="row-inline">
+        {pending && (
+          <button className="btn" onClick={() => gpuApi.relaunch()}>
+            Restart now
+          </button>
+        )}
+        <input
+          type="checkbox"
+          checked={st.wanted}
+          onChange={async (e) => {
+            const on = e.target.checked
+            await gpuApi.set(on)
+            setSt(await gpuApi.get())
+          }}
+        />
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsModal({ onClose, initialTab }: { onClose(): void; initialTab?: string }) {
   const settings = useStore((s) => s.settings)
   const set = useStore((s) => s.setSettings)
@@ -391,6 +433,7 @@ export default function SettingsModal({ onClose, initialTab }: { onClose(): void
                 <Toggle k="autoHidePanes" label="Auto-hide side panes on hover" sub="Reveal when mouse moves to left edge (Ctrl+3)" />
                 <Toggle k="showStatusBar" label="Show status bar" />
                 <Toggle k="showPageDate" label="Show the date under the page title" />
+                <GpuToggle />
               </div>
             </>
           )}

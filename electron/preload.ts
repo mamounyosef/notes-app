@@ -77,6 +77,11 @@ const api = {
       }
     })
   },
+  gpu: {
+    get: () => ipcRenderer.invoke('gpu:get') as Promise<{ wanted: boolean; active: boolean; failed: { at: number; why: string } | null; gpu: Record<string, string> | null }>,
+    set: (on: boolean) => ipcRenderer.invoke('gpu:set', on) as Promise<{ restart: boolean }>,
+    relaunch: () => ipcRenderer.invoke('app:relaunch'),
+  },
   win: {
     minimize: () => ipcRenderer.invoke('win:minimize'),
     maximize: () => ipcRenderer.invoke('win:maximize'),
