@@ -79,8 +79,15 @@ export function writePrivateLinks(repoRoot, cfg, passcode) {
     `- MCP connector URL (claude.ai, Settings, Connectors, Add custom connector): ${cfg.mcpUrl}`,
     `- Passcode: \`${passcode}\``,
     '',
-    'Reset the passcode (also signs out every browser and disconnects Claude):',
-    '`npm run phone-server -- --reset-passcode`',
+    'Reset the passcode (also signs out every browser and disconnects Claude), in a terminal:',
+    '',
+    '```bash',
+    `cd "${repoRoot}"`,
+    '```',
+    '',
+    '```bash',
+    'npm run phone-server -- --reset-passcode',
+    '```',
     '',
   ].join('\n')
   fs.writeFileSync(path.join(repoRoot, 'PRIVATE-LINKS.md'), text, { mode: 0o600 })
