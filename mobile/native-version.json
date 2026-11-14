@@ -1,0 +1,5 @@
+{
+  "versionCode": 1,
+  "versionName": "1.0.0",
+  "notes": "Bump versionCode when the Android shell changes (a plugin, a permission, capacitor.config). Web changes ship over the air."
+}

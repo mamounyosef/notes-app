@@ -44,3 +44,14 @@ Thumbs.db
 credentials.txt
 demo-shots/
 scripts/diagram-bench/refs/
+
+# Phone server: private links (holds the passcode) and release files
+/PRIVATE-LINKS.md
+/release-phone/
+
+# Android app
+/mobile/www/
+/mobile/src/generated/
+/mobile/android/app/release/
+/mobile/keystore.properties
+/mobile/*.keystore

@@ -1,0 +1,24 @@
+{
+  "name": "notes-mobile",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Notes for Android (Capacitor shell around the desktop editor)",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/app": "8.1.2",
+    "@capacitor/cli": "8.6.2",
+    "@capacitor/core": "8.6.2",
+    "@capacitor/filesystem": "8.1.5",
+    "@capacitor/haptics": "8.0.2",
+    "@capacitor/keyboard": "8.0.6",
+    "@capacitor/status-bar": "8.0.4",
+    "@capawesome-team/capacitor-file-opener": "8.1.1",
+    "@capgo/capacitor-updater": "8.54.2"
+  }
+}

@@ -21,7 +21,12 @@
     "test:voice": "node --experimental-strip-types --no-warnings src/voice/speechText.test.ts",
     "test:paste": "node --experimental-strip-types --no-warnings src/editor/paste.test.ts",
     "test:source": "node --experimental-strip-types --no-warnings src/agent/sourceEdit.test.ts",
-    "test:claude-link": "node scripts/test-claude-link.mjs"
+    "test:claude-link": "node scripts/test-claude-link.mjs",
+    "phone-server": "node server/phone-server.mjs",
+    "test:phone-server": "node scripts/test-phone-server.mjs",
+    "test:phone-sync": "node mobile/scripts/test-phone-sync.mjs",
+    "phone:publish": "node mobile/scripts/publish.mjs",
+    "phone:apk": "node mobile/scripts/publish.mjs --apk"
   },
   "dependencies": {
     "@hpcc-js/wasm-graphviz": "^1.30.0",

@@ -84,7 +84,7 @@ export interface PickedArtifact {
   isDirectory: boolean
 }
 
-interface Backend {
+export interface Backend {
   isDesktop: boolean
   vaultPath(): Promise<string>
   chooseVault(): Promise<string | null>
@@ -322,9 +322,17 @@ async function syncPost<T>(url: string, body: unknown): Promise<SyncResult<T>> {
 
 /** Chosen once at startup: desktop, the local server, or the browser itself. */
 let active: Backend = desktop?.isDesktop ? electronBackend : webBackend
+/** Set by an embedding shell (the Android app) that brings its own storage. */
+let fixed = false
+
+/** Uses this backend from now on (the Android app's offline store). */
+export function setBackend(b: Backend) {
+  active = b
+  fixed = true
+}
 
 export async function pickBackend() {
-  if (desktop?.isDesktop) return
+  if (desktop?.isDesktop || fixed) return
   const probe = await getJson<{ path: string }>('/api/vault')
   if (probe?.path) active = httpBackend
 }

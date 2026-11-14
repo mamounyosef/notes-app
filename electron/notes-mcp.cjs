@@ -151,8 +151,11 @@ const reply = (id, result) => write({ jsonrpc: '2.0', id, result })
 const fail = (id, code, message) => write({ jsonrpc: '2.0', id, error: { code, message } })
 
 async function handle(msg) {
+  if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return fail(null, -32600, 'Invalid Request')
   const { id, method, params } = msg
   const isRequest = id !== undefined && id !== null
+  // A reply from the client (result or error, no method): nothing to answer.
+  if (typeof method !== 'string') return isRequest && !('result' in msg || 'error' in msg) ? fail(id, -32600, 'Invalid Request') : undefined
   try {
     switch (method) {
       case 'initialize': {
