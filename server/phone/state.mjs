@@ -82,7 +82,7 @@ export function writePrivateLinks(repoRoot, cfg, passcode) {
     'Reset the passcode (also signs out every browser and disconnects Claude), in a terminal:',
     '',
     '```bash',
-    `cd "${repoRoot}"`,
+    `cd /d "${repoRoot}"`,
     '```',
     '',
     '```bash',
