@@ -1,5 +1,6 @@
 // MCP JSON-RPC methods, mirroring electron/notes-mcp.cjs, for the stateless Streamable HTTP endpoint.
 import { callTool, listTools } from './notes-link.mjs'
+import { callPlannerTool, listPlannerTools, plannerInstructions } from './planner-link.mjs'
 
 export const SUPPORTED = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05']
 export const INSTRUCTIONS =
@@ -11,8 +12,14 @@ export const INSTRUCTIONS =
 const reply = (id, result) => ({ jsonrpc: '2.0', id, result })
 const fail = (id, code, message) => ({ jsonrpc: '2.0', id, error: { code, message } })
 
+/** The apps a connector can reach: Notes (/mcp) and the Daily Planner (/planner-mcp). */
+export const TARGETS = {
+  notes: { name: 'notes', title: 'Notes', instructions: () => INSTRUCTIONS, listTools, callTool },
+  planner: { name: 'planner', title: 'Daily Planner', instructions: plannerInstructions, listTools: listPlannerTools, callTool: callPlannerTool },
+}
+
 /** Handles one JSON-RPC message; returns the response, or null for notifications and client responses. */
-export async function handleMessage(msg) {
+export async function handleMessage(msg, target = TARGETS.notes) {
   if (!msg || typeof msg !== 'object' || Array.isArray(msg)) return fail(null, -32600, 'Invalid Request')
   const { id, method, params } = msg
   const isRequest = id !== undefined && id !== null
@@ -28,21 +35,23 @@ export async function handleMessage(msg) {
         return reply(id, {
           protocolVersion: SUPPORTED.includes(want) ? want : SUPPORTED[0],
           capabilities: { tools: { listChanged: false } },
-          serverInfo: { name: 'notes', title: 'Notes', version: '1.0.0' },
-          instructions: INSTRUCTIONS,
+          serverInfo: { name: target.name, title: target.title, version: '1.0.0' },
+          instructions: target.instructions(),
         })
       }
       case 'ping':
         return isRequest ? reply(id, {}) : null
       case 'tools/list':
-        return isRequest ? reply(id, { tools: await listTools() }) : null
+        return isRequest ? reply(id, { tools: await target.listTools() }) : null
       case 'tools/call': {
         if (!isRequest) return null
         if (!params || typeof params.name !== 'string') return fail(id, -32602, 'Invalid params: name is required')
-        return reply(id, await callTool(params.name, params.arguments))
+        return reply(id, await target.callTool(params.name, params.arguments))
       }
       case 'resources/list':
         return isRequest ? reply(id, { resources: [] }) : null
+      case 'resources/templates/list':
+        return isRequest ? reply(id, { resourceTemplates: [] }) : null
       case 'prompts/list':
         return isRequest ? reply(id, { prompts: [] }) : null
       default:

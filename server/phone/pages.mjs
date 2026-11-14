@@ -82,11 +82,13 @@ ${steps}<p class="foot">Private download. Do not share this page.</p>`,
   )
 }
 
-export function authorizePage({ clientName, signed, error, denyHref }) {
+export function authorizePage({ clientName, appName = 'Notes', signed, error, denyHref }) {
+  const planner = appName !== 'Notes'
+  const title = planner ? 'Connect Claude to your Daily Planner' : 'Connect Claude to your Notes'
   return layout(
-    'Connect Claude to your Notes',
-    `<div class="logo">N</div><h1>Connect Claude to your Notes</h1>
-<p class="sub"><span class="app">${e(clientName || 'An app')}</span> wants to read and edit your notes through the Notes app on your PC.</p>${err(error)}
+    title,
+    `<div class="logo">${planner ? 'P' : 'N'}</div><h1>${e(title)}</h1>
+<p class="sub"><span class="app">${e(clientName || 'An app')}</span> wants to read and edit your ${planner ? 'calendar and tasks through the Daily Planner' : 'notes through the Notes app'} on your PC.</p>${err(error)}
 <form class="card" method="post" action="authorize" autocomplete="off">
 <input type="hidden" name="p" value="${e(signed)}">
 <label for="p">Passcode</label>

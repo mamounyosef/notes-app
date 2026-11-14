@@ -59,6 +59,33 @@ const fake = http.createServer((req, res) => {
 await new Promise((r) => fake.listen(0, '127.0.0.1', r))
 fs.writeFileSync(path.join(appData, 'notesapp', 'claude-link.json'), JSON.stringify({ port: fake.address().port, token: NOTES_TOKEN, pid: process.pid, exe: null }))
 
+// A fake Daily Planner (its /api/mcp link, as weekly-planner/tools/planner-mcp.cjs uses it).
+const PLANNER_TOKEN = 'planner-token-xyz'
+const plannerCalls = []
+const fakePlanner = http.createServer((req, res) => {
+  const out = (code, body) => {
+    res.writeHead(code, { 'content-type': 'application/json' })
+    res.end(JSON.stringify(body))
+  }
+  if (req.headers['x-planner-token'] !== PLANNER_TOKEN) return out(401, { error: 'bad token' })
+  if (req.url === '/api/mcp/health') return out(200, { ok: true })
+  if (req.url === '/api/mcp/tools') return out(200, { tools: [{ name: 'list_tasks', description: 'Tasks.', inputSchema: { type: 'object', properties: {} } }], instructions: 'Planner instructions here.' })
+  if (req.url === '/api/mcp/call') {
+    let b = ''
+    req.on('data', (c) => (b += c))
+    req.on('end', () => {
+      plannerCalls.push(JSON.parse(b))
+      out(200, { content: [{ type: 'text', text: 'planner ran it' }] })
+    })
+    return
+  }
+  out(404, {})
+})
+await new Promise((r) => fakePlanner.listen(0, '127.0.0.1', r))
+const plannerLink = path.join(appData, 'planner-db', 'mcp-link.json')
+fs.mkdirSync(path.dirname(plannerLink), { recursive: true })
+fs.writeFileSync(plannerLink, JSON.stringify({ port: fakePlanner.address().port, token: PLANNER_TOKEN }))
+
 /* ---- helpers ---- */
 let failures = 0
 const check = (ok, what) => {
@@ -84,6 +111,7 @@ const env = {
   NOTES_MCP_ALLOW_LOOPBACK: '1',
   NOTES_PHONE_NO_PRIVATE_LINKS: '1',
   NOTES_PHONE_RELEASE_DIR: releaseDir,
+  PLANNER_MCP_LINK: plannerLink,
 }
 delete env.NOTES_MCP_PUBLIC_URL
 
@@ -394,6 +422,37 @@ try {
   check(r.status === 405, 'GET /mcp is 405')
   r = await req('/notes/mcp', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${T}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'ping' }) })
   check(r.status === 200, '/notes/mcp works too')
+
+  /* ---- Planner connector (/planner-mcp): own resource, own tokens ---- */
+  const PR = `${BASE_PUBLIC}/planner-mcp`
+  r = await req('/.well-known/oauth-protected-resource/planner-mcp')
+  j = JSON.parse(r.text)
+  check(r.status === 200 && j.resource === PR && j.authorization_servers[0] === BASE_PUBLIC && j.resource_name === 'Daily Planner', 'planner resource metadata')
+  r = await req('/planner-mcp', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })
+  check(r.status === 401 && r.headers.get('www-authenticate') === `Bearer resource_metadata="${BASE_PUBLIC}/.well-known/oauth-protected-resource/planner-mcp"`, '/planner-mcp without token: 401 pointing at its own metadata')
+  const pkp = pkce()
+  const pp = await req('/notes' + authUrl({ code_challenge: pkp.challenge, code_challenge_method: 'S256', resource: PR }))
+  check(pp.status === 200 && pp.text.includes('Connect Claude to your Daily Planner'), 'approval page names the Daily Planner')
+  const pHidden = /name="p" value="([^"]+)"/.exec(pp.text)[1].replace(/&#(\d+);/g, (_, n) => String.fromCharCode(Number(n)))
+  const pAuth = await req('/authorize', { method: 'POST', headers: form(), body: enc({ p: pHidden, passcode: PASS }), ip: '10.0.0.6' })
+  const pCode = new URL(pAuth.headers.get('location')).searchParams.get('code')
+  r = await tokenReq({ grant_type: 'authorization_code', code: pCode, client_id: client.client_id, redirect_uri: REDIRECT, code_verifier: pkp.verifier, resource: PR })
+  const PT = JSON.parse(r.text).access_token
+  check(r.status === 200 && PT, 'planner token issued')
+  const prpc = (body, tok) => req('/planner-mcp', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tok}` }, body: JSON.stringify(body) })
+  r = await prpc({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18' } }, PT)
+  j = JSON.parse(r.text)
+  check(j.result.serverInfo.name === 'planner' && j.result.serverInfo.title === 'Daily Planner', 'planner initialize names the planner')
+  r = await prpc({ jsonrpc: '2.0', id: 2, method: 'tools/list' }, PT)
+  check(JSON.parse(r.text).result.tools[0].name === 'list_tasks', 'planner tools/list comes from the planner')
+  r = await prpc({ jsonrpc: '2.0', id: 3, method: 'tools/call', params: { name: 'list_tasks', arguments: { day: 'today' } } }, PT)
+  check(JSON.parse(r.text).result.content[0].text === 'planner ran it' && plannerCalls.at(-1)?.arguments?.day === 'today', 'planner tools/call is forwarded to the planner')
+  r = await prpc({ jsonrpc: '2.0', id: 4, method: 'ping' }, T)
+  check(r.status === 401, 'a Notes token does not open the planner')
+  r = await rpc({ jsonrpc: '2.0', id: 5, method: 'ping' }, PT)
+  check(r.status === 401, 'a planner token does not open Notes')
+  r = await req('/notes/planner-mcp', { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${PT}` }, body: JSON.stringify({ jsonrpc: '2.0', id: 6, method: 'ping' }) })
+  check(r.status === 200, '/notes/planner-mcp works too')
 
   /* ---- global rate limit (20 wrong passcodes per hour) ---- */
   let fails = 0

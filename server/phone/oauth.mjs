@@ -10,9 +10,15 @@ const PKCE_RE = /^[A-Za-z0-9\-._~]{43,128}$/
 const SIGNED_TTL_MS = 15 * 60 * 1000
 const CORS = { 'access-control-allow-origin': '*' }
 
+/** The connectors this server protects: path -> name shown on the approval page. */
+export const RESOURCES = { '/mcp': 'Notes', '/planner-mcp': 'Daily Planner' }
+/** Where each connector's resource metadata lives (relative to the public base). */
+export const resourceMetadataPath = (p) => (p === '/mcp' ? '/.well-known/oauth-protected-resource' : `/.well-known/oauth-protected-resource${p}`)
+
 export function createOAuth({ cfg, secrets, store, limiter, registerLimiter }) {
   const base = cfg.publicUrl
   const resource = `${base}/mcp`
+  const known = new Map(Object.entries(RESOURCES).map(([p, name]) => [`${base}${p}`, name]))
 
   function redirectAllowed(uri) {
     if (typeof uri !== 'string' || uri.length > 2000) return false
@@ -32,11 +38,11 @@ export function createOAuth({ cfg, secrets, store, limiter, registerLimiter }) {
 
   /* ---- metadata ---- */
 
-  const protectedResource = () => ({
-    resource,
+  const protectedResource = (p = '/mcp') => ({
+    resource: `${base}${p}`,
     authorization_servers: [base],
     bearer_methods_supported: ['header'],
-    resource_name: 'Notes',
+    resource_name: RESOURCES[p],
   })
   const serverMetadata = () => ({
     issuer: base,
@@ -96,7 +102,7 @@ export function createOAuth({ cfg, secrets, store, limiter, registerLimiter }) {
     if (p.response_type !== 'code') return back('unsupported_response_type', 'response_type must be code')
     if (typeof p.code_challenge !== 'string' || !PKCE_RE.test(p.code_challenge)) return back('invalid_request', 'code_challenge is required')
     if (p.code_challenge_method !== 'S256') return back('invalid_request', 'code_challenge_method must be S256')
-    if (p.resource !== undefined && p.resource !== '' && p.resource !== resource) return back('invalid_target', 'Unknown resource')
+    if (p.resource !== undefined && p.resource !== '' && !known.has(p.resource)) return back('invalid_target', 'Unknown resource')
     if (typeof p.state === 'string' && p.state.length > 2000) return back('invalid_request', 'state too long')
     return {
       ok: true,
@@ -106,7 +112,7 @@ export function createOAuth({ cfg, secrets, store, limiter, registerLimiter }) {
         redirect_uri: redirectUri,
         state: typeof p.state === 'string' ? p.state : '',
         code_challenge: p.code_challenge,
-        resource,
+        resource: known.has(p.resource) ? p.resource : resource,
       },
     }
   }
@@ -121,7 +127,7 @@ export function createOAuth({ cfg, secrets, store, limiter, registerLimiter }) {
 
   function renderApprove(res, status, v, error) {
     const signed = sign(v.req)
-    sendHtml(res, status, authorizePage({ clientName: v.client.client_name, signed, error, denyHref: `authorize/deny?p=${encodeURIComponent(signed)}` }), {
+    sendHtml(res, status, authorizePage({ clientName: v.client.client_name, appName: known.get(v.req.resource) || 'Notes', signed, error, denyHref: `authorize/deny?p=${encodeURIComponent(signed)}` }), {
       csp: pageCsp(v.req.redirect_uri),
     })
   }
@@ -146,7 +152,11 @@ export function createOAuth({ cfg, secrets, store, limiter, registerLimiter }) {
     }
 
     if (m === 'GET' && (path === '/.well-known/oauth-protected-resource' || path === '/.well-known/oauth-protected-resource/mcp')) {
-      sendJson(res, 200, protectedResource(), CORS)
+      sendJson(res, 200, protectedResource('/mcp'), CORS)
+      return true
+    }
+    if (m === 'GET' && path === '/.well-known/oauth-protected-resource/planner-mcp') {
+      sendJson(res, 200, protectedResource('/planner-mcp'), CORS)
       return true
     }
     if (m === 'GET' && (path === '/.well-known/oauth-authorization-server' || path === '/.well-known/openid-configuration')) {
@@ -253,7 +263,7 @@ export function createOAuth({ cfg, secrets, store, limiter, registerLimiter }) {
         return true
       }
       if (p.grant_type === 'refresh_token') {
-        if (p.resource && p.resource !== resource) return tokenError(res, 400, 'invalid_target', 'Unknown resource'), true
+        if (p.resource && !known.has(p.resource)) return tokenError(res, 400, 'invalid_target', 'Unknown resource'), true
         const r = store.refresh(p.refresh_token, p.client_id)
         if (r.error) return tokenError(res, 400, 'invalid_grant', 'Invalid refresh token'), true
         sendJson(res, 200, r.tokens, { 'cache-control': 'no-store', pragma: 'no-cache', ...CORS })
@@ -279,12 +289,12 @@ export function createOAuth({ cfg, secrets, store, limiter, registerLimiter }) {
 }
 
 /** The bearer check for /mcp: the grant, or a 401 description. */
-export function bearerCheck(req, store, cfg) {
+export function bearerCheck(req, store, cfg, resourcePath = '/mcp') {
   const h = String(req.headers.authorization || '')
   const m = /^Bearer\s+([A-Za-z0-9\-._~+/]+=*)$/i.exec(h.trim())
-  const challenge = `Bearer resource_metadata="${cfg.publicUrl}/.well-known/oauth-protected-resource"`
+  const challenge = `Bearer resource_metadata="${cfg.publicUrl}${resourceMetadataPath(resourcePath)}"`
   if (!m) return { challenge }
-  const grant = store.verifyAccess(m[1], `${cfg.publicUrl}/mcp`)
+  const grant = store.verifyAccess(m[1], `${cfg.publicUrl}${resourcePath}`)
   if (!grant) return { challenge: `${challenge}, error="invalid_token", error_description="The access token is invalid or expired"` }
   return { grant }
 }

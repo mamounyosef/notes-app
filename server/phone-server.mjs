@@ -20,7 +20,7 @@ import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { handleMessage } from './phone/mcp.mjs'
+import { TARGETS, handleMessage } from './phone/mcp.mjs'
 import { bearerCheck, createOAuth } from './phone/oauth.mjs'
 import { downloadPage, loginPage } from './phone/pages.mjs'
 import { OAuthStore, Secrets, normalizePasscode, writePrivateLinks } from './phone/state.mjs'
@@ -222,7 +222,8 @@ async function route(req, res, p, url) {
   if (await oauth(req, res, p, url)) return
 
   // Remote MCP (Streamable HTTP, stateless, JSON responses).
-  if (p === '/mcp') return mcp(req, res, m)
+  if (p === '/mcp') return mcp(req, res, m, '/mcp')
+  if (p === '/planner-mcp') return mcp(req, res, m, '/planner-mcp')
 
   if (p === '/favicon.ico' || p === '/robots.txt') {
     if (p === '/robots.txt') return send(res, 200, 'User-agent: *\nDisallow: /\n', { 'content-type': 'text/plain' })
@@ -231,7 +232,7 @@ async function route(req, res, p, url) {
   return notFound(res)
 }
 
-async function mcp(req, res, m) {
+async function mcp(req, res, m, resourcePath) {
   const origin = req.headers.origin
   const cors = origin && ALLOWED_ORIGINS.has(origin) ? { 'access-control-allow-origin': origin, vary: 'Origin', 'access-control-expose-headers': 'www-authenticate, mcp-session-id' } : {}
   if (origin && !ALLOWED_ORIGINS.has(origin)) return sendJson(res, 403, { jsonrpc: '2.0', id: null, error: { code: -32000, message: 'Origin not allowed' } })
@@ -244,7 +245,8 @@ async function mcp(req, res, m) {
     })
     return res.end()
   }
-  const auth = bearerCheck(req, store, cfg)
+  const auth = bearerCheck(req, store, cfg, resourcePath)
+  const target = resourcePath === '/planner-mcp' ? TARGETS.planner : TARGETS.notes
   if (!auth.grant) {
     // Drain any body so the connection stays healthy.
     if (m === 'POST') await readBody(req).catch(() => {})
@@ -262,11 +264,11 @@ async function mcp(req, res, m) {
   }
   if (Array.isArray(body)) {
     if (!body.length || body.length > 50) return sendJson(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid Request' } }, cors)
-    const out = (await Promise.all(body.map(handleMessage))).filter(Boolean)
+    const out = (await Promise.all(body.map((msg) => handleMessage(msg, target)))).filter(Boolean)
     if (!out.length) return send(res, 202, null, cors)
     return sendJson(res, 200, out, cors)
   }
-  const out = await handleMessage(body)
+  const out = await handleMessage(body, target)
   if (!out) return send(res, 202, null, cors)
   return sendJson(res, 200, out, cors)
 }
