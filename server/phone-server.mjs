@@ -11,6 +11,7 @@
  * Usage:
  *   node server/phone-server.mjs                   start the server
  *   node server/phone-server.mjs --reset-passcode  new passcode, sign everyone out, then exit
+ *   node server/phone-server.mjs --set-passcode "my own pass"   your own passcode, same sign out
  *
  * Env: NOTES_PHONE_PORT (default 4790), NOTES_MCP_PUBLIC_URL, NOTES_MCP_ALLOW_LOOPBACK=1 (tests),
  *      NOTES_PHONE_NO_PRIVATE_LINKS=1 (tests), NOTES_PHONE_RELEASE_DIR (tests).
@@ -67,6 +68,21 @@ function refreshPrivateLinks() {
   } catch (e) {
     console.error('Could not write PRIVATE-LINKS.md:', e.message)
   }
+}
+
+const setAt = process.argv.indexOf('--set-passcode')
+if (setAt >= 0) {
+  const own = process.argv.slice(setAt + 1).join(' ').trim()
+  // Typed with spaces or dashes, any case: what counts is the letters and digits.
+  if (normalizePasscode(own).replace(/-/g, '').length < 8) {
+    console.error('Give a passcode of at least 8 letters or digits, for example:\n  npm run phone-server -- --set-passcode "my own pass 42"')
+    process.exit(1)
+  }
+  secrets.resetPasscode(own)
+  store.revokeAll()
+  refreshPrivateLinks()
+  console.log('Passcode set. All Claude connections and browser sessions are signed out; sign in again with your new passcode.')
+  process.exit(0)
 }
 
 if (process.argv.includes('--reset-passcode')) {

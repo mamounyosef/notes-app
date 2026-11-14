@@ -57,8 +57,9 @@ export class Secrets {
     this.mtime = st.mtimeMs
     return this.data
   }
-  resetPasscode() {
-    const d = { ...this.get(), passcode: makePasscode(), passcodeChangedAt: new Date().toISOString() }
+  /** A new passcode: your own when given, otherwise a random one. */
+  resetPasscode(own) {
+    const d = { ...this.get(), passcode: own ? String(own).trim() : makePasscode(), passcodeChangedAt: new Date().toISOString() }
     writeJsonAtomic(this.file, d)
     this.data = null
     return this.get()
@@ -87,6 +88,12 @@ export function writePrivateLinks(repoRoot, cfg, passcode) {
     '',
     '```bash',
     'npm run phone-server -- --reset-passcode',
+    '```',
+    '',
+    'Or set your own (at least 8 letters or digits; capitals, spaces and dashes do not matter when typing it):',
+    '',
+    '```bash',
+    'npm run phone-server -- --set-passcode "your passcode here"',
     '```',
     '',
   ].join('\n')
