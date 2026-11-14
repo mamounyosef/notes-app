@@ -382,7 +382,8 @@ export function buildExtensions(placeholder: string) {
       horizontalRule: false,
       heading: { levels: [1, 2, 3, 4] },
       codeBlock: false,
-      history: { depth: 200 },
+      // Undo and Redo go through the page's one history (store.ts), text and cells alike.
+      history: false,
     }),
     ListAfterBreak,
     CustomCodeBlockLowlight,

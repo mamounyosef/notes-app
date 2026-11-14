@@ -327,27 +327,16 @@ export default function App() {
       }
       if (e.ctrlKey && e.key.toLowerCase() === 'd' && !typing) { e.preventDefault(); st.duplicateCells(st.selection); return }
 
-      if (e.ctrlKey && e.key.toLowerCase() === 'z') {
+      // Text boxes outside the page (the assistant, search) keep their own undo.
+      const ownUndo = typing && !(e.target as HTMLElement).closest('.cell-body')
+      if (ownUndo && e.ctrlKey && ['z', 'y'].includes(e.key.toLowerCase())) return
+      if (e.ctrlKey && !e.shiftKey && e.key.toLowerCase() === 'z') {
         e.preventDefault()
-        if (typing) {
-          const editor = useActiveEditor.getState().editor
-          if (editor && editor.can().undo()) {
-            editor.chain().undo().run()
-            return
-          }
-        }
         st.undo()
         return
       }
       if (e.ctrlKey && (e.key.toLowerCase() === 'y' || (e.shiftKey && e.key.toLowerCase() === 'z'))) {
         e.preventDefault()
-        if (typing) {
-          const editor = useActiveEditor.getState().editor
-          if (editor && editor.can().redo()) {
-            editor.chain().redo().run()
-            return
-          }
-        }
         st.redo()
         return
       }

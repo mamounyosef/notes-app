@@ -204,6 +204,27 @@ let settingsTimer: any = null
 let localTimer: any = null
 let gridScaleTimer: any = null
 
+/** Typing within this long of the last keystroke in the same cell is one undo step. */
+const TYPING_GROUP_MS = 1000
+let typingBurst: { id: string; at: number } | null = null
+
+/** A change to a cell's text or title that differs from what it holds now. */
+function isTextEdit(page: Page, id: string, patch: Partial<Cell>): boolean {
+  const cell = page.cells.find((c) => c.id === id)
+  if (!cell) return false
+  return ('html' in patch && patch.html !== cell.html) || ('title' in patch && patch.title !== cell.title)
+}
+
+/** Selection and editing that still point at cells on `page` (after an undo or redo). */
+function keepPicks(page: Page) {
+  const s = useStore.getState()
+  const ids = new Set(page.cells.map((c) => c.id))
+  return {
+    selection: s.selection.filter((id) => ids.has(id)),
+    editingCellId: s.editingCellId && ids.has(s.editingCellId) ? s.editingCellId : null,
+  }
+}
+
 /* ------------------------------------------------------------------ *
  * Sync bookkeeping (see shared/sync-core.mjs and shared/vault-sync.mjs)
  *
@@ -989,16 +1010,18 @@ export const useStore = create<State>((set, get) => ({
   pushHistory() {
     const { page, history } = get()
     if (!page) return
+    typingBurst = null
     set({ history: [...history.slice(-60), clone(page)], future: [] })
   },
 
   undo() {
     clearTimeout(gridScaleTimer)
     gridScaleBase = null
+    typingBurst = null
     const { history, page } = get()
     if (!history.length || !page) return
     const prev = history[history.length - 1]
-    set({ history: history.slice(0, -1), future: [clone(page), ...get().future].slice(0, 60), page: prev, dirty: true })
+    set({ history: history.slice(0, -1), future: [clone(page), ...get().future].slice(0, 60), page: prev, dirty: true, ...keepPicks(prev) })
     markTouched({ all: true })
     scheduleSave(get)
   },
@@ -1006,10 +1029,11 @@ export const useStore = create<State>((set, get) => ({
   redo() {
     clearTimeout(gridScaleTimer)
     gridScaleBase = null
+    typingBurst = null
     const { future, page } = get()
     if (!future.length || !page) return
     const next = future[0]
-    set({ future: future.slice(1), history: [...get().history, clone(page!)], page: next, dirty: true })
+    set({ future: future.slice(1), history: [...get().history, clone(page!)], page: next, dirty: true, ...keepPicks(next) })
     markTouched({ all: true })
     scheduleSave(get)
   },
@@ -1055,6 +1079,14 @@ export const useStore = create<State>((set, get) => ({
     const { page } = get()
     if (!page) return
     if (record) get().pushHistory()
+    else if (!auto && isTextEdit(page, id, patch)) {
+      // Typing shares the page's one undo history, one step per burst of typing in a cell,
+      // so Undo and Redo walk through text and cell changes alike, in order.
+      const t = Date.now()
+      const burst = typingBurst && typingBurst.id === id && t - typingBurst.at < TYPING_GROUP_MS
+      if (!burst) get().pushHistory()
+      typingBurst = { id, at: t }
+    }
     if (!auto) markTouched({ cells: [id] })
     const cells = page.cells.map((c) => (c.id === id ? { ...c, ...patch, updatedAt: now() } : c))
     set({ page: { ...page, cells, updatedAt: now() }, dirty: true })

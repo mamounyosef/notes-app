@@ -302,22 +302,8 @@ export default function Toolbar() {
 
   return (
     <div className="toolbar">
-      <button className="tb-btn" title="Undo (Ctrl+Z)" onClick={() => {
-        const st = useStore.getState()
-        if (st.editingCellId && editor?.can().undo()) {
-          editor.chain().focus().undo().run()
-        } else {
-          st.undo()
-        }
-      }}><Undo /></button>
-      <button className="tb-btn" title="Redo (Ctrl+Y)" onClick={() => {
-        const st = useStore.getState()
-        if (st.editingCellId && editor?.can().redo()) {
-          editor.chain().focus().redo().run()
-        } else {
-          st.redo()
-        }
-      }}><Redo /></button>
+      <button className="tb-btn" title="Undo (Ctrl+Z)" onClick={() => useStore.getState().undo()}><Undo /></button>
+      <button className="tb-btn" title="Redo (Ctrl+Y)" onClick={() => useStore.getState().redo()}><Redo /></button>
       <div className="tb-sep" />
 
       <select
