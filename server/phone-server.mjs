@@ -5,7 +5,7 @@
  *
  * Listens on 127.0.0.1 only. It is published through Tailscale Funnel at
  *   https://mamoun.tail27d0a5.ts.net/notes   (path mount: download page, update feed)
- *   https://mamoun.tail27d0a5.ts.net:10000   (root mount: MCP connector + OAuth)
+ *   MCP connector + OAuth: https://mamoun.tail27d0a5.ts.net/notes/mcp (discovery under /.well-known/.../notes)
  * Every route works with or without a leading /notes, and all HTML links are relative.
  *
  * Usage:
@@ -47,9 +47,9 @@ const REPO = path.resolve(HERE, '..')
 const HOST = 'https://mamoun.tail27d0a5.ts.net'
 const cfg = {
   port: Number(process.env.NOTES_PHONE_PORT) || 4790,
-  publicUrl: (process.env.NOTES_MCP_PUBLIC_URL || `${HOST}:10000`).replace(/\/+$/, ''),
+  publicUrl: (process.env.NOTES_MCP_PUBLIC_URL || `${HOST}/notes`).replace(/\/+$/, ''),
   downloadUrl: `${HOST}/notes/`,
-  mcpUrl: `${(process.env.NOTES_MCP_PUBLIC_URL || `${HOST}:10000`).replace(/\/+$/, '')}/mcp`,
+  mcpUrl: `${(process.env.NOTES_MCP_PUBLIC_URL || `${HOST}/notes`).replace(/\/+$/, '')}/mcp`,
   allowLoopback: process.env.NOTES_MCP_ALLOW_LOOPBACK === '1',
   privateLinks: process.env.NOTES_PHONE_NO_PRIVATE_LINKS !== '1',
   releaseDir: path.resolve(process.env.NOTES_PHONE_RELEASE_DIR || path.join(REPO, 'release-phone')),

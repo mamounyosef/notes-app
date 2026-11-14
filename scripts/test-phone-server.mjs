@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SERVER = path.resolve(HERE, '../server/phone-server.mjs')
-const BASE_PUBLIC = 'https://mamoun.tail27d0a5.ts.net:10000'
+const BASE_PUBLIC = 'https://mamoun.tail27d0a5.ts.net/notes'
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'notes-phone-'))
 const appData = path.join(tmp, 'appdata')
 const releaseDir = path.join(tmp, 'release-phone')
