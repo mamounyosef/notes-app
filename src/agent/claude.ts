@@ -16,6 +16,8 @@ import { activePath } from './branches'
 import { SYSTEM_PROMPT, voicePrompt } from './prompt'
 import { TOOL_DEFS, TurnRecorder, keepSnapshot, runTool, READ_ONLY, type ToolResult } from './tools'
 import { scrollToCell } from './reveal'
+import { cellKeys, contextDelta } from './contextDelta'
+import { buildContext } from './context'
 import { useStore } from '../store'
 
 const desk = (window as any).notes
@@ -149,6 +151,10 @@ const IMAGES_NOTE = `# Images and files they attach
 - You can see images yourself: attached images, PDF pages and the pictures tools hand you (check_drawing, view_image with a region to zoom) come to you as real images. Attached PDFs come as documents you read directly; a very long PDF is saved for you and its path is given: read it with Read, a range of pages at a time.
 `
 
+const DELTA_NOTE = `To keep the conversation small, a later <app_context> on the same page is a delta: the header (time, screen, selection, caret, mouse, which cells are on screen) is always complete, but the page content lists only cells that are NEW or CHANGED since the <app_context> of the previous message (cells you edited show up again with their current content), and the notebook tree is left out when unchanged. Every cell not listed is exactly as in the latest <app_context> that showed it. When unsure about a cell, read_cell it.
+
+`
+
 /** The assistant's instructions, as Claude gets them. */
 export function claudeSystemPrompt() {
   let p = SYSTEM_PROMPT
@@ -159,6 +165,7 @@ export function claudeSystemPrompt() {
   p = p.replace('# Images and files they attach\n', IMAGES_NOTE)
   p = p.replace('Pick the right tool (each one is good at something different):\n', `${DIAGRAM_NOTE}Pick the right tool (each one is good at something different):\n`)
   p = p.replace('# How the app is built', `${TOOLS_SECTION}# How the app is built`)
+  p = p.replace('# Resolving what they mean', `${DELTA_NOTE}# Resolving what they mean`)
   return p
 }
 
@@ -314,13 +321,16 @@ const PDF_INLINE_BYTES = 24 * 1024 * 1024
 const PDF_INLINE_PAGES = 90
 
 /** One user message as Claude's content blocks. */
-async function userBlocks(m: ChatMessage, opts: { context: 'full' | 'same' | 'brief'; voice: 'full' | 'short' | null; preface?: string }) {
+async function userBlocks(m: ChatMessage, opts: { context: 'full' | 'same' | 'brief' | 'delta'; delta?: string; voice: 'full' | 'short' | null; preface?: string }) {
   const parts: string[] = []
   const blocks: any[] = []
   if (opts.preface) parts.push(opts.preface)
   if (opts.voice === 'full') parts.push(`<voice_mode>${voicePrompt().trim()}</voice_mode>`)
   else if (opts.voice === 'short') parts.push('(Voice mode: this message was spoken and your reply is read aloud. Follow the voice mode rules.)')
   if (opts.context === 'full' && m.meta?.context) parts.push(`<app_context>\n${m.meta.context}\n</app_context>`)
+  else if (opts.context === 'delta' && opts.delta) parts.push(`<app_context>
+${opts.delta}
+</app_context>`)
   else if (opts.context === 'same') parts.push('<app_context>Unchanged since my last message.</app_context>')
   else if (m.meta?.brief) parts.push(`<app_context_then>${m.meta.brief}</app_context_then>`)
   if (m.meta?.quote) parts.push(`The user quoted this from their notes:\n"""${m.meta.quote}"""`)
@@ -440,9 +450,10 @@ export async function runClaudeTurn(h: TurnHost): Promise<{ firstAssistantId: st
   const prev = prevIdx >= 0 ? path[prevIdx] : undefined
   const head = (chat0 as any).claude?.head as (ClaudeMark & { after: string }) | undefined
   let resume: { session: string; at?: string; fork?: boolean } | null = null
+  let fromHead: (ClaudeMark & { after: string; compacted?: boolean; mine?: Record<string, string> }) | null = null
   if (prev) {
     // Compaction moves the session past the message's own mark: the chat's head knows where it stands.
-    const fromHead = head && head.after === prev.id ? head : null
+    fromHead = head && head.after === prev.id ? head : null
     const mark = fromHead || markOf(prev)!
     resume = { session: mark.session, at: mark.tip || undefined, fork: !fromHead }
   }
@@ -453,13 +464,17 @@ export async function runClaudeTurn(h: TurnHost): Promise<{ firstAssistantId: st
     ? `<earlier_conversation note="${prev ? 'Turns another assistant model handled since your last reply' : 'This conversation so far, before you joined it'}">\n${transcript(unseen)}\n</earlier_conversation>`
     : undefined
 
-  // The full app context when it changed or Claude has not seen it yet; otherwise a short note.
+  // The full app context when Claude has not seen the previous one (new or compacted conversation, other models in between);
+  // otherwise only what changed since it, so the open page is not repeated on every message.
   const lastCtx = prev?.meta?.context
-  const context: 'full' | 'same' = resume && !unseenTurns && lastCtx && lastCtx === u.meta?.context ? 'same' : 'full'
+  const nowCtx = u.meta?.context
+  const knows = Boolean(resume && !unseenTurns && lastCtx && nowCtx && !fromHead?.compacted)
+  const delta = knows && lastCtx !== nowCtx ? contextDelta(lastCtx!, nowCtx!, fromHead?.mine) : null
+  const context: 'full' | 'same' | 'delta' = knows && lastCtx === nowCtx ? 'same' : delta ? 'delta' : 'full'
   const prevVoice = Boolean(prev?.meta?.voice)
   const voice = h.voice ? (prev && prevVoice && resume ? 'short' : 'full') : null
 
-  const content = await userBlocks(u, { context, voice, preface })
+  const content = await userBlocks(u, { context, delta: delta || undefined, voice, preface })
   const system = claudeSystemPrompt()
   const base = { model: h.model, effort: h.effort, noThinking: h.noThinking, system, title: (chat0.title !== 'New chat' && chat0.title) || undefined }
 
@@ -478,7 +493,7 @@ export async function runClaudeTurn(h: TurnHost): Promise<{ firstAssistantId: st
     const mark = { session: r.sessionId, tip: r.tip || null, at: resume?.at || null }
     const cur = h.chat().messages.find((m) => m.id === u.id)
     if (cur) h.patchMsg(u.id, { meta: { ...cur.meta, claude: mark } as any })
-    h.update((c) => ({ ...c, claude: { ...((c as any).claude || {}), head: { session: r.sessionId, tip: r.tip || null, after: u.id, at: Date.now() }, sessions: [...sessions] } }) as any)
+    h.update((c) => ({ ...c, claude: { ...((c as any).claude || {}), head: { session: r.sessionId, tip: r.tip || null, after: u.id, at: Date.now(), ...(out.compacted ? { compacted: true } : {}), ...(Object.keys(out.mine).length ? { mine: out.mine } : {}) }, sessions: [...sessions] } }) as any)
   }
   if (r.aborted) return { firstAssistantId: out.first, aborted: true }
   if (!r.ok) return { firstAssistantId: out.first, error: friendlyError(r.error) }
@@ -495,8 +510,11 @@ export function friendlyError(e?: string) {
 }
 
 /** Streams one Claude Code turn into the chat. */
-async function follow(h: TurnHost, spec: any): Promise<{ result: TurnResult; first: string | null; got: boolean }> {
+async function follow(h: TurnHost, spec: any): Promise<{ result: TurnResult; first: string | null; got: boolean; compacted: boolean; mine: Record<string, string> }> {
   const reqId = nanoid()
+  let compacted = false
+  /** Cells this reply's tool calls changed: id to the version they left. */
+  const mine: Record<string, string> = {}
   let cur: ChatMessage | null = null
   let first: string | null = null
   let got = false
@@ -631,7 +649,10 @@ async function follow(h: TurnHost, spec: any): Promise<{ result: TurnResult; fir
       }
     } else if (ev.type === 'system') {
       if (ev.subtype === 'status' && ev.status === 'compacting') h.setActivity('Compacting the conversation')
-      else if (ev.subtype === 'compact_boundary') h.setActivity('Conversation compacted')
+      else if (ev.subtype === 'compact_boundary') {
+        compacted = true
+        h.setActivity('Conversation compacted')
+      }
       else if (ev.subtype === 'api_retry') h.setActivity(`Claude is busy, retrying (${ev.attempt}/${ev.max_retries})`)
     }
   }
@@ -639,7 +660,15 @@ async function follow(h: TurnHost, spec: any): Promise<{ result: TurnResult; fir
   const off = desk.claude.on('event', onEvent)
   turnHandlers.set(h.chatId, async (call) => {
     flush()
+    // Remember the cells this call changed, as it left them: the next message's context need not repeat them.
+    const writes = !READ_ONLY.has(call.name)
+    const page = useStore.getState().page?.id
+    const before = writes ? cellKeys(buildContext({ ignoreSelection: true }).full) : null
     const r = await h.runNoteTool(call.name, call.args)
+    if (before && useStore.getState().page?.id === page) {
+      const after = cellKeys(buildContext({ ignoreSelection: true }).full)
+      for (const [id, k] of Object.entries(after)) if (before[id] !== k) mine[id] = k
+    } else if (writes) for (const k of Object.keys(mine)) delete mine[k]
     return { ok: r.ok, content: r.content, images: r.images }
   })
   let result: TurnResult
@@ -654,7 +683,7 @@ async function follow(h: TurnHost, spec: any): Promise<{ result: TurnResult; fir
   }
   if (cur && (result.aborted || !result.ok) && cur) (cur as ChatMessage).meta = { ...((cur as ChatMessage).meta || {}), stopped: result.aborted || undefined } as any
   flush()
-  return { result, first, got }
+  return { result, first, got, compacted, mine }
 }
 
 /** Sends /compact to the chat's Claude conversation. */
@@ -673,7 +702,7 @@ export async function compactChat(h: Pick<TurnHost, 'chatId' | 'chat' | 'model' 
   try {
     const r = await claudeApi.command(reqId, h.chatId, '/compact', { session: mark.session }, { model: h.model, effort: h.effort, noThinking: h.noThinking, system: claudeSystemPrompt() })
     if (!r.ok) return friendlyError(r.error)
-    if (r.sessionId) h.update((c) => ({ ...c, claude: { ...((c as any).claude || {}), head: { session: r.sessionId, tip: r.tip || null, after: lastUser.id, at: Date.now() } } }) as any)
+    if (r.sessionId) h.update((c) => ({ ...c, claude: { ...((c as any).claude || {}), head: { session: r.sessionId, tip: r.tip || null, after: lastUser.id, at: Date.now(), compacted: true } } }) as any)
     return null
   } finally {
     off()

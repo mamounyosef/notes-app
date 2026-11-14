@@ -20,6 +20,7 @@
     "test:sync": "node scripts/test-sync.mjs && node scripts/test-sync-converge.mjs && node scripts/test-vault-sync.mjs && node scripts/test-cloud-sync.mjs && node scripts/test-chat-sync.mjs",
     "test:voice": "node --experimental-strip-types --no-warnings src/voice/speechText.test.ts",
     "test:paste": "node --experimental-strip-types --no-warnings src/editor/paste.test.ts",
+    "test:context": "node --experimental-strip-types --no-warnings src/agent/contextDelta.test.ts",
     "test:source": "node --experimental-strip-types --no-warnings src/agent/sourceEdit.test.ts",
     "test:claude-link": "node scripts/test-claude-link.mjs",
     "phone-server": "node server/phone-server.mjs",
