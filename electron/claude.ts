@@ -325,7 +325,9 @@ export function setupClaude(opts: {
         return { behavior: 'deny', message: name === 'Read' ? 'Only files the user attached can be read here.' : `${name} is not available in Notes.` }
       },
       includePartialMessages: true,
-      env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'notes-app/1.0' },
+      // No auto memory: it loaded the user's unrelated Claude Code memory (and its rules) into every chat.
+      // Set on this process only, so their own Claude Code keeps it.
+      env: { ...process.env, CLAUDE_AGENT_SDK_CLIENT_APP: 'notes-app/1.0', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
       stderr: (d) => opts.log('claude stderr', d.slice(0, 400)),
       ...(spec.title ? { title: spec.title } : {}),
     }
