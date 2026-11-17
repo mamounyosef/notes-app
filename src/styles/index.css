@@ -1594,8 +1594,10 @@ select:focus {
 .ProseMirror table {
   border-collapse: separate;
   border-spacing: 0;
-  table-layout: fixed;
-  width: 100%;
+  /* As wide as the content needs (columns sized to what they hold), never wider than the cell. */
+  table-layout: auto;
+  width: auto;
+  max-width: 100%;
   margin: .5em 0;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--table-head) 55%, var(--line));
