@@ -1,10 +1,11 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useAgent, goToTarget } from '../../agent/store'
 import { activePath, versionsOf } from '../../agent/branches'
 import { agentApi, chatApi, type ChatAttachment, type ChatMessage } from '../../agent/api'
 import { canUndo } from '../../agent/tools'
 import { PROVIDER_LABEL } from '../../agent/models'
 import { renderMarkdown } from '../../agent/render'
+import { healTail, nextShown, splitBlocks } from '../../agent/streamText'
 import { pathTo, useStore } from '../../store'
 import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
 import Composer from './Composer'
@@ -81,8 +82,60 @@ function chatTime(t: number) {
  * Pieces of a message
  * ------------------------------------------------------------------ */
 
-function Markdown({ text, live }: { text: string; live?: boolean }) {
+/** One top level block of a reply. Finished blocks never parse or repaint again while the reply streams. */
+const MdBlock = React.memo(function MdBlock({ text }: { text: string }) {
   const html = useMemo(() => renderMarkdown(text), [text])
+  return <div className="md-block" dangerouslySetInnerHTML={{ __html: html }} />
+})
+
+/**
+ * The streamed text, shown at an even pace: network bursts are smoothed into a
+ * steady flow that keeps up with the model. Runs on its own frames, so only
+ * this reply repaints, never the rest of the chat.
+ */
+function useSmoothText(target: string, live?: boolean) {
+  // Opening a chat mid reply shows what is there at once; only new text flows in.
+  const [shown, setShown] = useState(() => (live && target.length < 400 ? 0 : target.length))
+  const pos = useRef(shown)
+  const want = useRef(target.length)
+  want.current = target.length
+  const frame = useRef(0)
+  useEffect(() => {
+    if (!live) {
+      pos.current = target.length
+      setShown(target.length)
+      return
+    }
+    if (frame.current || pos.current >= want.current) return
+    let last = performance.now()
+    const tick = (now: number) => {
+      const next = nextShown(pos.current, want.current, now - last)
+      last = now
+      const changed = Math.floor(next) !== Math.floor(pos.current)
+      pos.current = next
+      if (changed) {
+        setShown(Math.floor(next))
+        window.dispatchEvent(new Event(GROW_EVENT))
+      }
+      frame.current = pos.current < want.current ? requestAnimationFrame(tick) : 0
+    }
+    frame.current = requestAnimationFrame(tick)
+  }, [target, live])
+  useEffect(() => () => cancelAnimationFrame(frame.current), [])
+  return live ? target.slice(0, shown) : target
+}
+
+/** Fired when a streaming reply grows, so the chat can follow it. */
+const GROW_EVENT = 'ag-stream-grow'
+
+function Markdown({ text: full, live }: { text: string; live?: boolean }) {
+  const text = useSmoothText(full, live)
+  const blocks = useMemo(() => {
+    const b = splitBlocks(text)
+    if (live && b.length) b[b.length - 1] = healTail(b[b.length - 1])
+    return b
+  }, [text, live])
+  const html = blocks.join('\n\n')
   const ref = useRef<HTMLDivElement>(null)
   // Copy buttons on code blocks.
   useEffect(() => {
@@ -114,14 +167,17 @@ function Markdown({ text, live }: { text: string; live?: boolean }) {
     <div
       ref={ref}
       className={`md ${live ? 'live' : ''}`}
-      dangerouslySetInnerHTML={{ __html: html }}
       onClick={(e) => {
         const a = (e.target as HTMLElement).closest<HTMLAnchorElement>('a.note-ref')
         if (!a) return
         e.preventDefault()
         if (!a.classList.contains('missing')) goToTarget({ pageId: a.dataset.page, cellId: a.dataset.cell })
       }}
-    />
+    >
+      {blocks.map((b, i) => (
+        <MdBlock key={i} text={b} />
+      ))}
+    </div>
   )
 }
 
@@ -538,7 +594,7 @@ function CopyText({ text, title, className }: { text: string; title: string; cla
   )
 }
 
-function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(items: LightboxItem[], i: number): void }) {
+const TurnView = React.memo(function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(items: LightboxItem[], i: number): void }) {
   const busy = useAgent((s) => s.busy)
   const live = useAgent((s) => (last ? s.live : null))
   const activity = useAgent((s) => (last ? s.activity : ''))
@@ -546,6 +602,10 @@ function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(
   const [copied, setCopied] = useState(false)
   const turnMeta = turn.items.find((m) => m.meta?.turnId)?.meta
   const working = last && busy
+  // Tool chips and reasoning of the step running now change the height: keep following.
+  useLayoutEffect(() => {
+    if (last && live) window.dispatchEvent(new Event(GROW_EVENT))
+  })
   const answer = [...turn.items].reverse().find((m) => m.role === 'assistant' && m.content)?.content || ''
 
   // Tool chips sit together; text and asks in order.
@@ -624,7 +684,7 @@ function TurnView({ turn, last, onImage }: { turn: Turn; last: boolean; onImage(
       </div>
     </div>
   )
-}
+})
 
 /* ------------------------------------------------------------------ *
  * Empty state, key setup, history
@@ -838,7 +898,6 @@ export default function AgentPanel() {
   const hasKey = useAgent((s) => s.hasKey)
   const newChat = useAgent((s) => s.newChat)
   const retry = useAgent((s) => s.retry)
-  const live = useAgent((s) => s.live)
   const [showHistory, setShowHistory] = useState(false)
   const [showCtx, setShowCtx] = useState(false)
   const [showClaude, setShowClaude] = useState(false)
@@ -894,7 +953,16 @@ export default function AgentPanel() {
   useEffect(() => {
     const el = scrollRef.current
     if (el && stick.current) el.scrollTop = el.scrollHeight
-  }, [chat?.messages.length, live?.content, live?.thinking, busy, hearing, voice.heard])
+  }, [chat?.messages.length, busy, hearing, voice.heard])
+  // A streaming reply grows on its own frames: follow it without repainting the panel.
+  useEffect(() => {
+    const follow = () => {
+      const el = scrollRef.current
+      if (el && stick.current) el.scrollTop = el.scrollHeight
+    }
+    window.addEventListener(GROW_EVENT, follow)
+    return () => window.removeEventListener(GROW_EVENT, follow)
+  }, [])
 
   const onImage = useCallback((items: LightboxItem[], index: number) => setLightbox({ items, index }), [])
 
