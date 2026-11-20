@@ -443,6 +443,12 @@ export default function Canvas() {
     return [
       ...imageItems,
       { label: 'Ask the assistant about this', hint: 'Ctrl+L', icon: <AssistantMark />, onClick: () => askAboutSelection(ids) },
+      {
+        label: ids.length > 1 ? `Export or print ${ids.length} cells...` : 'Export or print this cell...',
+        hint: 'Ctrl+P',
+        icon: <Download />,
+        onClick: () => st.openExport({ pageIds: [page.id], cellIds: ids }),
+      },
       { separator: true },
       { label: 'Duplicate', hint: 'Ctrl+D', icon: <Copy />, onClick: () => st.duplicateCells(ids) },
       { label: cell.collapsed ? 'Expand' : 'Collapse', onClick: () => st.updateCell(cell.id, { collapsed: !cell.collapsed }, true) },
@@ -474,6 +480,8 @@ export default function Canvas() {
       { label: 'Insert space here', icon: <SpaceI />, onClick: () => st.setTool('space') },
       { label: 'Select all cells', hint: 'Ctrl+A', onClick: () => st.setSelection(page.cells.map((c) => c.id)) },
       { label: 'Tidy layout, remove overlaps', onClick: () => st.reflowOverlaps() },
+      { separator: true },
+      { label: 'Export or print page...', hint: 'Ctrl+P', icon: <Download />, onClick: () => st.openExport({ pageIds: [page.id] }) },
       { separator: true },
       { label: 'Clear page ink', onClick: () => st.clearPageInk() },
     ]

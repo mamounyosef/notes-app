@@ -6,6 +6,7 @@ import { canUndo } from '../../agent/tools'
 import { PROVIDER_LABEL } from '../../agent/models'
 import { renderMarkdown } from '../../agent/render'
 import { healTail, nextShown, splitBlocks } from '../../agent/streamText'
+import { AppearanceButton, ExpandI, JumpToLatest, ScaleFlash, appearanceVars, isExpanded, maxPanelWidth, toggleExpand, useTextZoomKeys } from './Appearance'
 import { pathTo, useStore } from '../../store'
 import { AttachmentThumb, Lightbox, type LightboxItem } from './Lightbox'
 import Composer from './Composer'
@@ -926,6 +927,15 @@ export default function AgentPanel() {
   const [lightbox, setLightbox] = useState<{ items: LightboxItem[]; index: number } | null>(null)
   const [dragOver, setDragOver] = useState(false)
   const scrollRef = useRef<HTMLDivElement>(null)
+  const asideRef = useRef<HTMLElement>(null)
+  useTextZoomKeys(asideRef)
+  // The window got narrower: the panel never squeezes the page out.
+  const [, rerender] = useState(0)
+  useEffect(() => {
+    const on = () => rerender((n) => n + 1)
+    window.addEventListener('resize', on)
+    return () => window.removeEventListener('resize', on)
+  }, [])
   const stick = useRef(true)
   const composerRef = useRef<{ addFiles(files: File[]): void } | null>(null)
 
@@ -999,8 +1009,9 @@ export default function AgentPanel() {
     <>
       {!overlay && <PanelResizer />}
       <aside
+        ref={asideRef}
         className={`agent-panel ${overlay ? 'floating' : 'docked'} ${dragOver ? 'drag-over' : ''}`}
-        style={overlay ? floatStyle : { width: prefs.width }}
+        style={{ ...(overlay ? floatStyle : { width: Math.min(prefs.width, maxPanelWidth()) }), ...appearanceVars(prefs) }}
         onDragOver={(e) => {
           if (e.dataTransfer.types.includes('Files')) {
             e.preventDefault()
@@ -1041,6 +1052,16 @@ export default function AgentPanel() {
           {hasKey !== false && <ContextRing active={showCtx} onClick={() => { setShowCtx(!showCtx); setShowClaude(false) }} />}
           <button className="ag-icon-btn" title="New chat (Ctrl+Shift+J)" onClick={() => { newChat(); setShowHistory(false); setShowCtx(false) }}><Plus size={15} /></button>
           <button className={`ag-icon-btn ${showHistory ? 'on' : ''}`} title="Chat history" onClick={() => { setShowHistory(!showHistory); setShowCtx(false) }}><History size={15} /></button>
+          <AppearanceButton />
+          {!overlay && (
+            <button
+              className={`ag-icon-btn ${isExpanded(prefs.width) ? 'on' : ''}`}
+              title={isExpanded(prefs.width) ? 'Back to the normal width' : 'Expand over most of the window (double click the edge too)'}
+              onClick={toggleExpand}
+            >
+              <ExpandI on={isExpanded(prefs.width)} />
+            </button>
+          )}
           <button
             className="ag-icon-btn"
             title={overlay ? 'Dock as a side pane' : 'Float over the page'}
@@ -1060,6 +1081,17 @@ export default function AgentPanel() {
           <KeySetup />
         ) : (
           <>
+            <div className="ag-scroll-wrap">
+            <ScaleFlash />
+            <JumpToLatest
+              scrollRef={scrollRef}
+              onJump={() => {
+                const el = scrollRef.current
+                if (!el) return
+                stick.current = true
+                el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+              }}
+            />
             <div
               className="ag-scroll"
               ref={scrollRef}
@@ -1083,6 +1115,7 @@ export default function AgentPanel() {
                 </div>
               )}
             </div>
+            </div>
             {voiceOn ? (
               <VoiceDock voice={voice} onSettings={() => window.dispatchEvent(new CustomEvent('notes:open-settings', { detail: { tab: 'voice' } }))} />
             ) : (
@@ -1105,7 +1138,7 @@ function PanelResizer({ floating }: { floating?: boolean }) {
   useEffect(() => {
     const move = (e: MouseEvent) => {
       if (!start.current) return
-      const w = Math.min(Math.max(300, start.current.w - (e.clientX - start.current.x)), Math.min(900, window.innerWidth - 360))
+      const w = Math.min(Math.max(300, start.current.w - (e.clientX - start.current.x)), maxPanelWidth())
       setPrefs({ width: w })
     }
     const up = () => {
@@ -1124,9 +1157,10 @@ function PanelResizer({ floating }: { floating?: boolean }) {
   return (
     <div
       className={`resizer ${floating ? 'ag-float-resizer' : 'ag-resizer'} ${on ? 'dragging' : ''}`}
-      title="Drag to resize"
+      title="Drag to resize, double click to expand or restore"
+      onDoubleClick={() => !floating && toggleExpand()}
       onMouseDown={(e) => {
-        start.current = { x: e.clientX, w: width }
+        start.current = { x: e.clientX, w: Math.min(width, maxPanelWidth()) }
         setOn(true)
         document.body.style.cursor = 'col-resize'
         e.preventDefault()

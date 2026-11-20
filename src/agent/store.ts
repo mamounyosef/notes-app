@@ -42,6 +42,14 @@ export interface Prefs {
   showThinking: boolean
   /** Starred models, shown first in every model menu (chat and voice share them). */
   favModels: string[]
+  /** Size of the chat text, 1 = normal (0.75 to 1.75). */
+  textScale?: number
+  /** Space between lines in replies. */
+  spacing?: 'compact' | 'normal' | 'airy'
+  /** How wide replies may run in a wide panel. */
+  readWidth?: 'narrow' | 'normal' | 'full'
+  /** The width to go back to after "Expand". */
+  widthBeforeExpand?: number
 }
 
 const defaultPrefs: Prefs = { open: false, mode: 'pane', width: 400, model: DEFAULT_MODEL, thinkBy: {}, showThinking: true, favModels: [] }
@@ -1392,6 +1400,7 @@ function labelFor(name: string, chatModel: string) {
     create_node: 'Creating',
     update_node: 'Updating',
     delete_node: 'Deleting',
+    export_notes: 'Exporting',
     get_settings: 'Reading settings',
     update_settings: 'Changing settings',
     ask_user: 'Asking you',

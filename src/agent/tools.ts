@@ -841,6 +841,22 @@ export const TOOL_DEFS = [
   fn('delete_node', 'Delete a notebook, section or page with everything inside (pages go to the notes folder trash).', {
     id: str('Node id.'),
   }, ['id']),
+  fn('export_notes', 'Save pages (or some cells of a page) as PDF, Markdown or HTML files anywhere on the computer, or send them to the printer. Pages keep their look: math, code colors, diagrams, pictures, ink. Without page_ids or node_ids it exports the open page. Uses the look last chosen in the Export dialog unless you set it here. Tell the user where the files went.', {
+    page_ids: { type: 'array', items: { type: 'string' }, description: 'Pages to export, in this order.' },
+    node_ids: { type: 'array', items: { type: 'string' }, description: 'Notebooks or sections: every page inside them (archived ones left out).' },
+    cell_ids: { type: 'array', items: { type: 'string' }, description: 'Only these cells (of the single page given).' },
+    format: { type: 'string', enum: ['pdf', 'md', 'html', 'print'], description: 'Default pdf. "print" opens the printer dialog.' },
+    path: str('Where to save: a file path (ending .pdf/.md/.html) or a folder. Absolute, or starting with Desktop, Documents, Downloads, ~ or %VAR%. A relative path goes under Documents. Default: Documents\\Notes exports.'),
+    separate_files: bool('Several pages: one file per page (into the folder) instead of one combined file.'),
+    layout: { type: 'string', enum: ['document', 'canvas'], description: 'document: cells in reading order (default). canvas: cells where they sit on the page.' },
+    theme: { type: 'string', enum: ['light', 'app'], description: 'light: dark text on white (default). app: the app colors.' },
+    paper: { type: 'string', enum: ['A4', 'Letter', 'Legal', 'A3', 'A5'], description: 'Paper size.' },
+    landscape: bool('Landscape sheets.'),
+    fit_sheet: bool('canvas layout: each page shrunk onto one sheet.'),
+    contents: bool('A contents list first (several pages).'),
+    front_matter: bool('Markdown: YAML front matter with title, place and dates.'),
+    open_after: { type: 'string', enum: ['none', 'open', 'folder'], description: 'Afterwards open the file, show it in its folder, or nothing (default).' },
+  }),
   fn('get_settings', 'Read all app settings (theme, colors, fonts, sizes, grid, defaults).', {}),
   fn('update_settings', 'Change app settings. Keys: theme (dark|light|sepia|midnight|nord|system), accent, pageBackground (none|grid|dots|lines), gridSize, snapToGrid, bodyFont, headingFont, monoFont, bodySize, titleSize, pageTitleSize, lineHeight, bodyColor, titleColor, defaultCellWidth, defaultCellHeight, cellPadding, cellRadius, cellBorder, cellBg, cellGap, cellAutoHeight, penColor, penSize, highlighterColor, highlighterSize, spellcheck, showStatusBar, showPageDate, confirmDelete, maxImageWidth, markdownPaste, autoMath, smartQuotes, sidebarVisible, pagelistVisible.', {
     changes: { type: 'object', description: 'Setting names to new values.' },
@@ -1718,6 +1734,64 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     return ok({ deleted: node.id, pages: pages.length }, `Deleted ${nodeLabel(node)}${pages.length > 1 ? ` (${pages.length} pages)` : ''}`)
   },
 
+  async export_notes(a) {
+    const X = await import('../lib/exportDoc')
+    const st = useStore.getState()
+    const tree = st.workspace.tree
+    const ids: string[] = []
+    for (const id of Array.isArray(a.page_ids) ? a.page_ids : []) {
+      const n = findNode(tree, String(id))
+      if (!n || n.kind !== 'page') throw new ToolError(`No page with id [${id}].`)
+      ids.push(n.id)
+    }
+    for (const id of Array.isArray(a.node_ids) ? a.node_ids : []) {
+      const n = findNode(tree, String(id))
+      if (!n) throw new ToolError(`No notebook, section or page with id [${id}].`)
+      ids.push(...X.pagesUnder(n))
+    }
+    if (!ids.length && st.activePageId) ids.push(st.activePageId)
+    const pages = [...new Set(ids)]
+    if (!pages.length) throw new ToolError('Nothing to export: no page given and none is open.')
+    const cells = Array.isArray(a.cell_ids) && a.cell_ids.length ? a.cell_ids.map(String) : undefined
+    if (cells && pages.length !== 1) throw new ToolError('cell_ids needs exactly one page.')
+
+    const base = X.savedExportOptions()
+    const o = {
+      ...base,
+      ...(a.layout === 'document' || a.layout === 'canvas' ? { layout: a.layout } : {}),
+      ...(a.theme === 'light' || a.theme === 'app' ? { theme: a.theme } : {}),
+      ...(typeof a.fit_sheet === 'boolean' ? { fitSheet: a.fit_sheet } : {}),
+      ...(typeof a.contents === 'boolean' ? { toc: a.contents } : {}),
+      ...(typeof a.front_matter === 'boolean' ? { frontMatter: a.front_matter } : {}),
+      files: (a.separate_files ? 'separate' : 'combined') as 'separate' | 'combined',
+      paper: {
+        ...base.paper,
+        ...(['A4', 'Letter', 'Legal', 'A3', 'A5'].includes(a.paper) ? { pageSize: a.paper } : {}),
+        ...(typeof a.landscape === 'boolean' ? { landscape: a.landscape } : {}),
+      },
+    }
+    const items = await X.loadItems(pages, cells)
+    if (!items.length) throw new ToolError('Those pages could not be read.')
+    const name = X.exportName(items)
+    const format = ['pdf', 'md', 'html', 'print'].includes(a.format) ? a.format : 'pdf'
+    if (!X.exporter) throw new ToolError('Exporting to files works only in the desktop app.')
+
+    if (format === 'print') {
+      const r = await X.exporter.print(await X.buildHtml(items, o, { title: name }), o.paper)
+      if (!r.ok && r.error) throw new ToolError(`Printing failed: ${r.error}`)
+      return ok({ printed: r.ok, pages: items.length }, r.ok ? `Printed ${items.length} page${items.length === 1 ? '' : 's'}` : 'The print dialog was closed')
+    }
+    const target = await X.exporter.resolvePath(a.path ? String(a.path) : 'Documents\\Notes exports')
+    const files = await X.exportToPath(items, o, format, target, name)
+    if (a.open_after === 'open' && files[0]) await X.exporter.open(files[0])
+    if (a.open_after === 'folder' && files[0]) await X.exporter.reveal(files[0])
+    const kind = format === 'md' ? 'Markdown' : format.toUpperCase()
+    return ok(
+      { files, pages: items.map((i) => i.page.title), cells: items.reduce((n, i) => n + i.cells.length, 0), layout: o.layout, theme: o.theme },
+      `Exported ${items.length} page${items.length === 1 ? '' : 's'} as ${kind}${files.length > 1 ? ` (${files.length} files)` : ''}`,
+    )
+  },
+
   async get_settings() {
     const { _t, recentColors, ...rest } = settingsNow() as any
     void _t
@@ -1858,4 +1932,4 @@ export async function runTool(name: string, args: Args, env: ToolEnv): Promise<T
 }
 
 /** Tools that only read: they never need an undo point. */
-export const READ_ONLY = new Set(['view_image', 'check_drawing', 'read_drawing', 'web_search', 'web_fetch', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'recent_notes', 'get_settings', 'ask_user', 'focus'])
+export const READ_ONLY = new Set(['export_notes', 'view_image', 'check_drawing', 'read_drawing', 'web_search', 'web_fetch', 'get_context', 'list_tree', 'read_page', 'read_cell', 'search_notes', 'recent_notes', 'get_settings', 'ask_user', 'focus'])

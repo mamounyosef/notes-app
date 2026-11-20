@@ -11,6 +11,8 @@ import { useRunsSummary } from './components/agent/Sessions'
 import SettingsModal from './components/SettingsModal'
 import LinkModal from './components/LinkModal'
 import ArtifactModal from './components/ArtifactModal'
+import ExportModal from './components/ExportModal'
+import { pagesUnder } from './components/Tree'
 import { NoteImageHost } from './components/NoteImages'
 import SyncPanel from './components/SyncPanel'
 import { useCloudProblem } from './components/CloudSync'
@@ -27,7 +29,7 @@ import { isDesktop, storage } from './lib/storage'
 import type { TreeNode } from './types'
 import {
   Book, File as FileIcon, Folder, Gear, Max, Min, PanelLeft, PanelMid, Plus, Search as SearchIcon,
-  Star, X, ZoomIn, ZoomOut, Archive, Chevron, SidebarPeek, ArrowLeft, ArrowRight, SyncI, AssistantOrb
+  Star, X, ZoomIn, ZoomOut, Archive, Chevron, SidebarPeek, ArrowLeft, ArrowRight, SyncI, AssistantOrb, Download
 } from './components/Icons'
 
 export default function App() {
@@ -54,6 +56,7 @@ export default function App() {
   const syncError = useStore((s) => s.syncError)
   const syncProblem = syncError || cloudProblem || (chatSync?.phase === 'error' ? `Chat sync: ${chatSync.error}` : null)
   const showSyncPanel = useStore((s) => s.showSyncPanel)
+  const exportOpen = useStore((s) => Boolean(s.exportRequest))
   const fatal = useStore((s) => s.fatal)
   const agentOpen = useAgent((s) => s.prefs.open)
 
@@ -290,6 +293,15 @@ export default function App() {
       if (e.altKey && !e.ctrlKey && !e.shiftKey && e.key === 'ArrowRight') { e.preventDefault(); st.goForward(); return }
       if (e.ctrlKey && e.key.toLowerCase() === 'f') { e.preventDefault(); setShowSearch(true); return }
       if (e.ctrlKey && e.key.toLowerCase() === 'p' && e.shiftKey) { e.preventDefault(); setShowSearch(true); return }
+      // Ctrl+P: export or print the selected cells, else the ticked pages, else this page.
+      if (e.ctrlKey && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'p') {
+        e.preventDefault()
+        const cells = st.page?.cells.length ?? 0
+        if (st.page && st.selection.length && st.selection.length < cells) st.openExport({ pageIds: [st.page.id], cellIds: st.selection })
+        else if (st.pageSelection.length) st.openExport({ pageIds: st.pageSelection })
+        else if (st.activePageId) st.openExport({ pageIds: [st.activePageId] })
+        return
+      }
       if (e.ctrlKey && e.key.toLowerCase() === 'k') { e.preventDefault(); useActiveEditor.getState().setLinkModalOpen(true); return }
       if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'a') { e.preventDefault(); useActiveEditor.getState().setArtifactModalOpen(true); return }
       if (e.ctrlKey && e.key === ',') { e.preventDefault(); setSettingsTab(undefined); setShowSettings(true); return }
@@ -350,6 +362,8 @@ export default function App() {
           setFlyoutOpen(false)
           return
         }
+        // Nothing on the page selected: Esc unticks pages ticked for export.
+        if (!st.selection.length && st.pageSelection.length) st.setPageSelection([])
         st.setSelection([])
         st.setTool('select')
         return
@@ -504,6 +518,18 @@ export default function App() {
               <div className="spacer" />
               <button
                 className="tb-btn"
+                title="Export or print pages: the ticked ones, else every page here (Shift+click pages to tick them)"
+                disabled={!activeSection}
+                onClick={() => {
+                  const st = useStore.getState()
+                  const ids = st.pageSelection.length ? st.pageSelection : activeSection ? pagesUnder(activeSection) : []
+                  st.openExport({ pageIds: ids })
+                }}
+              >
+                <Download size={14} />
+              </button>
+              <button
+                className="tb-btn"
                 title="New page (Ctrl+Shift+N)"
                 disabled={!activeSectionId}
                 onClick={() => useStore.getState().addNode('page', activeSectionId)}
@@ -640,6 +666,7 @@ export default function App() {
       {showKeys && <ShortcutSheet onClose={() => setShowKeys(false)} />}
       {linkModalOpen && <LinkModal onClose={() => setLinkModalOpen(false)} />}
       {artifactModalOpen && <ArtifactModal onClose={() => setArtifactModalOpen(false)} />}
+      {exportOpen && <ErrorBoundary label="export"><ExportModal /></ErrorBoundary>}
       <NoteImageHost />
       {toast && <div className="toast">{toast}</div>}
       <ClaudeOutside />
@@ -742,6 +769,8 @@ function ShortcutSheet({ onClose }: { onClose(): void }) {
     ['Ctrl T', 'New tab (pick a page); Ctrl or middle click a page opens it in a new tab'],
     ['Ctrl Tab / Ctrl Shift Tab', 'Next or previous tab (each keeps its scroll spot)'],
     ['Ctrl W / Ctrl Shift T', 'Close the tab / reopen the last closed tab'],
+    ['Ctrl P', 'Export or print: selected cells, ticked pages, or this page (PDF, Markdown)'],
+    ['Shift click a page', 'Tick pages for export or print (a range from the last one)'],
     ['Ctrl K', 'Insert or edit link'],
     ['Ctrl Shift A', 'Insert or edit artifact (folder or file link)'],
     ['Ctrl ,', 'Settings'],

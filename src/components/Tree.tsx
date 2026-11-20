@@ -3,7 +3,7 @@ import { useStore, findNode } from '../store'
 import type { TreeNode } from '../types'
 import { Menu, type MenuItem } from './Menu'
 import { askConfirm } from '../lib/confirm'
-import { Chevron, File, Folder, Book, Plus, Star, Trash, Copy, Palette, Archive } from './Icons'
+import { Chevron, File, Folder, Book, Plus, Star, Trash, Copy, Palette, Archive, Download, X } from './Icons'
 
 const NODE_COLORS = ['#7c9cff', '#e06c75', '#e5c07b', '#98c379', '#56b6c2', '#c678dd', '#f06292', '#a5a5a5']
 
@@ -21,8 +21,13 @@ interface Props {
   archive?: boolean
 }
 
+import { pagesUnder } from '../lib/exportDoc'
+export { pagesUnder }
+
 /** True when the node or anything below it is archived. */
 const holdsArchived = (n: TreeNode): boolean => Boolean(n.archived) || n.children.some(holdsArchived)
+
+const NO_PICKS: string[] = []
 
 export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, archive }: Props) {
   const [menu, setMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null)
@@ -39,6 +44,43 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
       return next
     })
   const st = useStore
+  // Pages ticked for export or print (only the page list ticks them).
+  const pickable = kinds.length === 1 && kinds[0] === 'page' && !archive
+  const picked = useStore((s) => (pickable ? s.pageSelection : NO_PICKS))
+  const anchor = useRef<string | null>(null)
+  /** Page rows as shown, top to bottom. */
+  const shownPages = () => {
+    const out: string[] = []
+    const go = (ns: TreeNode[]) =>
+      ns.forEach((n) => {
+        if (n.archived || !kinds.includes(n.kind)) return
+        if (n.kind === 'page') out.push(n.id)
+        if (!n.collapsed) go(n.children)
+      })
+    go(roots)
+    return out
+  }
+  const togglePick = (id: string) => {
+    const cur = st.getState().pageSelection
+    anchor.current = id
+    st.getState().setPageSelection(cur.includes(id) ? cur.filter((x) => x !== id) : [...cur, id])
+  }
+  /** Shift+click: every page from the last ticked (or the open one) to this one. */
+  const pickRange = (id: string) => {
+    const order = shownPages()
+    const from = anchor.current && order.includes(anchor.current) ? anchor.current : st.getState().activePageId
+    const a = from ? order.indexOf(from) : -1
+    const b = order.indexOf(id)
+    const range = a < 0 || b < 0 ? [id] : order.slice(Math.min(a, b), Math.max(a, b) + 1)
+    st.getState().setPageSelection([...st.getState().pageSelection, ...range])
+    anchor.current = id
+  }
+  const exportPages = (ids: string[]) => st.getState().openExport({ pageIds: ids })
+  /** The ticked pages when this one is among them, else just this one. */
+  const forPage = (id: string) => {
+    const sel = st.getState().pageSelection
+    return pickable && sel.includes(id) ? shownPages().filter((x) => sel.includes(x)) : [id]
+  }
 
   // A node just created opens in rename mode, its default name selected, in the tree that shows it.
   const renameNodeId = useStore((s) => s.renameNodeId)
@@ -70,10 +112,23 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
               icon: <Star />,
               onClick: () => s.toggleFavorite(n.id),
             },
+            { separator: true },
+            (() => {
+              const ids = forPage(n.id)
+              return { label: ids.length > 1 ? `Export or print ${ids.length} pages...` : 'Export or print...', hint: 'PDF, Markdown', icon: <Download />, onClick: () => exportPages(ids) }
+            })(),
+            ...(pickable ? [{ label: picked.includes(n.id) ? 'Untick' : 'Tick for export', hint: 'Shift+click', onClick: () => togglePick(n.id) }] : []),
             { label: 'Copy page as Markdown', icon: <Copy />, onClick: () => copyPageMarkdown(n.id) },
-            { label: 'Export page as Markdown file', onClick: () => exportPageMarkdown(n.id, n.title) },
           ]
-        : []),
+        : (() => {
+            const ids = pagesUnder(n)
+            return ids.length
+              ? [
+                  { separator: true },
+                  { label: `Export or print all ${ids.length} page${ids.length === 1 ? '' : 's'}...`, hint: 'PDF, Markdown', icon: <Download />, onClick: () => exportPages(ids) },
+                ]
+              : []
+          })()),
       { separator: true },
       { title: 'Color' },
       {
@@ -134,10 +189,13 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
             n.kind,
             isActive ? 'active' : '',
             dropTarget?.id === n.id ? `drop-${dropTarget.pos}` : '',
+            pickable && picked.includes(n.id) ? 'picked' : '',
             pathOnly ? 'arch-path' : '',
           ].join(' ')}
           style={{ paddingLeft: 6 + depth * 13, ['--node-color' as any]: n.color || 'var(--accent)' }}
           onClick={(e) => {
+            // Shift click ticks pages for export or print, a range from the last one.
+            if (pickable && n.kind === 'page' && e.shiftKey && !e.ctrlKey && !e.metaKey) return void pickRange(n.id)
             // Ctrl click opens a page in a new tab, behind this one.
             if (n.kind === 'page' && (e.ctrlKey || e.metaKey)) return void useStore.getState().newTab(n.id, { background: !e.shiftKey })
             if (archive && n.kind !== 'page') toggle()
@@ -189,7 +247,20 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
             <span className="twisty" />
           )}
 
-          {n.kind === 'notebook' ? <span className="dot" /> : <Icon size={14} />}
+          {pickable && n.kind === 'page' && picked.length > 0 ? (
+            <input
+              type="checkbox"
+              className="row-check"
+              checked={picked.includes(n.id)}
+              title="Tick for export or print (Shift+click picks a range)"
+              onClick={(e) => e.stopPropagation()}
+              onChange={() => togglePick(n.id)}
+            />
+          ) : n.kind === 'notebook' ? (
+            <span className="dot" />
+          ) : (
+            <Icon size={14} />
+          )}
 
           <span className="label">
             {renaming === n.id ? (
@@ -222,6 +293,19 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
               <Archive size={13} />
             </button>
           ) : archive ? null : (
+          <>
+          {n.kind === 'page' && (
+            <button
+              className="row-btn"
+              title={forPage(n.id).length > 1 ? `Export or print the ${forPage(n.id).length} ticked pages` : 'Export or print this page (PDF, Markdown)'}
+              onClick={(e) => {
+                e.stopPropagation()
+                exportPages(forPage(n.id))
+              }}
+            >
+              <Download size={13} />
+            </button>
+          )}
           <button
             className="row-btn"
             title="Add inside"
@@ -232,6 +316,7 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
           >
             <Plus size={13} />
           </button>
+          </>
           )}
         </div>
 
@@ -242,8 +327,23 @@ export default function Tree({ kinds, roots, activeId, onActivate, emptyHint, ar
 
   const visible = roots.filter((r) => kinds.includes(r.kind) && (archive ? holdsArchived(r) : !r.archived))
 
+  const pickedShown = pickable && picked.length ? shownPages().filter((id) => picked.includes(id)) : NO_PICKS
   return (
     <>
+      {pickable && picked.length > 0 && (
+        <div className="page-pick-bar">
+          <span className="n">{picked.length} ticked</span>
+          <button className="go" title="Export or print the ticked pages" onClick={() => exportPages(pickedShown.length === picked.length ? pickedShown : [...pickedShown, ...picked.filter((x) => !pickedShown.includes(x))])}>
+            <Download size={12} /> Export
+          </button>
+          <button title="Tick every page here" onClick={() => st.getState().setPageSelection([...picked, ...shownPages()])}>
+            All
+          </button>
+          <button title="Untick all" onClick={() => st.getState().setPageSelection([])}>
+            <X size={12} />
+          </button>
+        </div>
+      )}
       {visible.length === 0 && emptyHint && <div className="empty-hint">{emptyHint}</div>}
       {visible.map((n) => renderNode(n, 0))}
       {menu && <Menu x={menu.x} y={menu.y} items={menu.items} onClose={() => setMenu(null)} />}
@@ -285,11 +385,6 @@ async function pageMarkdown(pageId: string) {
 
 async function copyPageMarkdown(pageId: string) {
   await navigator.clipboard.writeText(await pageMarkdown(pageId))
-}
-
-async function exportPageMarkdown(pageId: string, title: string) {
-  const { storage } = await import('../lib/storage')
-  await storage.exportFile(`${title.replace(/[\\/:*?"<>|]/g, '_')}.md`, await pageMarkdown(pageId))
 }
 
 export function CellCount({ pageId }: { pageId: string }) {

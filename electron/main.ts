@@ -13,6 +13,7 @@ import { setupAgent } from './agent'
 import { setupVoice } from './voice'
 import { setupUpdate } from './update'
 import { setupDiagrams } from './diagrams'
+import { setupExporter } from './exporter'
 import { setupClaude } from './claude'
 import { setupClaudeLink } from './claude-link'
 
@@ -652,6 +653,7 @@ setupClaudeLink(claude, { log: (...a) => debugLog(...a) })
 setupVoice({ getWin: () => win, log: (...a) => debugLog(...a) })
 setupUpdate({ log: (...a) => debugLog(...a) })
 setupDiagrams()
+setupExporter(() => win, () => vaultPath)
 
 ipcMain.handle('asset:save', async (_e, dataUrl: string) => {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl)

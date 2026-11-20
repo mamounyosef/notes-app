@@ -103,5 +103,15 @@ turndown.addRule('colgroup', {
 })
 
 export function htmlToMarkdown(html: string) {
+  // Stored formulas are empty elements, and Turndown drops empty elements before any rule
+  // sees them: give each its formula as text so the math rule turns it into $...$.
+  if (html && html.includes('data-latex') && typeof DOMParser !== 'undefined') {
+    const doc = new DOMParser().parseFromString(`<div id="md-root">${html}</div>`, 'text/html')
+    const root = doc.getElementById('md-root')!
+    root.querySelectorAll('[data-latex]').forEach((el) => {
+      if (!el.textContent?.trim()) el.textContent = el.getAttribute('data-latex') || ' '
+    })
+    return turndown.turndown(root.innerHTML)
+  }
   return turndown.turndown(html || '')
 }

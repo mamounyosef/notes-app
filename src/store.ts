@@ -125,6 +125,12 @@ interface State {
   /** Cells and pages that sync kept two versions of. */
   conflicts: ConflictList
   showSyncPanel: boolean
+  /** Export / print dialog: which pages, or which cells of one page. */
+  exportRequest: { pageIds: string[]; cellIds?: string[] } | null
+  openExport(req: { pageIds: string[]; cellIds?: string[] } | null): void
+  /** Pages ticked in the page list (Shift+click, or the select button). */
+  pageSelection: string[]
+  setPageSelection(ids: string[]): void
   /** Last save that failed (the edits are kept and retried). */
   syncError: string | null
   /** The notes folder could not be read at start. Nothing is written then. */
@@ -517,6 +523,10 @@ export const useStore = create<State>((set, get) => ({
 
   conflicts: { cells: [], orphans: [] },
   showSyncPanel: false,
+  exportRequest: null,
+  openExport: (req) => set({ exportRequest: req && req.pageIds.length ? req : null }),
+  pageSelection: [],
+  setPageSelection: (ids) => set({ pageSelection: [...new Set(ids)] }),
   syncError: null,
   fatal: null,
   setShowSyncPanel: (open) => {

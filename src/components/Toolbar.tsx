@@ -8,7 +8,7 @@ import { Menu, type MenuItem } from './Menu'
 import {
   AlignCenter, AlignJustify, AlignLeft, AlignRight, ArtifactI, Bold, Check, CodeI, ColumnsI, Cursor, Eraser,
   Highlighter, Hr, ImageI, Italic, Layers, LinkI, ListOl, ListUl, Palette, Pen, Plus,
-  Quote, Redo, Sigma, SpaceI, StrikeI, TableI, UnderlineI, Undo,
+  Quote, Redo, Sigma, SpaceI, StrikeI, TableI, UnderlineI, Undo, Download,
 } from './Icons'
 
 const FONT_SIZES = [10, 11, 12, 13, 14, 15, 16, 18, 20, 24, 28, 32, 40, 48]
@@ -416,6 +416,18 @@ export default function Toolbar() {
           })
         }}><Layers /> {selection.length}</button>
       )}
+      <button
+        className="tb-btn"
+        title={selection.length ? 'Export or print the selected cells: PDF, Markdown (Ctrl+P)' : 'Export or print this page: PDF, Markdown (Ctrl+P)'}
+        onClick={() => {
+          const st = useStore.getState()
+          if (!st.page) return
+          const all = st.selection.length === 0 || st.selection.length === st.page.cells.length
+          st.openExport({ pageIds: [st.page.id], cellIds: all ? undefined : st.selection })
+        }}
+      >
+        <Download /> Export
+      </button>
 
       <input
         ref={fileRef}
