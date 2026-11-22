@@ -109,6 +109,9 @@ const MAX_GRANTS = 200
 export const ACCESS_TTL_S = 3600
 const REFRESH_TTL_MS = 90 * 24 * 3600 * 1000
 const CODE_TTL_MS = 60 * 1000
+// Refresh tokens replaced within the last REFRESH_GRACE rotations still refresh (no revoke).
+const REFRESH_GRACE = 4
+const MAX_LIVE_ACCESS = 8
 
 /**
  * Clients, grants and token hashes, persisted to phone-oauth.json. Raw tokens
@@ -206,12 +209,16 @@ export class OAuthStore {
     return { grantId, tokens }
   }
   #mint(g) {
+    const now = Date.now()
     const access = randomToken(32)
     const refresh = randomToken(32)
     g.accessHash = sha256hex(access)
-    g.accessExp = Date.now() + ACCESS_TTL_S * 1000
+    g.accessExp = now + ACCESS_TTL_S * 1000
+    // Earlier access tokens stay valid until they expire, so a refresh by one
+    // Claude client (or a retried refresh) never cuts off requests in flight.
+    g.access = [...(g.access || []).filter((a) => a.exp > now), { hash: g.accessHash, exp: g.accessExp }].slice(-MAX_LIVE_ACCESS)
     g.refreshHash = sha256hex(refresh)
-    g.refreshExp = Date.now() + REFRESH_TTL_MS
+    g.refreshExp = now + REFRESH_TTL_MS
     return { access_token: access, token_type: 'Bearer', expires_in: ACCESS_TTL_S, refresh_token: refresh }
   }
   refresh(token, client_id) {
@@ -220,19 +227,27 @@ export class OAuthStore {
     const h = sha256hex(token)
     const now = Date.now()
     for (const [id, g] of Object.entries(this.data.grants)) {
-      if (g.refreshHash === h) {
+      const rotated = g.rotated || []
+      const at = rotated.lastIndexOf(h)
+      // The current token, or one of the last few it replaced: the answer to a refresh can be
+      // lost (502, restart, timeout) and claude.ai then retries with the old token, and two
+      // Claude clients sharing a grant can refresh at once. Both must keep working.
+      const graceful = at >= 0 && at >= rotated.length - REFRESH_GRACE
+      if (g.refreshHash === h || graceful) {
         if (g.refreshExp < now) return { error: 'invalid_grant' }
         if (client_id && client_id !== g.client_id) return { error: 'invalid_grant' }
-        g.rotated = [...(g.rotated || []), h].slice(-20)
+        if (graceful) console.warn('Earlier refresh token reused (lost response or parallel refresh): accepted')
+        // The token being replaced joins the grace list, so the client holding it can still refresh.
+        g.rotated = [...rotated.filter((x) => x !== g.refreshHash), g.refreshHash].slice(-20)
         const tokens = this.#mint(g)
         this.save()
         return { tokens }
       }
-      if ((g.rotated || []).includes(h)) {
-        // A rotated refresh token came back: it was stolen or replayed. End the whole grant.
+      if (at >= 0) {
+        // A long-replaced refresh token came back: it was stolen or replayed. End the whole grant.
         delete this.data.grants[id]
         this.save()
-        console.warn('Refresh token reuse detected: grant revoked')
+        console.warn('Old refresh token reuse detected: grant revoked')
         return { error: 'invalid_grant' }
       }
     }
@@ -243,8 +258,11 @@ export class OAuthStore {
     if (typeof token !== 'string' || !token) return null
     const h = sha256hex(token)
     const now = Date.now()
-    for (const g of Object.values(this.data.grants))
-      if (g.accessHash === h) return g.accessExp > now && g.resource === resource ? g : null
+    for (const g of Object.values(this.data.grants)) {
+      const live = g.access || [{ hash: g.accessHash, exp: g.accessExp }]
+      const hit = live.find((a) => a.hash === h)
+      if (hit) return hit.exp > now && g.resource === resource ? g : null
+    }
     return null
   }
   revokeGrant(id) {

@@ -370,18 +370,29 @@ try {
   r = await rpc({ jsonrpc: '2.0', id: 1, method: 'ping' }, tc2.access_token)
   check(r.status === 200, 'new access token works')
   r = await rpc({ jsonrpc: '2.0', id: 1, method: 'ping' }, tc.access_token)
-  check(r.status === 401, 'old access token stops working after refresh')
+  check(r.status === 200, 'old access token keeps working until it expires (requests in flight)')
+  // Lost refresh response or a parallel refresh: the replaced token still refreshes, and so does the new one.
   r = await tokenReq({ grant_type: 'refresh_token', refresh_token: tc.refresh_token, client_id: client.client_id })
-  check(r.status === 400 && JSON.parse(r.text).error === 'invalid_grant', 'reusing a rotated refresh token is refused')
-  r = await rpc({ jsonrpc: '2.0', id: 1, method: 'ping' }, tc2.access_token)
-  check(r.status === 401, 'refresh reuse revokes the whole grant (access)')
+  const tc3 = JSON.parse(r.text)
+  check(r.status === 200 && tc3.access_token, 'retrying with the just-replaced refresh token works (no sign-out)')
   r = await tokenReq({ grant_type: 'refresh_token', refresh_token: tc2.refresh_token, client_id: client.client_id })
-  check(r.status === 400, 'refresh reuse revokes the whole grant (refresh)')
+  let latest = JSON.parse(r.text)
+  check(r.status === 200 && latest.refresh_token, 'the other client\'s refresh token still works too')
+  for (let i = 0; i < 6; i++) {
+    r = await tokenReq({ grant_type: 'refresh_token', refresh_token: latest.refresh_token, client_id: client.client_id })
+    latest = JSON.parse(r.text)
+  }
+  r = await tokenReq({ grant_type: 'refresh_token', refresh_token: tc.refresh_token, client_id: client.client_id })
+  check(r.status === 400 && JSON.parse(r.text).error === 'invalid_grant', 'a long-replaced refresh token is refused')
+  r = await rpc({ jsonrpc: '2.0', id: 1, method: 'ping' }, latest.access_token)
+  check(r.status === 401, 'long-replaced refresh reuse revokes the whole grant (access)')
+  r = await tokenReq({ grant_type: 'refresh_token', refresh_token: latest.refresh_token, client_id: client.client_id })
+  check(r.status === 400, 'long-replaced refresh reuse revokes the whole grant (refresh)')
   r = await tokenReq({ grant_type: 'password', username: 'x' })
   check(r.status === 400 && JSON.parse(r.text).error === 'unsupported_grant_type', 'unknown grant type')
 
   const oauthFile = fs.readFileSync(path.join(appData, 'notesapp', 'phone-oauth.json'), 'utf8')
-  check(!oauthFile.includes(tc2.refresh_token) && !oauthFile.includes(tc2.access_token), 'raw tokens are never stored')
+  check(!oauthFile.includes(latest.refresh_token) && !oauthFile.includes(latest.access_token) && !oauthFile.includes(tc2.refresh_token), 'raw tokens are never stored')
 
   /* ---- MCP ---- */
   const d = await getCode()
