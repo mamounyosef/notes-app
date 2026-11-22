@@ -18,7 +18,7 @@ import { TOOL_DEFS, TurnRecorder, keepSnapshot, runTool, READ_ONLY, type ToolRes
 import { scrollToCell } from './reveal'
 import { cellKeys, contextDelta } from './contextDelta'
 import { buildContext } from './context'
-import { memoryBlock, memoryRev, memoryRules } from './memory'
+import { memoryFullNow, memoryRules } from './memory'
 import { useStore } from '../store'
 
 const desk = (window as any).notes
@@ -476,11 +476,12 @@ export async function runClaudeTurn(h: TurnHost): Promise<{ firstAssistantId: st
   const prevVoice = Boolean(prev?.meta?.voice)
   const voice = h.voice ? (prev && prevVoice && resume ? 'short' : 'full') : null
 
-  // Memory: the whole list when this conversation has not seen it, or it changed since the last message.
-  const rev = memoryRev()
-  const memList = memoryBlock()
-  const memSeen = Boolean(resume && !unseenTurns && !fromHead?.compacted && (prev?.meta as any)?.memRev === rev)
-  const memory = memList && !memSeen ? (resume && (prev?.meta as any)?.memRev ? `(Your memory, or the notebook open now, changed since the last message. This is the current list; it replaces the earlier one.)\n${memList}` : memList) : undefined
+  // Memory is appended, never resent: a conversation that saw the previous message gets only this message's
+  // update (another section, edits), so the session's cached prefix stays valid. One that did not (new, compacted,
+  // other models in between) gets the full list as it stands now.
+  const memSeen = Boolean(resume && !unseenTurns && !fromHead?.compacted && prev?.meta?.mem)
+  const memList = memoryFullNow()
+  const memory = (memSeen ? u.meta?.memNote : memList) || undefined
   const content = await userBlocks(u, { context, delta: delta || undefined, voice, preface, memory })
   const system = claudeSystemPrompt() + memoryRules()
   const base = { model: h.model, effort: h.effort, noThinking: h.noThinking, system, title: (chat0.title !== 'New chat' && chat0.title) || undefined }
@@ -499,7 +500,7 @@ export async function runClaudeTurn(h: TurnHost): Promise<{ firstAssistantId: st
     sessions.add(r.sessionId)
     const mark = { session: r.sessionId, tip: r.tip || null, at: resume?.at || null }
     const cur = h.chat().messages.find((m) => m.id === u.id)
-    if (cur) h.patchMsg(u.id, { meta: { ...cur.meta, claude: mark, memRev: rev } as any })
+    if (cur) h.patchMsg(u.id, { meta: { ...cur.meta, claude: mark } as any })
     h.update((c) => ({ ...c, claude: { ...((c as any).claude || {}), head: { session: r.sessionId, tip: r.tip || null, after: u.id, at: Date.now(), ...(out.compacted ? { compacted: true } : {}), ...(Object.keys(out.mine).length ? { mine: out.mine } : {}) }, sessions: [...sessions] } }) as any)
   }
   if (r.aborted) return { firstAssistantId: out.first, aborted: true }

@@ -1,7 +1,7 @@
 /**
  * The assistant's memory, seen and edited by the user: in the assistant panel
  * (the memory button in its header) and in Settings, Memory. Two scopes:
- * general (all notes) and per notebook.
+ * general (all notes) and per section (a course, inside a notebook).
  */
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { useStore } from '../../store'
@@ -11,7 +11,7 @@ import {
   type MemoryItem, type MemoryKind,
 } from '../../agent/memory'
 import { askConfirm } from '../../lib/confirm'
-import { Book, Check, GlobeI, MemoryI, PauseI, Pencil, PinI, Plus, SearchI, Trash, X } from '../Icons'
+import { Folder as Book, Check, GlobeI, MemoryI, PauseI, Pencil, PinI, Plus, SearchI, Trash, X } from '../Icons'
 
 type Nb = { id: string; title: string }
 
@@ -39,7 +39,7 @@ export function useMemory() {
   return memoryState()
 }
 
-/** The notebook of the open page, kept live. */
+/** The section (course) of the open page, kept live. */
 function useOpenNotebook(): Nb | null {
   useStore((s) => s.page?.id)
   useStore((s) => s.workspace.tree)
@@ -88,7 +88,7 @@ function KindPick({ value, onChange }: { value: MemoryKind; onChange(k: MemoryKi
   )
 }
 
-/** General, or a notebook (the open one, or the one it already has). */
+/** General, or a section (the open one, or the one it already has). */
 function ScopePick({ value, notebooks, onChange }: { value: string | null; notebooks: Nb[]; onChange(nb: Nb | null): void }) {
   return (
     <div className="mem-scope-pick" role="radiogroup" aria-label="Where it applies">
@@ -132,7 +132,7 @@ function Row({ m, focus, here, showScope, onForget }: { m: MemoryItem; focus: bo
     useAgent.getState().toggle(true)
     useAgent.getState().openChat(m.chatId)
   }
-  // The scopes it can move to: general, its own notebook, and the open one.
+  // The scopes it can move to: general, its own section, and the open one.
   const choices: Nb[] = []
   if (m.notebookId) choices.push({ id: m.notebookId, title: notebookTitle(m.notebookId, m.notebookTitle) })
   if (here && here.id !== m.notebookId) choices.push(here)
@@ -204,7 +204,7 @@ function Row({ m, focus, here, showScope, onForget }: { m: MemoryItem; focus: bo
   )
 }
 
-/** Everything the assistant remembers, general and per notebook, with add, edit, move, pause, pin, forget, import and export. */
+/** Everything the assistant remembers, general and per section, with add, edit, move, pause, pin, forget, import and export. */
 export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'settings'; onClose?(): void }) {
   const mem = useMemory()
   const here = useOpenNotebook()
@@ -265,7 +265,7 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
     localStorage.setItem(SCOPE_KEY, nb ? 'notebook' : 'general')
   }
 
-  // Notebooks that have memories, the open one first.
+  // Sections that have memories, the open one first.
   const notebooks = useMemo(() => {
     const seen = new Map<string, Nb & { n: number }>()
     for (const m of mem.items) {
@@ -307,7 +307,7 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
         ...notebooks.map((nb) => ({ key: nb.id, nb, general: false, items: list.filter((m) => m.notebookId === nb.id) })),
       ].filter((g) => g.items.length || (g.general && !q && kindF === 'all'))
     : [{ key: 'list', nb: null, general: false, items: list }]
-  const inPlay = memoryInScope(mem.items, here).length
+  const inPlay = memoryInScope(mem.items).length
   const paused = mem.items.filter((m) => m.off).length
 
   const exportJson = () => {
@@ -335,7 +335,7 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
   }
   const clearAll = async () => {
     if (!mem.items.length) return
-    if (!(await askConfirm(`Forget all ${mem.items.length} memories, general and every notebook's? You can undo it right after.`, 'Forget all'))) return
+    if (!(await askConfirm(`Forget all ${mem.items.length} memories, general and every section's? You can undo it right after.`, 'Forget all'))) return
     const items = mem.items
     replaceAllMemories([])
     showUndo(items, `Forgot all ${items.length} memories`)
@@ -350,8 +350,8 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
           <p>
             {mem.on
               ? mem.items.length
-                ? `${generalCount} general, ${mem.items.length - generalCount} in notebooks${paused ? `, ${paused} paused` : ''}. ${here ? `In ${here.title} the assistant keeps ${inPlay} in mind` : `It keeps ${inPlay} in mind now`} (about ${estimateMemoryTokens().toLocaleString()} tokens per message).`
-                : 'Nothing remembered yet. Tell the assistant "remember …", or add something below. It decides on its own whether a memory is general or just for one notebook.'
+                ? `${generalCount} general, ${mem.items.length - generalCount} in courses and sections${paused ? `, ${paused} paused` : ''}. ${here ? `In ${here.title} the assistant keeps ${inPlay} in mind` : `It keeps ${inPlay} in mind now`} (about ${estimateMemoryTokens().toLocaleString()} tokens per message).`
+                : 'Nothing remembered yet. Tell the assistant "remember …", or add something below. It decides on its own whether a memory is general or just for one course (section).'
               : 'Memory is off: the assistant starts every chat knowing nothing about you.'}
           </p>
         </div>
@@ -361,7 +361,7 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
       </div>
 
       <div className="mem-toggles">
-        <Toggle on={mem.on} onChange={(on) => setMemoryPrefs({ on })} label="Use memory" sub="General memories in every chat, a notebook's own memories while you work in it. Every model." />
+        <Toggle on={mem.on} onChange={(on) => setMemoryPrefs({ on })} label="Use memory" sub="General memories in every chat, a course's (section's) own memories while you work in it. Every model." />
         <Toggle on={mem.on && mem.auto} onChange={(auto) => setMemoryPrefs({ auto, ...(auto ? { on: true } : {}) })} label="Learn on its own" sub="Also save lasting preferences and corrections without being asked. Off: only when you say “remember”." />
       </div>
 
@@ -381,7 +381,7 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
         <div className="mem-add-bar">
           <span className="mem-add-label">Applies to</span>
           <ScopePick value={draftNb && here ? here.id : null} notebooks={here ? [here] : []} onChange={pickDraftScope} />
-          {!here && <span className="mem-add-hint">Open a page to add one for its notebook.</span>}
+          {!here && <span className="mem-add-hint">Open a page to add one for its section.</span>}
         </div>
         <div className="mem-add-bar">
           <KindPick value={draftKind} onChange={setDraftKind} />
@@ -403,7 +403,7 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
               <GlobeI size={11} /> General <span>{generalCount}</span>
             </button>
             {notebooks.map((nb) => (
-              <button key={nb.id} className={`${scopeF === nb.id ? 'on' : ''} ${nb.id === here?.id ? 'here' : ''}`} onClick={() => setScopeF(scopeF === nb.id ? 'all' : nb.id)} title={nb.id === here?.id ? 'The notebook open now' : `Only used in ${nb.title}`}>
+              <button key={nb.id} className={`${scopeF === nb.id ? 'on' : ''} ${nb.id === here?.id ? 'here' : ''}`} onClick={() => setScopeF(scopeF === nb.id ? 'all' : nb.id)} title={nb.id === here?.id ? 'The section open now' : `Only used in ${nb.title}`}>
                 <Book size={11} /> {nb.title.length > 20 ? `${nb.title.slice(0, 20)}…` : nb.title} <span>{nb.n}</span>
               </button>
             ))}
@@ -429,7 +429,7 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
       <div className="mem-list">
         {mem.items.length === 0 ? (
           <div className="mem-empty">
-            <p>Two kinds of memory: <b>general</b> (true in all your notes, like how you like answers) and <b>notebook</b> (just for one subject, like how its diagrams look). Try one:</p>
+            <p>Two kinds of memory: <b>general</b> (true in all your notes, like how you like answers) and <b>section</b> (just for one course, like how its diagrams look). Try one:</p>
             {EXAMPLES.map((e) => (
               <button
                 key={e.text}
@@ -443,7 +443,7 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
               >
                 <i />
                 <span>{e.text}</span>
-                <em>{e.notebook ? (here ? here.title : 'a notebook') : 'General'}</em>
+                <em>{e.notebook ? (here ? here.title : 'a course') : 'General'}</em>
               </button>
             ))}
           </div>
@@ -456,7 +456,7 @@ export default function MemoryManager({ mode, onClose }: { mode: 'panel' | 'sett
                 <div className={`mem-group-head ${g.nb?.id && g.nb.id === here?.id ? 'here' : ''}`}>
                   {g.general ? <GlobeI size={13} /> : <Book size={13} />}
                   <span>{g.general ? 'General' : g.nb!.title}</span>
-                  <em>{g.general ? 'all notes, every chat' : g.nb!.id === here?.id ? 'open now: in use' : 'only in this notebook'}</em>
+                  <em>{g.general ? 'all notes, every chat' : g.nb!.id === here?.id ? 'open now: in use' : 'only in this section'}</em>
                   <span className="mem-group-line" />
                   <b>{g.items.length}</b>
                 </div>

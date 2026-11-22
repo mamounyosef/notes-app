@@ -21,7 +21,7 @@
     "test:voice": "node --experimental-strip-types --no-warnings src/voice/speechText.test.ts",
     "test:paste": "node --experimental-strip-types --no-warnings src/editor/paste.test.ts",
     "test:context": "node --experimental-strip-types --no-warnings src/agent/contextDelta.test.ts",
-    "test:memory": "node --experimental-strip-types --no-warnings src/agent/memoryMarker.test.ts",
+    "test:memory": "node --experimental-strip-types --no-warnings src/agent/memoryMarker.test.ts && node --experimental-strip-types --no-warnings src/agent/memoryDelta.test.ts",
     "test:source": "node --experimental-strip-types --no-warnings src/agent/sourceEdit.test.ts",
     "test:claude-link": "node scripts/test-claude-link.mjs",
     "phone-server": "node server/phone-server.mjs",

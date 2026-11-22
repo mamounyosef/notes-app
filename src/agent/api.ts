@@ -1,5 +1,6 @@
 /** The desktop bridge for the agent (see electron/agent.ts). */
 import { modelInfo, type Provider } from './models'
+import type { MemCtx } from './memoryDelta'
 
 export interface ChatAttachment {
   sha: string
@@ -132,6 +133,12 @@ export interface ChatMessage {
     switched?: KeySwitch
     /** Said out loud in voice mode, not typed. */
     voice?: boolean
+    /** Memory added to this user message (the full <memory> block, or a <memory_update>). Never changes once sent. */
+    memNote?: string
+    /** What the conversation knows about memory after this message (see memoryDelta.ts). */
+    mem?: MemCtx
+    /** Assistant message: the memories it said it applied. */
+    memUsed?: string[]
     device?: string
   }
 }

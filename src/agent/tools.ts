@@ -198,26 +198,33 @@ export interface ToolResult {
   memory?: { op: 'add' | 'refresh' | 'update' | 'forget'; id: string; before?: MemoryItem; after?: MemoryItem }
 }
 
-/** A memory's scope from the tool arguments: null for general, a notebook otherwise. */
-function scopeArg(scope: unknown, notebookId: unknown): { id: string; title: string } | null {
-  if (scope !== 'notebook') return null
-  const nb = notebookArg(notebookId || 'current')
-  if (!nb) throw new ToolError('No page is open, so there is no current notebook. Give notebook_id, or use scope general.')
+/** A memory's scope from the tool arguments: null for general, a section otherwise ("notebook" is the old name). */
+function scopeArg(scope: unknown, sectionId: unknown): { id: string; title: string } | null {
+  if (scope !== 'section' && scope !== 'notebook') return null
+  const nb = sectionArg(sectionId || 'current')
+  if (!nb) throw new ToolError('No page is open, so there is no current section. Give section_id, or use scope general.')
   return nb
 }
 
-const scopeLabel = (m: MemoryItem) => (m.notebookId ? ` for ${m.notebookTitle || 'this notebook'}` : ' (general)')
-const scopeName = (m: MemoryItem) => (m.notebookId ? `notebook "${m.notebookTitle || m.notebookId}"` : 'general')
+const scopeLabel = (m: MemoryItem) => (m.notebookId ? ` for ${m.notebookTitle || 'this section'}` : ' (general)')
+const scopeName = (m: MemoryItem) => (m.notebookId ? `section "${m.notebookTitle || m.notebookId}"` : 'general')
 
-/** A notebook_id argument ("current" for the open page's notebook) as id and title. */
-function notebookArg(v: unknown): { id: string; title: string } | null {
+/** A section_id argument ("current" for the open page's section) as id and title. A page id means its section. */
+function sectionArg(v: unknown): { id: string; title: string } | null {
   const s = String(v || '').trim()
   if (!s || s === 'all') return null
   if (s === 'current') return currentNotebook()
-  const node = findNode(useStore.getState().workspace.tree, s)
-  if (!node) throw new ToolError(`Notebook ${s} not found. Use an id from the tree, or "current".`)
+  const tree = useStore.getState().workspace.tree
+  const node = findNode(tree, s)
+  if (!node) throw new ToolError(`Section ${s} not found. Use a section id from the tree, or "current".`)
+  if (node.kind === 'page') {
+    const up = pathTo(tree, node.id).find((n) => n.kind === 'section') || pathTo(tree, node.id).find((n) => n.kind === 'notebook')
+    if (up) return { id: up.id, title: up.title }
+  }
   return { id: node.id, title: node.title }
 }
+
+const sectionIdOf = (a: Args) => a.section_id || a.notebook_id
 
 class ToolError extends Error {}
 
@@ -922,19 +929,19 @@ export const TOOL_DEFS = [
     multi: bool('Allow picking several options.'),
   }, ['question']),
   SET_MATH_SIZE_DEF,
-  fn('remember', 'Save something to your long term memory of this user, kept across chats (see the Memory rules). One idea per call, as a short self-contained sentence. You choose the scope: general (all notes) or notebook (only this notebook). A near copy of an existing entry updates that one.', {
+  fn('remember', 'Save something to your long term memory of this user, kept across chats (see the Memory rules). One idea per call, as a short self-contained sentence. You choose the scope: general (all notes) or section (only this section, usually one course). A near copy of an existing entry updates that one.', {
     text: str('The memory: a specific, self-contained sentence that makes sense months later in a new chat.'),
-    scope: { type: 'string', enum: ['general', 'notebook'], description: 'general: true in every notebook and chat (who they are, answer style, habits regardless of subject). notebook: tied to one notebook\'s subject (its notation, how its diagrams and notes look, facts about that course or project).' },
+    scope: { type: 'string', enum: ['general', 'section'], description: 'general: true in every course and chat (who they are, answer style, habits regardless of subject). section: tied to the subject of one section, usually a course (its notation, how its diagrams and notes look, facts about that course).' },
     kind: { type: 'string', enum: ['rule', 'style', 'about', 'fact'], description: 'rule: how notes, diagrams, formulas should look. style: how to answer. about: who they are. fact: other lasting context.' },
-    notebook_id: str('With scope notebook: which notebook. Default: the notebook of the open page.'),
+    section_id: str('With scope section: which section. Default: the section the open page is in.'),
     important: bool('They stressed it ("always", "never", "really important"): listed first.'),
   }, ['text', 'scope', 'kind']),
-  fn('update_memory', 'Change one memory entry: reword it, change its kind, or move it between general and a notebook. Use instead of remember when an entry already covers the same thing or the user corrects it.', {
+  fn('update_memory', 'Change one memory entry: reword it, change its kind, or move it between general and a section. Use instead of remember when an entry already covers the same thing or the user corrects it.', {
     id: str('The entry id, like m4k2.'),
     text: str('The new text (the whole entry).'),
     kind: { type: 'string', enum: ['rule', 'style', 'about', 'fact'], description: 'New kind.' },
-    scope: { type: 'string', enum: ['general', 'notebook'], description: 'Move it: general (all notes), or notebook (the open page\'s notebook, or notebook_id).' },
-    notebook_id: str('With scope notebook: which notebook. Default: the notebook of the open page.'),
+    scope: { type: 'string', enum: ['general', 'section'], description: 'Move it: general (all notes), or section (the open page\'s section, or section_id).' },
+    section_id: str('With scope section: which section. Default: the section the open page is in.'),
     important: bool('Mark or unmark as important.'),
   }, ['id']),
   fn('forget', 'Delete a memory entry, when the user asks you to forget it or it turned out wrong. They can undo it.', {
@@ -1864,7 +1871,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const text = cleanText(a.text)
     if (text.length < 3) throw new ToolError('The memory text is empty.')
     if (/\b(password|passcode|api[ _-]?key|secret key|token)\b\s*[:=]/i.test(text)) throw new ToolError('That looks like a secret: secrets are never kept in memory.')
-    const notebook = scopeArg(a.scope || (a.notebook_id ? 'notebook' : 'general'), a.notebook_id)!
+    const notebook = scopeArg(a.scope || (sectionIdOf(a) ? 'section' : 'general'), sectionIdOf(a))
     const kind = (['rule', 'style', 'about', 'fact'].includes(a.kind) ? a.kind : 'fact') as MemoryKind
     const same = similarMemory(text)
     env.rec.memory(same?.id || null)
@@ -1879,12 +1886,12 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
 
   async update_memory(a, env) {
     const old = findMemory(a.id)
-    if (!old) throw new ToolError(`No memory entry ${a.id}. The ids are in the <memory> block.`)
+    if (!old) throw new ToolError(`No memory entry ${a.id}. The ids are in the <memory> and <memory_update> blocks.`)
     const patch: Partial<MemoryItem> = {}
     if (a.text !== undefined) patch.text = cleanText(a.text)
     if (['rule', 'style', 'about', 'fact'].includes(a.kind)) patch.kind = a.kind
     if (a.important !== undefined) patch.pinned = Boolean(a.important)
-    const moved = a.scope || a.notebook_id === 'all' ? scopeArg(a.notebook_id === 'all' ? 'general' : a.scope, a.notebook_id) : undefined
+    const moved = a.scope || sectionIdOf(a) === 'all' ? scopeArg(sectionIdOf(a) === 'all' ? 'general' : a.scope, sectionIdOf(a)) : undefined
     if (moved === null) (patch as any).notebookId = null
     else if (moved) Object.assign(patch, { notebookId: moved.id, notebookTitle: moved.title })
     env.rec.memory(old.id)

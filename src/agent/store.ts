@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid'
 import { agentApi, chatApi, type Chat, type ChatAttachment, type ChatMessage, type ChatSummary } from './api'
 import { buildContext } from './context'
 import { SYSTEM_PROMPT, voicePrompt } from './prompt'
-import { estimateMemoryTokens, markUsed, memoryBlock, memoryInScope, memoryRules, memoryState, takeMemoryMarker } from './memory'
+import { estimateMemoryTokens, findMemory, markUsed, memoryInScope, memoryKnown, memoryRules, memoryTurnNow, takeMemoryMarker, type MemCtx } from './memory'
 import { TOOL_DEFS, READ_ONLY, eyesFor, TurnRecorder, keepSnapshot, runTool, undoTurn } from './tools'
 import { cellTexts, scrollToCell } from './reveal'
 import { fileToAttachment } from './files'
@@ -318,6 +318,13 @@ function attachmentText(a: ChatAttachment) {
 /** A message's pictures: what was attached, and the note images that were selected when it was sent. */
 const pictured = (m: ChatMessage) => [...(m.attachments || []), ...(m.meta?.selection?.images || [])]
 
+/** What the conversation shown knows about memory: from its latest user message that carries it. */
+export function lastMemCtx(chat: Chat): MemCtx | null {
+  const path = activePath(chat)
+  for (let i = path.length - 1; i >= 0; i--) if (path[i].role === 'user' && path[i].meta?.mem) return path[i].meta!.mem!
+  return null
+}
+
 function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): any[] {
   const canSee = modelInfo(model).vision
   // Only the branch being shown: other versions are not part of this conversation.
@@ -338,8 +345,8 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): an
           if (a.kind === 'image') sentPics.add(`sha:${a.sha}`)
           for (const p of (a.pages || []).slice(0, 20)) sentPics.add(`sha:${p}`)
         }
-  const mem = memoryState().on ? `${memoryRules()}\n${memoryBlock()}\n` : memoryRules()
-  const out: any[] = [{ role: 'system', content: (voice ? SYSTEM_PROMPT + voicePrompt() : SYSTEM_PROMPT) + mem }]
+  // Only memory's rules here (they rarely change): the entries ride on the user messages (memNote), so this prefix stays cached.
+  const out: any[] = [{ role: 'system', content: (voice ? SYSTEM_PROMPT + voicePrompt() : SYSTEM_PROMPT) + memoryRules() }]
   // They follow the whole run of tool results, since results must come right after their calls.
   let pics: any[] = []
   const flushPics = () => {
@@ -351,6 +358,7 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): an
     const recent = i > lastUserIdx - 1
     if (m.role === 'user') {
       const parts: string[] = []
+      if (m.meta?.memNote) parts.push(m.meta.memNote)
       if (i === lastUserIdx && m.meta?.context) parts.push(`<app_context>\n${m.meta.context}\n</app_context>`)
       else if (m.meta?.brief) parts.push(`<app_context_then>${m.meta.brief}</app_context_then>`)
       if (m.meta?.quote) parts.push(`The user quoted this from their notes:\n"""${m.meta.quote}"""`)
@@ -693,6 +701,8 @@ export const useAgent = create<AgentState>((set, get) => {
     // Later than anything already in the chat, even if it came from a computer whose clock runs ahead.
     for (const m of s.chat.messages) lastStamp = Math.max(lastStamp, m.at || 0)
     const first = !s.chat.messages.length
+    // Memory: the full list on the first message, then only what changed (another section, edits), appended here once.
+    const memo = memoryTurnNow(lastMemCtx(s.chat))
     const msg: ChatMessage = {
       id: nanoid(14),
       at: stamp(),
@@ -701,6 +711,8 @@ export const useAgent = create<AgentState>((set, get) => {
       content: text,
       attachments: attachments.length ? attachments : undefined,
       meta: {
+        ...(memo.note ? { memNote: memo.note } : {}),
+        mem: memo.ctx,
         context: ctx.full,
         brief: ctx.brief,
         mentions: mentions.length ? mentions : undefined,
@@ -810,6 +822,15 @@ export const useAgent = create<AgentState>((set, get) => {
           ...(result.images ? { images: result.images, eyes: modelInfo(model).name } : {}),
         } as any,
       })
+      // The model made this memory change itself and saw the result: the next message need not tell it again.
+      if (result.memory && result.ok) {
+        const u = [...activePath(s.chat)].reverse().find((m) => m.role === 'user' && m.meta?.mem)
+        if (u?.meta?.mem) {
+          const now = result.memory.op === 'forget' ? null : findMemory(result.memory.id)
+          const inForce = Boolean(now && memoryInScope().some((x) => x.id === now.id))
+          patchMsg(id, u.id, { meta: { ...u.meta, mem: memoryKnown(u.meta.mem, now, result.memory.id, inForce) } })
+        }
+      }
       return result
     }
     try {
@@ -1470,10 +1491,14 @@ export function contextBreakdown(chat: Chat | null, liveContext?: string, model 
   let images = 0
   let toolResults = 0
   let thinking = 0
+  let memTokens = 0
   for (const m of msgs.slice(1)) {
     const content = String(m.content || '')
     const ctxMatch = /<app_context>[\s\S]*?<\/app_context>/.exec(content)
     const attText = (content.match(/<attachment[\s\S]*?<\/attachment>/g) || []).join('')
+    const memText = m.role === 'user' ? (content.match(/<memory(?:_update)?>[\s\S]*?<\/memory(?:_update)?>/g) || []).join('') : ''
+    memTokens += estimateTokens(memText)
+    if (memText) history -= estimateTokens(memText)
     const ctxText = ctxMatch ? ctxMatch[0] : ''
     ctx += estimateTokens(ctxText)
     atts += estimateTokens(attText)
@@ -1486,7 +1511,7 @@ export function contextBreakdown(chat: Chat | null, liveContext?: string, model 
   if (!chat?.messages.length && liveContext) ctx = estimateTokens(liveContext)
   const parts: ContextPart[] = [
     { key: 'system', label: 'System prompt', tokens: estimateTokens(SYSTEM_PROMPT), detail: 'How the assistant behaves' },
-    { key: 'memory', label: 'Memory', tokens: estimateMemoryTokens(), detail: `${memoryInScope().length} remembered things in play (general and this notebook)` },
+    { key: 'memory', label: 'Memory', tokens: chat?.messages.length ? estimateTokens(memoryRules()) + memTokens : estimateMemoryTokens(), detail: `${memoryInScope().length} in play now (general and this section). Sent once, then only changes` },
     { key: 'tools', label: 'Tool definitions', tokens: estimateTokens(tools), detail: `${TOOL_DEFS.length} tools` },
     { key: 'context', label: 'Screen and page context', tokens: ctx, detail: 'Fresh with every message' },
     { key: 'history', label: 'Conversation', tokens: Math.max(0, history), detail: 'Your messages and replies' },
