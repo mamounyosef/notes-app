@@ -945,13 +945,62 @@
   overflow-y: auto;
 }
 
-.ag-day {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--text-faint);
-  padding: 10px 8px 4px;
+.ag-history-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0 2px 8px;
 }
+.ag-history-top .ag-search { flex: 1; min-width: 0; margin: 0; }
+.ag-history-close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  border: 1px solid var(--line-soft);
+  background: var(--bg-2);
+  color: var(--text-dim, var(--text));
+  cursor: pointer;
+}
+.ag-history-close:hover { background: var(--bg-3); color: var(--text); border-color: var(--accent); }
+
+/* Section header (Today, This week, ...): label, a full width rule and a count. */
+.ag-day {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  padding: 18px 8px 6px;
+  margin-top: 6px;
+  border-top: 1px solid var(--line);
+}
+.ag-day.first { margin-top: 0; padding-top: 6px; border-top: none; }
+.ag-day-line { flex: 1; height: 1px; background: color-mix(in srgb, var(--accent) 45%, transparent); }
+.ag-day-count {
+  font-size: 10px;
+  letter-spacing: 0;
+  color: var(--text-faint);
+  background: var(--bg-3);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+/* Day divider inside multi day sections. */
+.ag-subday {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 10.5px;
+  color: var(--text-faint);
+  padding: 8px 8px 3px;
+}
+.ag-subday-line { flex: 1; height: 1px; background: var(--line-soft); }
 
 .ag-chat-row {
   display: flex;

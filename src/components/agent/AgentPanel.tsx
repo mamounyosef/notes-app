@@ -780,20 +780,62 @@ function HistoryView({ onClose }: { onClose(): void }) {
   const [editing, setEditing] = useState<string | null>(null)
   const [title, setTitle] = useState('')
   const list = chats.filter((c) => !q || `${c.title} ${c.preview}`.toLowerCase().includes(q.toLowerCase()))
-  let lastDay = ''
+  // The mouse back button (handled in App) and Escape close the history and return to the open chat.
+  useEffect(() => {
+    const close = () => onClose()
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !editing && document.activeElement?.closest('.agent-panel')) close()
+    }
+    window.addEventListener('agent:close-history', close)
+    window.addEventListener('keydown', onKey)
+    return () => {
+      window.removeEventListener('agent:close-history', close)
+      window.removeEventListener('keydown', onKey)
+    }
+  }, [onClose, editing])
+  const sectionCount: Record<string, number> = {}
+  for (const c of list) {
+    const s = relDay(c.updatedAt)
+    sectionCount[s] = (sectionCount[s] || 0) + 1
+  }
+  let lastSection = ''
+  let lastDate = ''
   return (
     <div className="ag-history">
-      <input className="ag-search" placeholder="Search chats" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+      <div className="ag-history-top">
+        <input className="ag-search" placeholder="Search chats" value={q} onChange={(e) => setQ(e.target.value)} autoFocus />
+        <button className="ag-history-close" title="Close history and go back to the chat (Esc, mouse back)" onClick={onClose}>
+          <X size={14} />
+        </button>
+      </div>
       <div className="ag-history-list">
         {list.length === 0 && <div className="ag-note center">No chats yet.</div>}
         {list.map((c) => {
-          const day = relDay(c.updatedAt)
-          const head = day !== lastDay ? <div className="ag-day">{day}</div> : null
-          lastDay = day
+          const section = relDay(c.updatedAt)
+          const date = new Date(c.updatedAt).toDateString()
+          const newSection = section !== lastSection
+          const multiDay = section !== 'Today' && section !== 'Yesterday'
+          const head = newSection ? (
+            <div className={`ag-day ${lastSection ? '' : 'first'}`}>
+              <span>{section}</span>
+              <span className="ag-day-line" />
+              <span className="ag-day-count">{sectionCount[section]}</span>
+            </div>
+          ) : null
+          const dayHead =
+            multiDay && date !== lastDate ? (
+              <div className="ag-subday">
+                <span>{new Date(c.updatedAt).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })}</span>
+                <span className="ag-subday-line" />
+              </div>
+            ) : null
+          lastSection = section
+          lastDate = date
           const run = runs[c.id]
           return (
             <React.Fragment key={c.id}>
               {head}
+              {dayHead}
               <div
                 className={`ag-chat-row ${c.id === current ? 'active' : ''} ${run ? `run-${run.state}` : ''}`}
                 onClick={() => {

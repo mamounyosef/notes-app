@@ -198,6 +198,11 @@ export default function App() {
       e.stopPropagation()
       // Over the assistant it moves through the chats opened there, like a browser.
       if ((e.target as Element | null)?.closest?.('.agent-panel')) {
+        // Chat history open: back just closes it and returns to the open chat; forward does nothing.
+        if (document.querySelector('.agent-panel .ag-history')) {
+          if (e.button === 3) window.dispatchEvent(new Event('agent:close-history'))
+          return
+        }
         const ag = useAgent.getState()
         if (e.button === 3) ag.chatBack()
         else ag.chatForward()
