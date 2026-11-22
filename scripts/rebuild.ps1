@@ -16,6 +16,12 @@ try {
     $procs | ForEach-Object { [void]$_.CloseMainWindow() }
     Start-Sleep -Seconds 3
     Get-Process | Where-Object { $_.Path -eq $exe } | Stop-Process -Force
+    # Wait until every Notes process has really exited, or its DLLs stay locked.
+    $deadline = (Get-Date).AddSeconds(15)
+    while ((Get-Process | Where-Object { $_.Path -eq $exe }) -and (Get-Date) -lt $deadline) {
+      Get-Process | Where-Object { $_.Path -eq $exe } | Stop-Process -Force -ErrorAction SilentlyContinue
+      Start-Sleep -Milliseconds 500
+    }
     Start-Sleep -Seconds 1
   }
 
