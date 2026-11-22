@@ -14,7 +14,7 @@
   height: 13px;
   padding: 0 3px;
   border-radius: 7px;
-  background: #c678dd;
+  background: #f0883e;
   color: #fff;
   font-size: 8.5px;
   font-weight: 700;
@@ -29,7 +29,7 @@
   pointer-events: none;
   animation: mem-glow 1.6s ease-out forwards;
 }
-.ag-mem-glow.saved { --g: #c678dd; animation-duration: 2.2s; }
+.ag-mem-glow.saved { --g: #f0883e; animation-duration: 2.2s; }
 .ag-mem-glow.used { --g: #61afef; }
 .ag-mem-glow.removed { --g: #e06c75; }
 @keyframes mem-glow {
@@ -40,12 +40,12 @@
 
 /* ---------- card a memory tool leaves in a reply ---------- */
 .ag-mem-card {
-  --k: #c678dd;
+  --k: #f0883e;
   margin: 4px 0;
   padding: 8px 10px 9px;
   border-radius: 10px;
-  border: 1px solid color-mix(in srgb, #c678dd 40%, var(--line-soft));
-  background: linear-gradient(135deg, color-mix(in srgb, #c678dd 13%, transparent), color-mix(in srgb, var(--k) 5%, transparent));
+  border: 1px solid color-mix(in srgb, #f0883e 40%, var(--line-soft));
+  background: linear-gradient(135deg, color-mix(in srgb, #f0883e 13%, transparent), color-mix(in srgb, var(--k) 5%, transparent));
   animation: mem-card-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 .ag-mem-card.op-forget { border-color: color-mix(in srgb, #e06c75 40%, var(--line-soft)); background: color-mix(in srgb, #e06c75 7%, transparent); }
@@ -64,10 +64,10 @@
   display: grid;
   place-items: center;
   color: #fff;
-  background: linear-gradient(135deg, #c678dd, #7c9cff);
+  background: linear-gradient(135deg, #f0883e, #f2b84b);
   flex: none;
 }
-.op-forget .ag-mem-card-icon { background: linear-gradient(135deg, #e06c75, #c678dd); }
+.op-forget .ag-mem-card-icon { background: linear-gradient(135deg, #e06c75, #f0883e); }
 .ag-mem-kind {
   display: inline-flex;
   align-items: center;
@@ -112,12 +112,12 @@
   padding: 3px 10px 3px 8px;
   border-radius: 999px;
   font-size: 11.5px;
-  color: color-mix(in srgb, #c678dd 70%, var(--text));
-  background: color-mix(in srgb, #c678dd 11%, transparent);
-  border: 1px solid color-mix(in srgb, #c678dd 30%, transparent);
+  color: color-mix(in srgb, #f0883e 70%, var(--text));
+  background: color-mix(in srgb, #f0883e 11%, transparent);
+  border: 1px solid color-mix(in srgb, #f0883e 30%, transparent);
   animation: mem-card-in 0.4s ease-out;
 }
-.ag-mem-used-pill:hover { background: color-mix(in srgb, #c678dd 19%, transparent); }
+.ag-mem-used-pill:hover { background: color-mix(in srgb, #f0883e 19%, transparent); }
 .ag-mem-used-pill span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ag-mem-used-pill em { font-style: normal; color: var(--text-dim); }
 .ag-mem-used.open .ag-chev { transform: rotate(180deg); }
@@ -167,8 +167,8 @@
   display: grid;
   place-items: center;
   color: #fff;
-  background: linear-gradient(135deg, #c678dd, #7c9cff);
-  box-shadow: 0 4px 14px color-mix(in srgb, #c678dd 35%, transparent);
+  background: linear-gradient(135deg, #f0883e, #f2b84b);
+  box-shadow: 0 4px 14px color-mix(in srgb, #f0883e 35%, transparent);
 }
 .mem-hero-icon.off { background: var(--bg-3); color: var(--text-faint); box-shadow: none; }
 .mem-hero-text { flex: 1; min-width: 0; }
@@ -213,7 +213,7 @@
   background: var(--text-dim);
   transition: transform 0.2s, background 0.2s;
 }
-.mem-toggle.on .mem-switch { background: #c678dd; border-color: #c678dd; }
+.mem-toggle.on .mem-switch { background: #f0883e; border-color: #f0883e; }
 .mem-toggle.on .mem-switch::after { transform: translateX(13px); background: #fff; }
 
 .mem-add {
@@ -225,7 +225,7 @@
   flex-direction: column;
   gap: 6px;
 }
-.mem-add:focus-within { border-color: #c678dd; box-shadow: 0 0 0 3px color-mix(in srgb, #c678dd 15%, transparent); }
+.mem-add:focus-within { border-color: #f0883e; box-shadow: 0 0 0 3px color-mix(in srgb, #f0883e 15%, transparent); }
 .mem-add textarea, .mem-edit {
   width: 100%;
   resize: none;
@@ -255,7 +255,7 @@
 .mem-kinds-pick button.on { color: var(--text); border-color: var(--k); background: color-mix(in srgb, var(--k) 14%, transparent); }
 
 .mem-scope { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-dim); cursor: pointer; white-space: nowrap; }
-.mem-scope input { accent-color: #c678dd; margin: 0; }
+.mem-scope input { accent-color: #f0883e; margin: 0; }
 
 .mem-btn {
   display: inline-flex;
@@ -270,8 +270,8 @@
 }
 .mem-btn:hover:not(:disabled) { color: var(--text); background: var(--bg-3); }
 .mem-btn:disabled { opacity: 0.45; cursor: default; }
-.mem-btn.primary { background: #c678dd; border-color: #c678dd; color: #fff; }
-.mem-btn.primary:hover:not(:disabled) { background: color-mix(in srgb, #c678dd 85%, #fff); color: #fff; }
+.mem-btn.primary { background: #f0883e; border-color: #f0883e; color: #fff; }
+.mem-btn.primary:hover:not(:disabled) { background: color-mix(in srgb, #f0883e 85%, #fff); color: #fff; }
 .mem-btn.danger:hover:not(:disabled) { color: #e06c75; border-color: #e06c75; }
 
 .mem-tools { display: flex; flex-direction: column; gap: 6px; }
@@ -316,12 +316,13 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--k);
-  padding: 6px 2px 3px;
+  color: #f0883e;
+  padding: 10px 2px 4px;
+  border-top: 1px solid var(--line-soft);
 }
-.mem-group-head i { width: 8px; height: 8px; border-radius: 50%; background: var(--k); box-shadow: 0 0 8px var(--k); }
+
 .mem-group-head em { font-style: normal; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.mem-group-line { flex: 1; min-width: 12px; height: 1px; background: color-mix(in srgb, var(--k) 35%, transparent); }
+.mem-group-line { flex: 1; min-width: 12px; height: 1px; background: color-mix(in srgb, #f0883e 35%, transparent); }
 .mem-group-head b { font-size: 10px; color: var(--text-faint); background: var(--bg-3); border-radius: 999px; padding: 1px 7px; letter-spacing: 0; }
 
 .mem-row {
@@ -409,5 +410,69 @@
 }
 .mem-view.settings .mem-undo { position: sticky; bottom: 8px; transform: none; left: auto; align-self: center; }
 .mem-undo span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.mem-undo button { color: #c678dd; font-weight: 600; font-size: 12px; }
+.mem-undo button { color: #f0883e; font-weight: 600; font-size: 12px; }
 .mem-undo button.x { color: var(--text-faint); display: grid; place-items: center; }
+
+/* ---------- scopes: general and per notebook ---------- */
+.mem-group:first-child .mem-group-head { border-top: none; padding-top: 4px; }
+.mem-group-head.here::after {
+  content: 'live';
+  font-size: 9px;
+  letter-spacing: 0.05em;
+  color: #fff;
+  background: #f0883e;
+  border-radius: 999px;
+  padding: 1px 6px;
+  order: 3;
+}
+.mem-group-head.here b { order: 4; }
+.mem-group-empty { font-size: 11.5px; color: var(--text-faint); padding: 2px 4px 4px; }
+
+.mem-scope-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10.5px;
+  padding: 0 7px;
+  border-radius: 999px;
+  line-height: 17px;
+  white-space: nowrap;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mem-scope-tag.general { color: #61afef; background: color-mix(in srgb, #61afef 13%, transparent); }
+.mem-scope-tag.nb { color: #f2b84b; background: color-mix(in srgb, #f2b84b 13%, transparent); }
+.mem-scope-tag.nb.here { box-shadow: inset 0 0 0 1px color-mix(in srgb, #f2b84b 55%, transparent); }
+.ag-mem-arrow { color: var(--text-faint); font-size: 11px; }
+
+.mem-kind-tag { display: inline-flex; align-items: center; gap: 4px; color: var(--text-dim); }
+.mem-kind-tag i { width: 6px; height: 6px; border-radius: 50%; background: var(--k); }
+
+.mem-scope-pick { display: inline-flex; padding: 2px; gap: 2px; border-radius: 8px; background: var(--bg-3); max-width: 100%; overflow: hidden; }
+.mem-scope-pick button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11.5px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  color: var(--text-dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.mem-scope-pick button:hover { color: var(--text); }
+.mem-scope-pick button.on { background: var(--bg-1, var(--bg-2)); color: var(--text); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+.mem-scope-pick button.on svg { color: #f0883e; }
+.mem-add-label { font-size: 11px; color: var(--text-faint); }
+.mem-add-hint { font-size: 11px; color: var(--text-faint); font-style: italic; }
+
+.mem-filter.scopes button { gap: 5px; }
+.mem-filter.scopes button svg { color: var(--text-faint); }
+.mem-filter.scopes button.here svg { color: #f2b84b; }
+.mem-filter.scopes button.on svg { color: #f0883e; }
+
+.mem-example span { flex: 1; }
+.mem-example em { font-style: normal; font-size: 10.5px; color: var(--text-faint); white-space: nowrap; align-self: center; }
+.ag-mem-used-item .mem-scope-tag { margin-left: auto; align-self: center; flex: none; }

@@ -6,7 +6,7 @@
 import React, { useState } from 'react'
 import type { ChatMessage } from '../../agent/api'
 import { kindInfo, removeMemory, restoreMemory, useMemoryUi, type MemoryItem } from '../../agent/memory'
-import { useMemory } from './MemoryManager'
+import { ScopeTag, useMemory } from './MemoryManager'
 import { Chevron, MemoryI, Undo } from '../Icons'
 
 /** The header button: how much is remembered, and a glow when the assistant saves or uses a memory. */
@@ -29,6 +29,7 @@ export function MemoryButton({ onClick }: { onClick(): void }) {
 }
 
 const OP_TITLE = { add: 'Saved to memory', refresh: 'Already in memory, refreshed', update: 'Updated memory', forget: 'Forgot' } as const
+const MOVED_TITLE = 'Moved in memory'
 
 /** What remember, update_memory or forget did, with Undo. */
 export function MemoryCard({ m }: { m: ChatMessage }) {
@@ -43,6 +44,7 @@ export function MemoryCard({ m }: { m: ChatMessage }) {
   else if (info.op === 'forget') undone = Boolean(cur)
   else if (info.op === 'update') undone = Boolean(cur && info.before && cur.text === info.before.text && cur.kind === info.before.kind)
   const canUndo = info.op !== 'refresh' && !undone
+  const moved = info.op === 'update' && (info.before?.notebookId || '') !== (info.after?.notebookId || '')
   const undo = () => {
     if (info.op === 'add') removeMemory(info.id)
     else if (info.before) restoreMemory(info.before)
@@ -55,9 +57,10 @@ export function MemoryCard({ m }: { m: ChatMessage }) {
     <div className={`ag-mem-card op-${info.op} ${undone ? 'undone' : ''}`} style={{ '--k': k.color } as React.CSSProperties}>
       <div className="ag-mem-card-head">
         <span className="ag-mem-card-icon"><MemoryI size={13} /></span>
-        <b>{undone ? (info.op === 'forget' ? 'Kept after all' : info.op === 'add' ? 'Not saved (undone)' : 'Change undone') : OP_TITLE[info.op]}</b>
+        <b>{undone ? (info.op === 'forget' ? 'Kept after all' : info.op === 'add' ? 'Not saved (undone)' : 'Change undone') : moved ? MOVED_TITLE : OP_TITLE[info.op]}</b>
         <span className="ag-mem-kind"><i />{k.label}</span>
-        {shown?.notebookTitle && <span className="ag-mem-kind scope">only in {shown.notebookTitle}</span>}
+        {moved && info.before && <><ScopeTag m={info.before} /><span className="ag-mem-arrow">→</span></>}
+        {shown && <ScopeTag m={cur || shown} />}
         <div className="spacer" />
         {canUndo && <button className="ag-mem-act" title="Put it back the way it was" onClick={undo}><Undo size={11} /> Undo</button>}
         {undone && info.op !== 'refresh' && <button className="ag-mem-act" onClick={redo}>Redo</button>}
@@ -100,6 +103,7 @@ export function MemoryUsed({ ids }: { ids: string[] }) {
               <button key={id} className={`ag-mem-used-item ${m ? '' : 'gone'}`} style={{ '--k': k.color } as React.CSSProperties} disabled={!m} onClick={() => useMemoryUi.getState().show(id)} title={m ? 'Open it in Memory' : 'Forgotten since'}>
                 <i />
                 <span>{m ? m.text : 'A memory that has since been forgotten'}</span>
+                {m && <ScopeTag m={m} />}
               </button>
             )
           })}

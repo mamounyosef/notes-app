@@ -11,10 +11,10 @@ import type { MemoryItem, MemoryKind, MemoryState } from '../types'
 export type { MemoryItem, MemoryKind, MemoryState }
 
 export const MEMORY_KINDS: { kind: MemoryKind; label: string; hint: string; color: string }[] = [
-  { kind: 'rule', label: 'Note rules', hint: 'How notes, diagrams and formulas should look', color: '#c678dd' },
+  { kind: 'rule', label: 'Note rules', hint: 'How notes, diagrams and formulas should look', color: '#f0883e' },
   { kind: 'style', label: 'How to answer', hint: 'Tone, length, language of replies', color: '#61afef' },
   { kind: 'about', label: 'About you', hint: 'Who you are, what you study or work on', color: '#98c379' },
-  { kind: 'fact', label: 'Facts', hint: 'Courses, projects, names, context worth knowing', color: '#e5c07b' },
+  { kind: 'fact', label: 'Facts', hint: 'Courses, projects, names, context worth knowing', color: '#56b6c2' },
 ]
 export const kindInfo = (k: MemoryKind | string | undefined) => MEMORY_KINDS.find((x) => x.kind === k) || MEMORY_KINDS[3]
 
@@ -81,7 +81,13 @@ export function addMemory(input: { text: string; kind?: MemoryKind; notebook?: {
   const text = cleanText(input.text)
   const same = similarMemory(text)
   if (same) {
-    const item = { ...same, kind: input.kind || same.kind, updatedAt: Date.now(), off: false }
+    const item: MemoryItem = { ...same, kind: input.kind || same.kind, updatedAt: Date.now(), off: false }
+    // Saved again with another scope: the latest choice wins.
+    if (input.notebook) Object.assign(item, { notebookId: input.notebook.id, notebookTitle: input.notebook.title })
+    else {
+      delete item.notebookId
+      delete item.notebookTitle
+    }
     save({ ...st, items: st.items.map((m) => (m.id === same.id ? item : m)) })
     emit({ type: 'saved', id: item.id })
     return { item, merged: true }
@@ -204,43 +210,74 @@ export { takeMemoryMarker, hideMemoryMarker } from './memoryMarker'
 /** How the assistant uses and keeps its memory (no list: that comes with memoryBlock). */
 export function memoryRules(): string {
   const st = memoryState()
-  if (!st.on) return `\n\n# Memory\nThe user turned the assistant's memory off in Settings. Do not call remember, update_memory or forget, and do not claim to remember anything from other chats. If they ask you to remember something, tell them memory is off and that they can turn it on in Settings, AI, Memory (or with the brain button in the panel header).\n`
+  if (!st.on) return `\n\n# Memory\nThe user turned the assistant's memory off. Do not call remember, update_memory or forget, and do not claim to remember anything from other chats. If they ask you to remember something, tell them memory is off and that they can turn it on in Settings, Memory (or with the memory button in the panel header).\n`
   return `
 
 # Memory
-You have a long term memory of this user that lasts across chats. Its entries come in a <memory> block (in this prompt or with their message), each with an id like [m4k2]. The user can see and edit all of it in Settings and in the panel's Memory view.
+You have a long term memory of this user that lasts across chats. It comes in a <memory> block (in this prompt or with their message), each entry with an id like [m4k2]. The user can see and edit all of it in Settings, Memory and in the panel's Memory view.
+
+It has two scopes:
+- GENERAL memories apply to all their notes and every chat: who they are, how they like answers, formatting habits that hold whatever the subject.
+- NOTEBOOK memories belong to one notebook (usually one course, subject or project) and apply only while they work in it: its notation and conventions, how its diagrams and notes should look, facts about that course or project. The block lists the general ones and those of the notebook open now; other notebooks' memories are left out.
 
 Using it:
-- Treat every entry as a standing instruction or a known fact. Apply the relevant ones on your own in every reply, without being reminded: note rules shape how you write and draw in their notes, answer rules shape your replies, facts and "about you" inform what you say.
-- An entry limited to a notebook only applies while they work in that notebook.
+- Treat every listed entry as a standing instruction or a known fact. Apply the relevant ones on your own in every reply, without being reminded: rules shape how you write and draw in their notes, answer style shapes your replies, facts inform what you say. A notebook memory is more specific than a general one: when they conflict inside that notebook, the notebook one wins.
 - What they ask now beats a memory. If it looks like a lasting change, update the memory (or offer to).
 - When one or more memories shaped this reply (what you wrote, drew or said), end the reply with one final line listing exactly those ids, in this form: [[mem: m4k2, m9ab]]. Only entries you really applied, never all of them by default. No line when none applied. The app hides this line and shows the user a "used memory" badge instead, so never mention it or the ids in the text.
 
 Keeping it:
 - Call remember when the user asks you to remember something ("remember", "from now on", "always", "never", "next time", "keep in mind")${st.auto ? ', and also on your own when they state a lasting preference, correct how you did something in a way that clearly applies to the future, or share a lasting fact about themselves or their work. Do not save one-off details of the current task' : '. Only save when they ask; the user turned off saving on your own. When something looks worth remembering, you may offer it in one short sentence'}.
-- One idea per memory, written as a short, self-contained, specific sentence that still makes sense in a new chat months later (say "Logic circuit diagrams are drawn inside a box: the gates inside, inputs entering on the left and outputs leaving on the right", not "do it like the picture"). Rules as instructions, facts as plain statements.
+- Choose the scope yourself every time; never ask unless it is truly a coin flip. Ask: "would this still be right in a different notebook, on a different subject?" Yes: general. No, it is tied to this subject: notebook (the open page's notebook unless they name another). Their words decide first: "in this notebook", "for this course", "here" mean notebook; "always", "everywhere", "in all my notes", "in every chat" mean general. Typical notebook memories: how diagrams, circuits, tables or formulas of that subject should look, notation, the professor's or course's conventions, what the course covers. Typical general ones: their name, what they study overall, language and tone, answer length, formatting they want everywhere. A habit first stated in one notebook but clearly about them, not the subject (like "answer shorter"), is general.
+- One idea per memory, written as a short, self-contained, specific sentence that still makes sense in a new chat months later (say "Logic circuit diagrams are drawn inside a box: the gates inside, inputs entering on the left and outputs leaving on the right", not "do it like the picture"). Rules as instructions, facts as plain statements. A notebook memory does not need to repeat the notebook's name.
 - Pick the kind: rule (how notes, diagrams, formulas should look), style (how to answer: tone, length, language), about (who they are, what they study or do), fact (courses, projects, people, other context).
-- Limit it to a notebook (notebook_id) only when they say it is for that notebook or subject.
-- Before saving, look at the existing entries: update_memory one that covers the same thing (or contradicts it) instead of adding a near copy. Use forget when they ask you to forget something or an entry turned out wrong.
+- Before saving, look at the existing entries: update_memory one that covers the same thing (or contradicts it) instead of adding a near copy; update_memory can also move an entry between general and a notebook when they say it applies more widely or only here. Use forget when they ask you to forget something or an entry turned out wrong.
 - Never save passwords, keys, codes or other secrets, and nothing they asked you not to keep.
-- After saving or changing a memory, say so in a few words ("Saved to memory."). The app also shows a card for it.
+- After saving or changing a memory, say so in a few words that name the scope ("Saved to memory for Embedded Systems." or "Saved to your general memory."). The app also shows a card for it.
 `
+}
+
+/** A notebook's title as it is now (renamed since), falling back to the one saved with the memory. */
+export function notebookTitle(id?: string, fallback?: string) {
+  if (!id) return ''
+  const n = findNodeIn(useStore.getState().workspace.tree, id)
+  return n?.title || fallback || 'a notebook'
+}
+
+function findNodeIn(nodes: any[], id: string): any {
+  for (const n of nodes || []) {
+    if (n.id === id) return n
+    const hit = findNodeIn(n.children || [], id)
+    if (hit) return hit
+  }
+  return null
+}
+
+/** The entries the model gets now: the general ones and the open notebook's. */
+export function memoryInScope(items = memoryState().items, nb = currentNotebook()) {
+  return items.filter((m) => !m.off && (!m.notebookId || m.notebookId === nb?.id))
 }
 
 /** The entries themselves, for the model. Empty string when memory is off. */
 export function memoryBlock(): string {
   const st = memoryState()
   if (!st.on) return ''
-  const items = st.items.filter((m) => !m.off)
-  if (!items.length) return '<memory>\n(empty: nothing remembered yet)\n</memory>'
+  const nb = currentNotebook()
   const order = MEMORY_KINDS.map((k) => k.kind)
-  const sorted = [...items].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || order.indexOf(a.kind) - order.indexOf(b.kind) || b.updatedAt - a.updatedAt)
-  const lines = sorted.map((m) => {
-    const tags = [m.kind, m.pinned ? 'important' : '', m.notebookId ? `only in notebook "${m.notebookTitle || m.notebookId}" [${m.notebookId}]` : ''].filter(Boolean).join(', ')
-    return `[${m.id}] (${tags}) ${m.text}`
-  })
-  const over = items.length > MEMORY_SOFT_LIMIT ? `\n(${items.length} entries: when saving, prefer merging into existing ones.)` : ''
-  return `<memory>\n${lines.join('\n')}${over}\n</memory>`
+  const sort = (l: MemoryItem[]) => [...l].sort((a, b) => Number(Boolean(b.pinned)) - Number(Boolean(a.pinned)) || order.indexOf(a.kind) - order.indexOf(b.kind) || b.updatedAt - a.updatedAt)
+  const line = (m: MemoryItem) => `[${m.id}] (${[m.kind, m.pinned ? 'important' : ''].filter(Boolean).join(', ')}) ${m.text}`
+  const live = st.items.filter((m) => !m.off)
+  const general = sort(live.filter((m) => !m.notebookId))
+  const here = nb ? sort(live.filter((m) => m.notebookId === nb.id)) : []
+  const elsewhere = live.filter((m) => m.notebookId && m.notebookId !== nb?.id).length
+  const parts = [`## General (all notes)\n${general.length ? general.map(line).join('\n') : '(none yet)'}`]
+  parts.push(
+    nb
+      ? `## Notebook "${nb.title}" [${nb.id}] (the notebook open now)\n${here.length ? here.map(line).join('\n') : '(none yet)'}`
+      : '## Notebook\n(No page is open, so no notebook memories apply. A notebook memory needs an open page or a notebook_id.)',
+  )
+  if (elsewhere) parts.push(`(${elsewhere} more belong to other notebooks and apply only there.)`)
+  if (live.length > MEMORY_SOFT_LIMIT) parts.push(`(${live.length} entries in all: when saving, prefer merging into existing ones.)`)
+  return `<memory>\n${parts.join('\n\n')}\n</memory>`
 }
 
 /** A short fingerprint of what the model would be told, to know when to send the list again. */

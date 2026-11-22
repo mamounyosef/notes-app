@@ -198,6 +198,17 @@ export interface ToolResult {
   memory?: { op: 'add' | 'refresh' | 'update' | 'forget'; id: string; before?: MemoryItem; after?: MemoryItem }
 }
 
+/** A memory's scope from the tool arguments: null for general, a notebook otherwise. */
+function scopeArg(scope: unknown, notebookId: unknown): { id: string; title: string } | null {
+  if (scope !== 'notebook') return null
+  const nb = notebookArg(notebookId || 'current')
+  if (!nb) throw new ToolError('No page is open, so there is no current notebook. Give notebook_id, or use scope general.')
+  return nb
+}
+
+const scopeLabel = (m: MemoryItem) => (m.notebookId ? ` for ${m.notebookTitle || 'this notebook'}` : ' (general)')
+const scopeName = (m: MemoryItem) => (m.notebookId ? `notebook "${m.notebookTitle || m.notebookId}"` : 'general')
+
 /** A notebook_id argument ("current" for the open page's notebook) as id and title. */
 function notebookArg(v: unknown): { id: string; title: string } | null {
   const s = String(v || '').trim()
@@ -911,17 +922,19 @@ export const TOOL_DEFS = [
     multi: bool('Allow picking several options.'),
   }, ['question']),
   SET_MATH_SIZE_DEF,
-  fn('remember', 'Save something to your long term memory of this user, kept across chats (see the Memory rules). One idea per call, as a short self-contained sentence. A near copy of an existing entry updates that one.', {
+  fn('remember', 'Save something to your long term memory of this user, kept across chats (see the Memory rules). One idea per call, as a short self-contained sentence. You choose the scope: general (all notes) or notebook (only this notebook). A near copy of an existing entry updates that one.', {
     text: str('The memory: a specific, self-contained sentence that makes sense months later in a new chat.'),
+    scope: { type: 'string', enum: ['general', 'notebook'], description: 'general: true in every notebook and chat (who they are, answer style, habits regardless of subject). notebook: tied to one notebook\'s subject (its notation, how its diagrams and notes look, facts about that course or project).' },
     kind: { type: 'string', enum: ['rule', 'style', 'about', 'fact'], description: 'rule: how notes, diagrams, formulas should look. style: how to answer. about: who they are. fact: other lasting context.' },
-    notebook_id: str('Only when it applies to one notebook: that notebook\'s id. "current" means the notebook of the open page.'),
+    notebook_id: str('With scope notebook: which notebook. Default: the notebook of the open page.'),
     important: bool('They stressed it ("always", "never", "really important"): listed first.'),
-  }, ['text', 'kind']),
-  fn('update_memory', 'Change one memory entry: reword it, change its kind or notebook. Use instead of remember when an entry already covers the same thing or the user corrects it.', {
+  }, ['text', 'scope', 'kind']),
+  fn('update_memory', 'Change one memory entry: reword it, change its kind, or move it between general and a notebook. Use instead of remember when an entry already covers the same thing or the user corrects it.', {
     id: str('The entry id, like m4k2.'),
     text: str('The new text (the whole entry).'),
     kind: { type: 'string', enum: ['rule', 'style', 'about', 'fact'], description: 'New kind.' },
-    notebook_id: str('Limit to this notebook ("current" for the open page\'s notebook), or "all" to apply everywhere again.'),
+    scope: { type: 'string', enum: ['general', 'notebook'], description: 'Move it: general (all notes), or notebook (the open page\'s notebook, or notebook_id).' },
+    notebook_id: str('With scope notebook: which notebook. Default: the notebook of the open page.'),
     important: bool('Mark or unmark as important.'),
   }, ['id']),
   fn('forget', 'Delete a memory entry, when the user asks you to forget it or it turned out wrong. They can undo it.', {
@@ -1851,14 +1864,14 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const text = cleanText(a.text)
     if (text.length < 3) throw new ToolError('The memory text is empty.')
     if (/\b(password|passcode|api[ _-]?key|secret key|token)\b\s*[:=]/i.test(text)) throw new ToolError('That looks like a secret: secrets are never kept in memory.')
-    const notebook = notebookArg(a.notebook_id)
+    const notebook = scopeArg(a.scope || (a.notebook_id ? 'notebook' : 'general'), a.notebook_id)!
     const kind = (['rule', 'style', 'about', 'fact'].includes(a.kind) ? a.kind : 'fact') as MemoryKind
     const same = similarMemory(text)
     env.rec.memory(same?.id || null)
     const { item, merged } = addMemory({ text, kind, notebook, by: 'assistant', chatId: env.chat?.id, chatTitle: env.chat?.title, pinned: Boolean(a.important) })
     if (!same) env.rec.memoryAdded(item.id)
     return {
-      ...ok({ saved: item.id, merged_into_existing: merged }, merged ? 'Memory already had this, refreshed it' : 'Saved to memory'),
+      ...ok({ saved: item.id, scope: scopeName(item), merged_into_existing: merged }, `${merged ? 'Memory already had this, refreshed it' : 'Saved to memory'}${scopeLabel(item)}`),
       detail: item.text,
       memory: { op: merged ? 'refresh' : 'add', id: item.id, after: item },
     } as ToolResult
@@ -1871,15 +1884,13 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     if (a.text !== undefined) patch.text = cleanText(a.text)
     if (['rule', 'style', 'about', 'fact'].includes(a.kind)) patch.kind = a.kind
     if (a.important !== undefined) patch.pinned = Boolean(a.important)
-    if (a.notebook_id === 'all') (patch as any).notebookId = null
-    else if (a.notebook_id) {
-      const nb = notebookArg(a.notebook_id)
-      if (nb) Object.assign(patch, { notebookId: nb.id, notebookTitle: nb.title })
-    }
+    const moved = a.scope || a.notebook_id === 'all' ? scopeArg(a.notebook_id === 'all' ? 'general' : a.scope, a.notebook_id) : undefined
+    if (moved === null) (patch as any).notebookId = null
+    else if (moved) Object.assign(patch, { notebookId: moved.id, notebookTitle: moved.title })
     env.rec.memory(old.id)
     const item = updateMemory(old.id, patch)!
     return {
-      ...ok({ updated: item.id }, 'Updated a memory'),
+      ...ok({ updated: item.id, scope: scopeName(item) }, `${old.notebookId !== item.notebookId ? 'Moved a memory' : 'Updated a memory'}${scopeLabel(item)}`),
       detail: item.text,
       memory: { op: 'update', id: item.id, before: old, after: item },
     } as ToolResult

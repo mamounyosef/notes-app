@@ -8,7 +8,7 @@ import { nanoid } from 'nanoid'
 import { agentApi, chatApi, type Chat, type ChatAttachment, type ChatMessage, type ChatSummary } from './api'
 import { buildContext } from './context'
 import { SYSTEM_PROMPT, voicePrompt } from './prompt'
-import { estimateMemoryTokens, markUsed, memoryBlock, memoryRules, memoryState, takeMemoryMarker } from './memory'
+import { estimateMemoryTokens, markUsed, memoryBlock, memoryInScope, memoryRules, memoryState, takeMemoryMarker } from './memory'
 import { TOOL_DEFS, READ_ONLY, eyesFor, TurnRecorder, keepSnapshot, runTool, undoTurn } from './tools'
 import { cellTexts, scrollToCell } from './reveal'
 import { fileToAttachment } from './files'
@@ -338,7 +338,7 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): an
           if (a.kind === 'image') sentPics.add(`sha:${a.sha}`)
           for (const p of (a.pages || []).slice(0, 20)) sentPics.add(`sha:${p}`)
         }
-  const mem = memoryState().on ? `\n\n` : memoryRules()
+  const mem = memoryState().on ? `${memoryRules()}\n${memoryBlock()}\n` : memoryRules()
   const out: any[] = [{ role: 'system', content: (voice ? SYSTEM_PROMPT + voicePrompt() : SYSTEM_PROMPT) + mem }]
   // They follow the whole run of tool results, since results must come right after their calls.
   let pics: any[] = []
@@ -1486,7 +1486,7 @@ export function contextBreakdown(chat: Chat | null, liveContext?: string, model 
   if (!chat?.messages.length && liveContext) ctx = estimateTokens(liveContext)
   const parts: ContextPart[] = [
     { key: 'system', label: 'System prompt', tokens: estimateTokens(SYSTEM_PROMPT), detail: 'How the assistant behaves' },
-    { key: 'memory', label: 'Memory', tokens: estimateMemoryTokens(), detail: ` remembered things, sent with every message` },
+    { key: 'memory', label: 'Memory', tokens: estimateMemoryTokens(), detail: `${memoryInScope().length} remembered things in play (general and this notebook)` },
     { key: 'tools', label: 'Tool definitions', tokens: estimateTokens(tools), detail: `${TOOL_DEFS.length} tools` },
     { key: 'context', label: 'Screen and page context', tokens: ctx, detail: 'Fresh with every message' },
     { key: 'history', label: 'Conversation', tokens: Math.max(0, history), detail: 'Your messages and replies' },

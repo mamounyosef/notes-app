@@ -480,7 +480,7 @@ export async function runClaudeTurn(h: TurnHost): Promise<{ firstAssistantId: st
   const rev = memoryRev()
   const memList = memoryBlock()
   const memSeen = Boolean(resume && !unseenTurns && !fromHead?.compacted && (prev?.meta as any)?.memRev === rev)
-  const memory = memList && !memSeen ? (resume && (prev?.meta as any)?.memRev ? `(Your memory changed since the last message. This is the current list; it replaces the earlier one.)\n` : memList) : undefined
+  const memory = memList && !memSeen ? (resume && (prev?.meta as any)?.memRev ? `(Your memory, or the notebook open now, changed since the last message. This is the current list; it replaces the earlier one.)\n${memList}` : memList) : undefined
   const content = await userBlocks(u, { context, delta: delta || undefined, voice, preface, memory })
   const system = claudeSystemPrompt() + memoryRules()
   const base = { model: h.model, effort: h.effort, noThinking: h.noThinking, system, title: (chat0.title !== 'New chat' && chat0.title) || undefined }

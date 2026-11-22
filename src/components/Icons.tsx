@@ -134,7 +134,8 @@ export const Float = (p: P) => (<svg {...s(p)}><rect x="3" y="4" width="18" heig
 export const Brain = (p: P) => (<svg {...s(p)}><path d="M9 18h6M10 21h4" /><path d="M12 3a6 6 0 00-3.6 10.8c.6.5 1 1.2 1 2V16h5.2v-.2c0-.8.4-1.5 1-2A6 6 0 0012 3z" /></svg>)
 /** Memory: a head in profile with a spark inside. */
 export const MemoryI = (p: P) => (<svg {...s(p)}><path d="M18 20v-3.2a7 7 0 10-11.3-5.5L5 14.5h2V17a2 2 0 002 2h2v1" /><path d="M12.5 7.5l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7-1.7-.8 1.7-.8z" fill="currentColor" strokeWidth="1" /></svg>)
-export const PinI = (p: P) => (<svg {...s(p)}><path d="M9 4h6l-1 5 3 3v2H7v-2l3-3zM12 14v6" /></svg>)
+export const GlobeI = (p: P) => (<svg {...s(p)}><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18" /></svg>)
+export const PinI =(p: P) => (<svg {...s(p)}><path d="M9 4h6l-1 5 3 3v2H7v-2l3-3zM12 14v6" /></svg>)
 export const SearchI = (p: P) => (<svg {...s(p)}><circle cx="11" cy="11" r="6.5" /><path d="M20 20l-4.2-4.2" /></svg>)
 export const PauseI = (p: P) => (<svg {...s(p)}><path d="M9 6v12M15 6v12" /></svg>)
 export const AtI = (p: P) => (<svg {...s(p)}><circle cx="12" cy="12" r="4" /><path d="M16 8v5a3 3 0 006 0v-1a10 10 0 10-4 8" /></svg>)
