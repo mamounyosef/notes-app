@@ -16,6 +16,7 @@
  *
  * Ported from the weekly planner (src/lib/voice/useVoiceConversation.ts).
  */
+import { hideMemoryMarker } from '../agent/memory'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useAgent } from '../agent/store'
 import { activePath } from '../agent/branches'
@@ -246,8 +247,10 @@ export function useVoiceConversation(prefs: VoicePrefs): VoiceConversation {
       if (live && live.content) {
         let tr = tracks.get(live.id)
         if (!tr) tracks.set(live.id, (tr = { id: live.id, splitter: new SentenceSplitter(), last: '', at: live.at }))
-        tr.last = live.content
-        speakAll(tr, tr.splitter.push(live.content))
+        // The hidden used-memory line is never read out.
+        const said = hideMemoryMarker(live.content)
+        tr.last = said
+        speakAll(tr, tr.splitter.push(said))
       }
       // A question card: read it out; the next thing said answers it.
       const ask = st.pendingAsk?.messageId ?? null

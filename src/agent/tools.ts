@@ -18,6 +18,7 @@ import { DEFAULT_MODEL, VISION_MODEL, modelInfo } from './models'
 import { buildWidgetDoc, currentTheme, FENCE_OF, fromBase64, KIND_OF_FENCE, kindOf, sniffKind, toBase64, type WidgetKind } from '../widgets/widget'
 import { describeKmap } from '../widgets/kmap'
 import { scrollToCell } from './reveal'
+import { addMemory, cleanText, currentNotebook, findMemory, memoryState, removeMemory, restoreMemory, similarMemory, updateMemory, type MemoryItem, type MemoryKind } from './memory'
 import { SET_MATH_SIZE_DEF, keepMathScales, mathReport, setMathSize } from './mathSize'
 import { BIG_SOURCE, KEPT_MARK, MAX_FULL_READ, MAX_READ, applySourceEdits, keptIndex, outlineSource, searchSource, sourceProblems, sourceVersion, suspiciousRewrite, type SourceEdit } from './sourceEdit'
 
@@ -33,6 +34,8 @@ export interface TurnSnapshot {
   tree: { tree: TreeNode[]; favorites: string[] } | null
   settings: Settings | null
   openPageId: string | null
+  /** Memory entries this reply touched, as they were before it (null: it added them). */
+  memory?: Record<string, MemoryItem | null>
 }
 
 export class TurnRecorder {
@@ -60,6 +63,21 @@ export class TurnRecorder {
   settings() {
     this.changed = true
     if (!this.snap.settings) this.snap.settings = clone(useStore.getState().settings)
+  }
+
+  /** Before a memory entry changes: keeps it as it was. */
+  memory(id: string | null) {
+    this.changed = true
+    if (!id) return
+    const mem = (this.snap.memory ||= {})
+    if (!(id in mem)) mem[id] = clone(findMemory(id))
+  }
+
+  /** A memory entry this reply added. */
+  memoryAdded(id: string) {
+    this.changed = true
+    const mem = (this.snap.memory ||= {})
+    if (!(id in mem)) mem[id] = null
   }
 }
 
@@ -104,7 +122,12 @@ export async function undoTurn(turnId: string): Promise<boolean> {
   if (!snap) return false
   const st = useStore.getState()
   if (snap.tree) st.replaceTree(clone(snap.tree.tree), [...snap.tree.favorites])
-  if (snap.settings) st.setSettings(clone(snap.settings))
+  // Settings go back, but memory only for the entries this reply touched (later edits stay).
+  if (snap.settings) st.setSettings({ ...clone(snap.settings), assistantMemory: useStore.getState().settings.assistantMemory })
+  for (const [id, before] of Object.entries(snap.memory || {})) {
+    if (before) restoreMemory(before)
+    else removeMemory(id)
+  }
   for (const [id, before] of Object.entries(snap.pages)) {
     const cur = useStore.getState()
     const inTree = Boolean(findNode(cur.workspace.tree, id))
@@ -149,6 +172,8 @@ export interface ToolEnv {
   model: string
   /** Asks the user and waits for the answer (ask_user). */
   ask(q: { question: string; options?: string[]; multi?: boolean }): Promise<string>
+  /** The chat this runs in, for where a memory was learned. */
+  chat?: { id: string; title: string }
 }
 
 export interface ToolResult {
@@ -169,6 +194,18 @@ export interface ToolResult {
   changes?: Change[]
   /** What the edit would also have changed, unasked, and was put back. */
   restored?: Change[]
+  /** A memory tool: what it did to which entry, for the memory card in the chat. */
+  memory?: { op: 'add' | 'refresh' | 'update' | 'forget'; id: string; before?: MemoryItem; after?: MemoryItem }
+}
+
+/** A notebook_id argument ("current" for the open page's notebook) as id and title. */
+function notebookArg(v: unknown): { id: string; title: string } | null {
+  const s = String(v || '').trim()
+  if (!s || s === 'all') return null
+  if (s === 'current') return currentNotebook()
+  const node = findNode(useStore.getState().workspace.tree, s)
+  if (!node) throw new ToolError(`Notebook ${s} not found. Use an id from the tree, or "current".`)
+  return { id: node.id, title: node.title }
 }
 
 class ToolError extends Error {}
@@ -874,6 +911,22 @@ export const TOOL_DEFS = [
     multi: bool('Allow picking several options.'),
   }, ['question']),
   SET_MATH_SIZE_DEF,
+  fn('remember', 'Save something to your long term memory of this user, kept across chats (see the Memory rules). One idea per call, as a short self-contained sentence. A near copy of an existing entry updates that one.', {
+    text: str('The memory: a specific, self-contained sentence that makes sense months later in a new chat.'),
+    kind: { type: 'string', enum: ['rule', 'style', 'about', 'fact'], description: 'rule: how notes, diagrams, formulas should look. style: how to answer. about: who they are. fact: other lasting context.' },
+    notebook_id: str('Only when it applies to one notebook: that notebook\'s id. "current" means the notebook of the open page.'),
+    important: bool('They stressed it ("always", "never", "really important"): listed first.'),
+  }, ['text', 'kind']),
+  fn('update_memory', 'Change one memory entry: reword it, change its kind or notebook. Use instead of remember when an entry already covers the same thing or the user corrects it.', {
+    id: str('The entry id, like m4k2.'),
+    text: str('The new text (the whole entry).'),
+    kind: { type: 'string', enum: ['rule', 'style', 'about', 'fact'], description: 'New kind.' },
+    notebook_id: str('Limit to this notebook ("current" for the open page\'s notebook), or "all" to apply everywhere again.'),
+    important: bool('Mark or unmark as important.'),
+  }, ['id']),
+  fn('forget', 'Delete a memory entry, when the user asks you to forget it or it turned out wrong. They can undo it.', {
+    id: str('The entry id, like m4k2.'),
+  }, ['id']),
 ]
 
 /* ================================================================== *
@@ -1792,16 +1845,69 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     )
   },
 
+  async remember(a, env) {
+    const mem = memoryState()
+    if (!mem.on) throw new ToolError('Memory is turned off in Settings, Memory. Nothing was saved: tell the user they can turn it on there.')
+    const text = cleanText(a.text)
+    if (text.length < 3) throw new ToolError('The memory text is empty.')
+    if (/\b(password|passcode|api[ _-]?key|secret key|token)\b\s*[:=]/i.test(text)) throw new ToolError('That looks like a secret: secrets are never kept in memory.')
+    const notebook = notebookArg(a.notebook_id)
+    const kind = (['rule', 'style', 'about', 'fact'].includes(a.kind) ? a.kind : 'fact') as MemoryKind
+    const same = similarMemory(text)
+    env.rec.memory(same?.id || null)
+    const { item, merged } = addMemory({ text, kind, notebook, by: 'assistant', chatId: env.chat?.id, chatTitle: env.chat?.title, pinned: Boolean(a.important) })
+    if (!same) env.rec.memoryAdded(item.id)
+    return {
+      ...ok({ saved: item.id, merged_into_existing: merged }, merged ? 'Memory already had this, refreshed it' : 'Saved to memory'),
+      detail: item.text,
+      memory: { op: merged ? 'refresh' : 'add', id: item.id, after: item },
+    } as ToolResult
+  },
+
+  async update_memory(a, env) {
+    const old = findMemory(a.id)
+    if (!old) throw new ToolError(`No memory entry ${a.id}. The ids are in the <memory> block.`)
+    const patch: Partial<MemoryItem> = {}
+    if (a.text !== undefined) patch.text = cleanText(a.text)
+    if (['rule', 'style', 'about', 'fact'].includes(a.kind)) patch.kind = a.kind
+    if (a.important !== undefined) patch.pinned = Boolean(a.important)
+    if (a.notebook_id === 'all') (patch as any).notebookId = null
+    else if (a.notebook_id) {
+      const nb = notebookArg(a.notebook_id)
+      if (nb) Object.assign(patch, { notebookId: nb.id, notebookTitle: nb.title })
+    }
+    env.rec.memory(old.id)
+    const item = updateMemory(old.id, patch)!
+    return {
+      ...ok({ updated: item.id }, 'Updated a memory'),
+      detail: item.text,
+      memory: { op: 'update', id: item.id, before: old, after: item },
+    } as ToolResult
+  },
+
+  async forget(a, env) {
+    const old = findMemory(a.id)
+    if (!old) throw new ToolError(`No memory entry ${a.id}. The ids are in the <memory> block.`)
+    env.rec.memory(old.id)
+    removeMemory(old.id)
+    return {
+      ...ok({ forgot: old.id }, 'Forgot a memory'),
+      detail: old.text,
+      memory: { op: 'forget', id: old.id, before: old },
+    } as ToolResult
+  },
+
   async get_settings() {
-    const { _t, recentColors, ...rest } = settingsNow() as any
+    const { _t, recentColors, assistantMemory, ...rest } = settingsNow() as any
     void _t
     void recentColors
+    void assistantMemory
     return ok(rest, 'Read the settings')
   },
 
   async update_settings(a, env) {
     const changes = a.changes && typeof a.changes === 'object' ? a.changes : {}
-    const allowed = new Set(Object.keys(DEFAULT_SETTINGS).filter((k) => !['version', '_t'].includes(k)))
+    const allowed = new Set(Object.keys(DEFAULT_SETTINGS).filter((k) => !['version', '_t', 'assistantMemory'].includes(k)))
     const patch: Record<string, any> = {}
     const bad: string[] = []
     for (const [k, v] of Object.entries(changes)) {

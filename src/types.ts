@@ -90,6 +90,38 @@ export interface Page {
   syncV?: number
 }
 
+export type MemoryKind = 'rule' | 'style' | 'about' | 'fact'
+
+/** One thing the assistant remembers about the user. */
+export interface MemoryItem {
+  /** Short id the model cites, like "m4k2". */
+  id: string
+  text: string
+  kind: MemoryKind
+  createdAt: number
+  updatedAt: number
+  /** Who saved it. */
+  by: 'assistant' | 'you'
+  /** Only applies in this notebook. */
+  notebookId?: string
+  notebookTitle?: string
+  /** The chat it was learned in. */
+  chatId?: string
+  chatTitle?: string
+  /** Marked important: listed first. */
+  pinned?: boolean
+  /** Paused: kept, but not given to the assistant. */
+  off?: boolean
+}
+
+export interface MemoryState {
+  /** Memory in use at all. */
+  on: boolean
+  /** The assistant may save memories on its own (not only when asked). */
+  auto: boolean
+  items: MemoryItem[]
+}
+
 export interface Settings {
   version: 1
   theme: 'dark' | 'light' | 'sepia' | 'midnight' | 'nord' | 'system'
@@ -151,6 +183,8 @@ export interface Settings {
   zoomStep: number
   panButton: 'right' | 'middle' | 'space'
   recentColors: string[]
+  /** The assistant's long term memory, shared by every computer (see agent/memory.ts). */
+  assistantMemory: MemoryState
   /** Sync bookkeeping: when each setting last changed. */
   _t?: Record<string, number>
 }
@@ -215,4 +249,5 @@ export const DEFAULT_SETTINGS: Settings = {
   zoomStep: 0.05,
   panButton: 'right',
   recentColors: ['#e06c75', '#e5c07b', '#98c379', '#61afef', '#c678dd', '#ffffff'],
+  assistantMemory: { on: true, auto: true, items: [] },
 }

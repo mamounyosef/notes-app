@@ -10,6 +10,7 @@ import { buildWidgetDoc, currentTheme, fromBase64, kindOf } from './widgets/widg
 import 'katex/dist/katex.min.css'
 import './styles/index.css'
 import './styles/agent.css'
+import './styles/memory.css'
 import './styles/voice.css'
 import './styles/claude.css'
 

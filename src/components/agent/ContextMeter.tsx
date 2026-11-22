@@ -9,6 +9,7 @@ import { Chevron, Copy, Check, Retry, X } from '../Icons'
 
 const COLORS: Record<string, string> = {
   system: '#c678dd',
+  memory: '#e879c9',
   tools: '#61afef',
   context: '#56b6c2',
   history: '#98c379',

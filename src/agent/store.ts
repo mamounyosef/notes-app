@@ -8,6 +8,7 @@ import { nanoid } from 'nanoid'
 import { agentApi, chatApi, type Chat, type ChatAttachment, type ChatMessage, type ChatSummary } from './api'
 import { buildContext } from './context'
 import { SYSTEM_PROMPT, voicePrompt } from './prompt'
+import { estimateMemoryTokens, markUsed, memoryBlock, memoryRules, memoryState, takeMemoryMarker } from './memory'
 import { TOOL_DEFS, READ_ONLY, eyesFor, TurnRecorder, keepSnapshot, runTool, undoTurn } from './tools'
 import { cellTexts, scrollToCell } from './reveal'
 import { fileToAttachment } from './files'
@@ -337,7 +338,8 @@ function toRequestMessages(chat: Chat, model = DEFAULT_MODEL, voice = false): an
           if (a.kind === 'image') sentPics.add(`sha:${a.sha}`)
           for (const p of (a.pages || []).slice(0, 20)) sentPics.add(`sha:${p}`)
         }
-  const out: any[] = [{ role: 'system', content: voice ? SYSTEM_PROMPT + voicePrompt() : SYSTEM_PROMPT }]
+  const mem = memoryState().on ? `\n\n` : memoryRules()
+  const out: any[] = [{ role: 'system', content: (voice ? SYSTEM_PROMPT + voicePrompt() : SYSTEM_PROMPT) + mem }]
   // They follow the whole run of tool results, since results must come right after their calls.
   let pics: any[] = []
   const flushPics = () => {
@@ -476,8 +478,17 @@ export const useAgent = create<AgentState>((set, get) => {
   }
 
   /** Adds a message after the last shown one (or after m.parent), and shows it at that fork. */
-  const pushMsg = (id: string, m: ChatMessage) =>
-    update(id, (c) => {
+  const pushMsg = (id: string, m0: ChatMessage) => {
+    // A reply that says which memories shaped it: the line is hidden, kept as a badge.
+    let m = m0
+    if (m.role === 'assistant' && m.content) {
+      const { text, ids } = takeMemoryMarker(m.content)
+      if (ids.length || text !== m.content) {
+        m = { ...m, content: text, meta: { ...(m.meta || {}), ...(ids.length ? { memUsed: ids } : {}) } as any }
+        if (ids.length) markUsed(ids)
+      }
+    }
+    return update(id, (c) => {
       const parent = m.parent !== undefined ? m.parent : tipOf(c)
       const key = parent ?? ROOT
       return {
@@ -486,6 +497,7 @@ export const useAgent = create<AgentState>((set, get) => {
         chosen: { ...(c.chosen || {}), [key]: { id: m.id, at: stamp() } },
       }
     })
+  }
   const patchMsg = (id: string, mid: string, patch: Partial<ChatMessage>) =>
     update(id, (c) => ({ ...c, messages: c.messages.map((m) => (m.id === mid ? { ...m, ...patch, v: (m.v || 0) + 1 } : m)) }))
 
@@ -744,6 +756,7 @@ export const useAgent = create<AgentState>((set, get) => {
         rec,
         attachments: attachmentsOf(),
         model,
+        chat: { id, title: chatLabel(s.chat) },
         ask: (q: { question: string; options?: string[]; multi?: boolean }) =>
           new Promise<string>((resolve) => {
             const askMsg: ChatMessage = { id: nanoid(14), at: stamp(), v: 1, role: 'assistant', content: '', meta: { ask: { ...q } } }
@@ -793,6 +806,7 @@ export const useAgent = create<AgentState>((set, get) => {
           ok: result.ok,
           ...(result.target ? { target: result.target } : {}),
           ...(result.helper ? { helper: result.helper } : {}),
+          ...(result.memory ? { memory: result.memory } : {}),
           ...(result.images ? { images: result.images, eyes: modelInfo(model).name } : {}),
         } as any,
       })
@@ -1377,6 +1391,9 @@ function labelFor(name: string, chatModel: string) {
   if (eyes && name === 'check_drawing') return `${eyes} is looking at the drawing`
   const map: Record<string, string> = {
     get_context: 'Looking at your screen',
+    remember: 'Saving to memory',
+    update_memory: 'Updating its memory',
+    forget: 'Forgetting a memory',
     list_tree: 'Reading your notebooks',
     read_page: 'Reading the page',
     read_cell: 'Reading a cell',
@@ -1469,6 +1486,7 @@ export function contextBreakdown(chat: Chat | null, liveContext?: string, model 
   if (!chat?.messages.length && liveContext) ctx = estimateTokens(liveContext)
   const parts: ContextPart[] = [
     { key: 'system', label: 'System prompt', tokens: estimateTokens(SYSTEM_PROMPT), detail: 'How the assistant behaves' },
+    { key: 'memory', label: 'Memory', tokens: estimateMemoryTokens(), detail: ` remembered things, sent with every message` },
     { key: 'tools', label: 'Tool definitions', tokens: estimateTokens(tools), detail: `${TOOL_DEFS.length} tools` },
     { key: 'context', label: 'Screen and page context', tokens: ctx, detail: 'Fresh with every message' },
     { key: 'history', label: 'Conversation', tokens: Math.max(0, history), detail: 'Your messages and replies' },

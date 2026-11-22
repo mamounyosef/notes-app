@@ -18,6 +18,7 @@ import { TOOL_DEFS, TurnRecorder, keepSnapshot, runTool, READ_ONLY, type ToolRes
 import { scrollToCell } from './reveal'
 import { cellKeys, contextDelta } from './contextDelta'
 import { buildContext } from './context'
+import { memoryBlock, memoryRev, memoryRules } from './memory'
 import { useStore } from '../store'
 
 const desk = (window as any).notes
@@ -321,10 +322,11 @@ const PDF_INLINE_BYTES = 24 * 1024 * 1024
 const PDF_INLINE_PAGES = 90
 
 /** One user message as Claude's content blocks. */
-async function userBlocks(m: ChatMessage, opts: { context: 'full' | 'same' | 'brief' | 'delta'; delta?: string; voice: 'full' | 'short' | null; preface?: string }) {
+async function userBlocks(m: ChatMessage, opts: { context: 'full' | 'same' | 'brief' | 'delta'; delta?: string; voice: 'full' | 'short' | null; preface?: string; memory?: string }) {
   const parts: string[] = []
   const blocks: any[] = []
   if (opts.preface) parts.push(opts.preface)
+  if (opts.memory) parts.push(opts.memory)
   if (opts.voice === 'full') parts.push(`<voice_mode>${voicePrompt().trim()}</voice_mode>`)
   else if (opts.voice === 'short') parts.push('(Voice mode: this message was spoken and your reply is read aloud. Follow the voice mode rules.)')
   if (opts.context === 'full' && m.meta?.context) parts.push(`<app_context>\n${m.meta.context}\n</app_context>`)
@@ -474,8 +476,13 @@ export async function runClaudeTurn(h: TurnHost): Promise<{ firstAssistantId: st
   const prevVoice = Boolean(prev?.meta?.voice)
   const voice = h.voice ? (prev && prevVoice && resume ? 'short' : 'full') : null
 
-  const content = await userBlocks(u, { context, delta: delta || undefined, voice, preface })
-  const system = claudeSystemPrompt()
+  // Memory: the whole list when this conversation has not seen it, or it changed since the last message.
+  const rev = memoryRev()
+  const memList = memoryBlock()
+  const memSeen = Boolean(resume && !unseenTurns && !fromHead?.compacted && (prev?.meta as any)?.memRev === rev)
+  const memory = memList && !memSeen ? (resume && (prev?.meta as any)?.memRev ? `(Your memory changed since the last message. This is the current list; it replaces the earlier one.)\n` : memList) : undefined
+  const content = await userBlocks(u, { context, delta: delta || undefined, voice, preface, memory })
+  const system = claudeSystemPrompt() + memoryRules()
   const base = { model: h.model, effort: h.effort, noThinking: h.noThinking, system, title: (chat0.title !== 'New chat' && chat0.title) || undefined }
 
   const go = (res: typeof resume) => follow(h, { chatId: h.chatId, content, resume: res, ...base })
@@ -483,7 +490,7 @@ export async function runClaudeTurn(h: TurnHost): Promise<{ firstAssistantId: st
   // The conversation file is not on this computer (a chat synced from another one): start fresh with the history as text.
   if (!out.result.ok && !out.got && resume && /no conversation found|not found|could not resume|session/i.test(out.result.error || '')) {
     const pre = `<earlier_conversation note="This conversation so far">\n${transcript(path.slice(0, uIdx))}\n</earlier_conversation>`
-    const fresh = await userBlocks(u, { context: 'full', voice: h.voice ? 'full' : null, preface: pre })
+    const fresh = await userBlocks(u, { context: 'full', voice: h.voice ? 'full' : null, preface: pre, memory: memList || undefined })
     out = await follow(h, { chatId: h.chatId, content: fresh, resume: null, ...base })
   }
   const r = out.result
@@ -492,7 +499,7 @@ export async function runClaudeTurn(h: TurnHost): Promise<{ firstAssistantId: st
     sessions.add(r.sessionId)
     const mark = { session: r.sessionId, tip: r.tip || null, at: resume?.at || null }
     const cur = h.chat().messages.find((m) => m.id === u.id)
-    if (cur) h.patchMsg(u.id, { meta: { ...cur.meta, claude: mark } as any })
+    if (cur) h.patchMsg(u.id, { meta: { ...cur.meta, claude: mark, memRev: rev } as any })
     h.update((c) => ({ ...c, claude: { ...((c as any).claude || {}), head: { session: r.sessionId, tip: r.tip || null, after: u.id, at: Date.now(), ...(out.compacted ? { compacted: true } : {}), ...(Object.keys(out.mine).length ? { mine: out.mine } : {}) }, sessions: [...sessions] } }) as any)
   }
   if (r.aborted) return { firstAssistantId: out.first, aborted: true }
@@ -700,7 +707,7 @@ export async function compactChat(h: Pick<TurnHost, 'chatId' | 'chat' | 'model' 
   })
   onActivity('Compacting the conversation')
   try {
-    const r = await claudeApi.command(reqId, h.chatId, '/compact', { session: mark.session }, { model: h.model, effort: h.effort, noThinking: h.noThinking, system: claudeSystemPrompt() })
+    const r = await claudeApi.command(reqId, h.chatId, '/compact', { session: mark.session }, { model: h.model, effort: h.effort, noThinking: h.noThinking, system: claudeSystemPrompt() + memoryRules() })
     if (!r.ok) return friendlyError(r.error)
     if (r.sessionId) h.update((c) => ({ ...c, claude: { ...((c as any).claude || {}), head: { session: r.sessionId, tip: r.tip || null, after: lastUser.id, at: Date.now(), compacted: true } } }) as any)
     return null

@@ -6,6 +6,7 @@ import { askConfirm } from '../lib/confirm'
 import { X, Plus, Min, Undo } from './Icons'
 import { CloudSyncSection } from './CloudSync'
 import AiSettings from './agent/AiSettings'
+import MemoryManager from './agent/MemoryManager'
 import VoiceSettings from './voice/VoiceSettings'
 import UpdateSettings from './UpdateSettings'
 import { SHORTCUTS, prettyShortcut, shortcutFromEvent, type ShortcutKey } from '../editor/shortcuts'
@@ -273,8 +274,8 @@ const FONT_CHOICES = [
   'Cascadia Code, Consolas, monospace',
 ]
 
-type Tab = 'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'ai' | 'voice' | 'storage' | 'update'
-const TABS: Tab[] = ['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'ai', 'voice', 'storage', 'update']
+type Tab = 'look' | 'text' | 'cells' | 'canvas' | 'editing' | 'shortcuts' | 'ai' | 'memory' | 'voice' | 'storage' | 'update'
+const TABS: Tab[] = ['look', 'text', 'cells', 'canvas', 'editing', 'shortcuts', 'ai', 'memory', 'voice', 'storage', 'update']
 
 /**
  * Draw with the graphics card instead of in software. Off by default (a driver crash once
@@ -404,7 +405,7 @@ export default function SettingsModal({ onClose, initialTab }: { onClose(): void
           <div className="theme-chips">
             {TABS.map((t) => (
               <button key={t} className={`theme-chip ${tab === t ? 'on' : ''}`} onClick={() => setTab(t)}>
-                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', shortcuts: 'Shortcuts', ai: 'AI', voice: 'Voice', storage: 'Storage', update: 'Update' }[t]}
+                {{ look: 'Appearance', text: 'Text', cells: 'Cells', canvas: 'Canvas', editing: 'Editing', shortcuts: 'Shortcuts', ai: 'AI', memory: 'Memory', voice: 'Voice', storage: 'Storage', update: 'Update' }[t]}
               </button>
             ))}
           </div>
@@ -553,6 +554,7 @@ export default function SettingsModal({ onClose, initialTab }: { onClose(): void
           )}
 
           {tab === 'ai' && <AiSettings />}
+          {tab === 'memory' && <MemoryManager mode="settings" />}
 
           {tab === 'voice' && <VoiceSettings />}
 
@@ -603,7 +605,7 @@ export default function SettingsModal({ onClose, initialTab }: { onClose(): void
               </div>
               <div className="set-row">
                 <label>Reset every setting to its default</label>
-                <button className="btn danger" onClick={async () => { if (await askConfirm('Reset all settings?', 'Reset')) set({ ...DEFAULT_SETTINGS, sidebarWidth: settings.sidebarWidth }) }}>
+                <button className="btn danger" onClick={async () => { if (await askConfirm('Reset all settings?', 'Reset')) set({ ...DEFAULT_SETTINGS, sidebarWidth: settings.sidebarWidth, assistantMemory: settings.assistantMemory }) }}>
                   Reset
                 </button>
               </div>

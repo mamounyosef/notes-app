@@ -16,6 +16,9 @@ import { RunMark, SessionStrip, runLine } from './Sessions'
 import { AttachmentTray, useAddFiles } from './AttachmentTray'
 import { ContextRing, ContextInspector } from './ContextMeter'
 import { ClaudePill, ClaudePanel } from './ClaudeStatus'
+import MemoryManager from './MemoryManager'
+import { MemoryButton, MemoryCard, MemoryUsed } from './MemoryChat'
+import { hideMemoryMarker, useMemoryUi } from '../../agent/memory'
 import {
   AssistantOrb, StopI, Plus, History, Dock, Float, X, Brain, Chevron, Eye, Undo, Check, Copy, Retry, Trash, Pencil, File as FileIcon, Bolt, Clock, AudioLines, Mic,
 } from '../Icons'
@@ -223,6 +226,7 @@ function ToolChip({ m }: { m: ChatMessage }) {
   const target = meta?.target
   const helper = meta?.helper as { model: string; ms: number; text: string } | undefined
   const [open, setOpen] = useState(false)
+  if (meta?.memory && ok) return <MemoryCard m={m} />
   const chip = (
     <button
       className={`ag-tool ${ok ? '' : 'failed'} ${target ? 'link' : ''}`}
@@ -608,6 +612,7 @@ const TurnView = React.memo(function TurnView({ turn, last, onImage }: { turn: T
     if (last && live) window.dispatchEvent(new Event(GROW_EVENT))
   })
   const answer = [...turn.items].reverse().find((m) => m.role === 'assistant' && m.content)?.content || ''
+  const memUsed = [...new Set(turn.items.flatMap((m) => ((m.meta as any)?.memUsed as string[] | undefined) || []))]
 
   // Tool chips sit together; text and asks in order.
   const blocks: React.ReactNode[] = []
@@ -649,7 +654,8 @@ const TurnView = React.memo(function TurnView({ turn, last, onImage }: { turn: T
       <div className="ag-reply">
         {blocks}
         {live?.thinking ? <Thinking text={live.thinking} live={Boolean(liveThinking)} /> : null}
-        {live?.content ? <Markdown text={live.content} live /> : null}
+        {live?.content && hideMemoryMarker(live.content) ? <Markdown text={hideMemoryMarker(live.content)} live /> : null}
+        {!working && memUsed.length > 0 && <MemoryUsed ids={memUsed} />}
         {working && (
           <div className="ag-activity">
             <span className="ag-dots"><i /><i /><i /></span>
@@ -944,6 +950,8 @@ export default function AgentPanel() {
   const [showHistory, setShowHistory] = useState(false)
   const [showCtx, setShowCtx] = useState(false)
   const [showClaude, setShowClaude] = useState(false)
+  const memOpen = useMemoryUi((s) => s.open)
+  const closeMem = useCallback(() => useMemoryUi.getState().hide(), [])
 
   // Voice mode: the same chat, heard and spoken. The dock takes the composer's place.
   const [voicePrefs] = useVoicePrefs()
@@ -1093,7 +1101,8 @@ export default function AgentPanel() {
           {hasKey !== false && <ClaudePill active={showClaude} onClick={() => { setShowClaude(!showClaude); setShowCtx(false) }} />}
           {hasKey !== false && <ContextRing active={showCtx} onClick={() => { setShowCtx(!showCtx); setShowClaude(false) }} />}
           <button className="ag-icon-btn" title="New chat (Ctrl+Shift+J)" onClick={() => { newChat(); setShowHistory(false); setShowCtx(false) }}><Plus size={15} /></button>
-          <button className={`ag-icon-btn ${showHistory ? 'on' : ''}`} title="Chat history" onClick={() => { setShowHistory(!showHistory); setShowCtx(false) }}><History size={15} /></button>
+          <MemoryButton onClick={() => { if (memOpen) closeMem(); else { useMemoryUi.getState().show(); setShowHistory(false); setShowCtx(false) } }} />
+          <button className={`ag-icon-btn ${showHistory ? 'on' : ''}`} title="Chat history" onClick={() => { setShowHistory(!showHistory); setShowCtx(false); closeMem() }}><History size={15} /></button>
           <AppearanceButton />
           {!overlay && (
             <button
@@ -1116,8 +1125,10 @@ export default function AgentPanel() {
 
         {showCtx && <ContextInspector onClose={() => setShowCtx(false)} />}
         {showClaude && <ClaudePanel onClose={() => setShowClaude(false)} />}
-        {!showHistory && <SessionStrip />}
-        {showHistory ? (
+        {!showHistory && !memOpen && <SessionStrip />}
+        {memOpen ? (
+          <MemoryManager mode="panel" onClose={closeMem} />
+        ) : showHistory ? (
           <HistoryView onClose={() => setShowHistory(false)} />
         ) : hasKey === false ? (
           <KeySetup />

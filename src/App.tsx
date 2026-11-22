@@ -198,8 +198,8 @@ export default function App() {
       e.stopPropagation()
       // Over the assistant it moves through the chats opened there, like a browser.
       if ((e.target as Element | null)?.closest?.('.agent-panel')) {
-        // Chat history open: back just closes it and returns to the open chat; forward does nothing.
-        if (document.querySelector('.agent-panel .ag-history')) {
+        // Chat history or memory open: back just closes it and returns to the open chat; forward does nothing.
+        if (document.querySelector('.agent-panel .ag-history, .agent-panel .mem-view')) {
           if (e.button === 3) window.dispatchEvent(new Event('agent:close-history'))
           return
         }
