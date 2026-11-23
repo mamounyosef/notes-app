@@ -374,18 +374,30 @@ interface Placement {
   anchor_cell_id?: string
 }
 
-function placeBox(page: Page, w: number, h: number, p: Placement, s: Settings, isOpen: boolean) {
-  const gap = s.cellGap || 8
+/** Space the assistant always leaves between cells: at least one grid step. */
+export const agentGap = (s: Settings) => Math.max(s.cellGap || 0, s.gridSize || 8)
+
+/** Snaps a free spot to the grid without eating into the gap: snapping down never happens, and it re-checks for neighbours after snapping. */
+function snapFree(cells: { x: number; y: number; w: number; h: number }[], box: { x: number; y: number; w: number; h: number }, gap: number, s: Settings) {
   const g = s.gridSize
+  let b = { ...box, x: snap(Math.max(0, box.x), g, s.snapToGrid), y: snapUp(Math.max(0, box.y), g, s.snapToGrid) }
+  for (let i = 0; i < 50; i++) {
+    const next = freeSpot(cells, b, gap)
+    if (next.y === b.y) break
+    b = { ...next, y: snapUp(next.y, g, s.snapToGrid) }
+  }
+  return { x: b.x, y: b.y }
+}
+
+function placeBox(page: Page, w: number, h: number, p: Placement, s: Settings, isOpen: boolean) {
+  const gap = agentGap(s)
   const cells = page.cells
   let x = 40
   let y = 120
   const where = (p.placement || '').toLowerCase()
   const anchor = p.anchor_cell_id ? cells.find((c) => c.id === p.anchor_cell_id) : undefined
   if (typeof p.x === 'number' || typeof p.y === 'number') {
-    x = p.x ?? 40
-    y = p.y ?? 120
-    return { x: snap(x, g, s.snapToGrid), y: snap(y, g, s.snapToGrid) }
+    return snapFree(cells, { x: p.x ?? 40, y: p.y ?? 120, w, h }, gap, s)
   }
   if (anchor && where === 'right_of') {
     x = anchor.x + anchor.w + gap * 2
@@ -395,7 +407,8 @@ function placeBox(page: Page, w: number, h: number, p: Placement, s: Settings, i
     y = anchor.y
   } else if (anchor && where === 'above') {
     x = anchor.x
-    y = Math.max(100, anchor.y - h - gap)
+    const top = anchor.y - h - gap
+    y = Math.max(100, s.snapToGrid ? Math.floor(top / s.gridSize) * s.gridSize : top)
   } else if (anchor) {
     x = anchor.x
     y = anchor.y + anchor.h + gap
@@ -416,8 +429,8 @@ function placeBox(page: Page, w: number, h: number, p: Placement, s: Settings, i
     x = inView.length ? Math.min(...inView.map((c) => c.x)) : Math.max(40, vx + 40)
     y = Math.max(vy + 40, 120)
   }
-  const spot = freeSpot(anchor && (where === 'right_of' || where === 'left_of') ? cells.filter((c) => c.id !== anchor.id) : cells, { x, y, w, h }, gap)
-  return { x: snap(Math.max(0, spot.x), g, s.snapToGrid), y: snap(Math.max(0, spot.y), g, s.snapToGrid) }
+  const others = anchor && (where === 'right_of' || where === 'left_of') ? cells.filter((c) => c.id !== anchor.id) : cells
+  return snapFree(others, freeSpot(others, { x, y, w, h }, gap), gap, s)
 }
 
 /** Replaces or styles text inside cell HTML, one text node at a time. */
@@ -1375,40 +1388,41 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
   async arrange_cells(a, env) {
     const pid = pageIdOr(a.page_id)
     const s = settingsNow()
-    const gap = Number(a.gap) || s.cellGap || 8
+    const gap = Math.max(Number(a.gap) || 0, agentGap(s))
+    const up = (v: number) => snapUp(v, s.gridSize, s.snapToGrid)
     const isOpen = useStore.getState().activePageId === pid
     if (a.action === 'tidy' && isOpen) {
       await env.rec.page(pid)
-      useStore.getState().reflowOverlaps(true)
+      useStore.getState().reflowOverlaps(true, gap)
       return ok('Overlaps removed.', 'Tidied the layout', { pageId: pid })
     }
     await editPage(env, pid, (p) => {
       const ids: string[] = a.cell_ids?.length ? a.cell_ids.map(String) : p.cells.map((c) => c.id)
       const sel = p.cells.filter((c) => ids.includes(c.id)).sort((x, y) => x.y - y.y || x.x - y.x)
       if (!sel.length) throw new ToolError('No matching cells.')
-      const left = typeof a.x === 'number' ? a.x : Math.min(...sel.map((c) => c.x))
-      const top = typeof a.y === 'number' ? a.y : Math.min(...sel.map((c) => c.y))
+      const left = up(typeof a.x === 'number' ? a.x : Math.min(...sel.map((c) => c.x)))
+      const top = up(typeof a.y === 'number' ? a.y : Math.min(...sel.map((c) => c.y)))
       const pos = new Map<string, Partial<Cell>>()
       if (a.action === 'stack' || a.action === 'tidy') {
         let y = top
         for (const c of sel) {
           pos.set(c.id, { x: a.action === 'stack' ? left : c.x, y })
-          y += c.h + gap
+          y = up(y + c.h + gap)
         }
       } else if (a.action === 'row') {
         let x = left
         for (const c of [...sel].sort((p1, p2) => p1.x - p2.x)) {
           pos.set(c.id, { x, y: top })
-          x += c.w + gap * 2
+          x = up(x + c.w + gap * 2)
         }
       } else if (a.action === 'grid') {
         const cols = Math.max(1, Math.round(Number(a.columns) || 2))
-        const colW = Math.max(...sel.map((c) => c.w))
+        const colW = up(Math.max(...sel.map((c) => c.w)) + gap * 2)
         let rowTop = top
         for (let i = 0; i < sel.length; i += cols) {
           const row = sel.slice(i, i + cols)
-          row.forEach((c, j) => pos.set(c.id, { x: left + j * (colW + gap * 2), y: rowTop }))
-          rowTop += Math.max(...row.map((c) => c.h)) + gap
+          row.forEach((c, j) => pos.set(c.id, { x: left + j * colW, y: rowTop }))
+          rowTop = up(rowTop + Math.max(...row.map((c) => c.h)) + gap)
         }
       } else if (a.action === 'align_left') {
         for (const c of sel) pos.set(c.id, { x: left })
@@ -1433,7 +1447,7 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
         }),
       }
     })
-    if (isOpen && ['stack', 'row', 'grid', 'align_left', 'align_top', 'same_width'].includes(a.action)) useStore.getState().reflowOverlaps(false)
+    if (isOpen && ['stack', 'row', 'grid', 'align_left', 'align_top', 'same_width'].includes(a.action)) useStore.getState().reflowOverlaps(false, gap)
     return ok('Done.', `Arranged cells (${a.action})`, { pageId: pid })
   },
 
@@ -1448,14 +1462,14 @@ const IMPL: Record<string, (a: Args, env: ToolEnv) => Promise<ToolResult>> = {
     const copies: Cell[] = []
     await editPage(env, to, (p) => {
       let maxZ = p.cells.reduce((m, c) => Math.max(m, c.z), 0)
-      const bottom = p.cells.length ? Math.max(...p.cells.map((c) => c.y + c.h)) + s.cellGap : 120
+      const bottom = p.cells.length ? snapUp(Math.max(...p.cells.map((c) => c.y + c.h)) + agentGap(s), s.gridSize, s.snapToGrid) : 120
       const minY = Math.min(...picked.map((c) => c.y))
       for (const c of picked) {
         copies.push({
           ...clone(c),
           id: nanoid(12),
-          x: to === from ? c.x + s.gridSize : c.x,
-          y: to === from ? c.y + s.gridSize : bottom + (c.y - minY),
+          x: c.x,
+          y: bottom + (c.y - minY),
           z: ++maxZ,
           conflict: undefined,
           createdAt: now(),

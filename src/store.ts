@@ -176,7 +176,7 @@ interface State {
   insertSpace(atY: number, amount: number): void
   addPageStroke(stroke: Page['strokes'][number]): void
   addCellStroke(cellId: string, stroke: Stroke): void
-  reflowOverlaps(record?: boolean): void
+  reflowOverlaps(record?: boolean, minGap?: number): void
   clearPageInk(): void
   setZoom(z: number): void
   /** Opens a page in a new tab next to the current one; in the background when asked. */
@@ -1204,11 +1204,15 @@ export const useStore = create<State>((set, get) => ({
    * Pushes cells down until nothing overlaps, keeping the reading order and
    * the horizontal placement exactly as they were.
    */
-  reflowOverlaps(record = true) {
+  reflowOverlaps(record = true, minGap?: number) {
     const { page, settings } = get()
     if (!page || page.cells.length < 2) return
     if (record) get().pushHistory()
-    const gap = settings.cellGap
+    const gap = minGap ?? settings.cellGap
+    // With minGap (the assistant), cells closer than the gap count as overlapping too.
+    const pad = minGap ?? 0
+    const g = settings.gridSize
+    const up = (v: number) => (minGap !== undefined && settings.snapToGrid ? Math.ceil(v / g) * g : v)
     const cells = [...page.cells].sort((a, b) => a.y - b.y || a.x - b.x)
     const moved = new Map<string, { x: number; y: number }>()
     for (let i = 0; i < cells.length; i++) {
@@ -1217,11 +1221,11 @@ export const useStore = create<State>((set, get) => ({
       for (let j = i + 1; j < cells.length; j++) {
         const b = cells[j]
         const posB = moved.get(b.id) ?? { x: b.x, y: b.y }
-        const overlapX = posA.x < posB.x + b.w && posB.x < posA.x + a.w
-        const overlapY = posA.y < posB.y + b.h && posB.y < posA.y + a.h
+        const overlapX = posA.x < posB.x + b.w + pad && posB.x < posA.x + a.w + pad
+        const overlapY = posA.y < posB.y + b.h + pad && posB.y < posA.y + a.h + pad
         if (overlapX && overlapY) {
-          const rightPush = posA.x + a.w + gap
-          const downPush = posA.y + a.h + gap
+          const rightPush = up(posA.x + a.w + gap)
+          const downPush = up(posA.y + a.h + gap)
           const pushRightDist = posB.x >= posA.x ? rightPush - posB.x : Infinity
           const pushDownDist = posB.y >= posA.y ? downPush - posB.y : Infinity
           
