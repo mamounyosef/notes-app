@@ -12,6 +12,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Node, mergeAttributes } from '@tiptap/core'
 import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewProps } from '@tiptap/react'
 import { CodeI, Pen, AlignLeft, AlignCenter, AlignRight, FitI } from '../components/Icons'
+import { useStore } from '../store'
 import { buildWidgetDoc, currentTheme, fromBase64, KIND_LABEL, kindOf, looksLikeHtmlDocument, sniffKind, toBase64, type WidgetKind } from '../widgets/widget'
 
 export { looksLikeHtmlDocument }
@@ -96,6 +97,19 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
   const contentH = natural?.h ?? (doc ? 120 : 80)
   const displayH = drag?.h ?? storedH ?? Math.ceil(contentH * scale)
   const frameH = selfZoom ? displayH : Math.ceil(displayH / scale)
+  /* ---- sharp at any page zoom ----
+   * The page is zoomed with a CSS transform, which would scale the frame's
+   * finished picture (blurry or jagged). Instead the frame is laid out at its
+   * size on screen, undone by the opposite transform, and its content zooms
+   * itself to match, so text and lines are drawn at the pixels they show at.
+   * Charts draw on a canvas at their own size, so they keep the old way.
+   */
+  const pageZoom = useStore((s) => s.zoom)
+  const [onCanvas, setOnCanvas] = useState(false)
+  useEffect(() => setOnCanvas(!!wrapRef.current?.closest('.canvas')), [])
+  const cz = onCanvas && pageZoom > 0 ? pageZoom : 1
+  const crisp = kind !== 'chart'
+  const innerZoom = crisp ? scale * cz : selfZoom ? scale : null
 
   let justifyContent = 'flex-start'
   if (textAlign === 'center') justifyContent = 'center'
@@ -166,8 +180,37 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
   }, [frameId])
 
   useEffect(() => {
-    if (selfZoom) iframeRef.current?.contentWindow?.postMessage({ __zoom: scale }, '*')
-  }, [selfZoom, scale, doc])
+    if (innerZoom != null) iframeRef.current?.contentWindow?.postMessage({ __zoom: innerZoom }, '*')
+  }, [innerZoom, doc])
+
+  /* ---- right drag / right click inside the block act on the page, as on any cell ---- */
+  useEffect(() => {
+    let start: { x: number; y: number; buttons: number } | null = null
+    const onMsg = (e: MessageEvent) => {
+      const d = e.data
+      const f = iframeRef.current
+      if (!d || d.__widget !== frameId || !f || e.source !== f.contentWindow) return
+      if (d.type !== 'pan' && d.type !== 'menu') return
+      const r = f.getBoundingClientRect()
+      const x = r.left + (Number(d.fx) || 0) * r.width
+      const y = r.top + (Number(d.fy) || 0) * r.height
+      const ptr = { bubbles: true, cancelable: true, pointerId: 1, pointerType: 'mouse', isPrimary: true }
+      if (d.type === 'menu') {
+        f.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2, buttons: 0, clientX: x, clientY: y }))
+      } else if (d.phase === 'down') {
+        const button = d.button === 1 ? 1 : 2
+        start = { x, y, buttons: button === 1 ? 4 : 2 }
+        f.dispatchEvent(new PointerEvent('pointerdown', { ...ptr, button, buttons: start.buttons, clientX: x, clientY: y }))
+      } else if (start && d.phase === 'move') {
+        window.dispatchEvent(new PointerEvent('pointermove', { ...ptr, button: -1, buttons: start.buttons, clientX: start.x + (Number(d.dx) || 0), clientY: start.y + (Number(d.dy) || 0) }))
+      } else if (start && d.phase === 'up') {
+        window.dispatchEvent(new PointerEvent('pointerup', { ...ptr, button: start.buttons === 4 ? 1 : 2, buttons: 0, clientX: start.x, clientY: start.y }))
+        start = null
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [frameId])
 
   /** Measure again from scratch (after "fit" or a theme change). */
   const remeasure = () => {
@@ -293,11 +336,13 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
               srcDoc={doc}
               sandbox="allow-scripts"
               title={KIND_LABEL[kind]}
-              onLoad={() => selfZoom && iframeRef.current?.contentWindow?.postMessage({ __zoom: scale }, '*')}
+              onLoad={() => innerZoom != null && iframeRef.current?.contentWindow?.postMessage({ __zoom: innerZoom }, '*')}
               style={{
-                height: frameH,
-                width: innerW ? `${selfZoom ? innerW * scale : innerW}px` : '100%',
-                transform: scale < 1 && !selfZoom ? `scale(${scale})` : undefined,
+                height: crisp ? displayH * cz : frameH,
+                width: crisp
+                  ? innerW ? `${innerW * scale * cz}px` : `${100 * cz}%`
+                  : innerW ? `${selfZoom ? innerW * scale : innerW}px` : '100%',
+                transform: crisp ? (cz !== 1 ? `scale(${1 / cz})` : undefined) : scale < 1 && !selfZoom ? `scale(${scale})` : undefined,
                 transformOrigin: '0 0',
                 pointerEvents: drag ? 'none' : undefined,
               }}

@@ -475,6 +475,41 @@ const WIRES = String.raw`(function () {
 const RUNTIME = String.raw`(async function () {
   var T = window.__theme, errs = window.__errors, id = window.name;
   function post(m) { try { m.__widget = id; parent.postMessage(m, '*') } catch (e) {} }
+  // A right (or middle) drag moves the page around, like on any other cell; a
+  // right click opens the cell's menu. A block that uses those buttons itself
+  // (its handler cancels the event) keeps them.
+  (function () {
+    var pan = null, justPanned = false;
+    function at(e) { return { fx: e.clientX / (innerWidth || 1), fy: e.clientY / (innerHeight || 1) } }
+    addEventListener('pointerdown', function (e) {
+      if ((e.button !== 2 && e.button !== 1) || e.defaultPrevented) return;
+      pan = { id: e.pointerId, sx: e.screenX, sy: e.screenY, moved: false };
+      justPanned = false;
+      try { document.documentElement.setPointerCapture(e.pointerId) } catch (x) {}
+      if (e.button === 1) e.preventDefault();
+      var p = at(e); post({ type: 'pan', phase: 'down', button: e.button, fx: p.fx, fy: p.fy });
+    });
+    addEventListener('pointermove', function (e) {
+      if (!pan || e.pointerId !== pan.id) return;
+      var dx = e.screenX - pan.sx, dy = e.screenY - pan.sy;
+      if (Math.abs(dx) + Math.abs(dy) > 3) pan.moved = true;
+      post({ type: 'pan', phase: 'move', dx: dx, dy: dy });
+    });
+    function end(e) {
+      if (!pan || e.pointerId !== pan.id) return;
+      justPanned = pan.moved; pan = null;
+      post({ type: 'pan', phase: 'up' });
+    }
+    addEventListener('pointerup', end);
+    addEventListener('pointercancel', end);
+    addEventListener('contextmenu', function (e) {
+      // After a drag it is still sent: the page drops the menu it would open and stays in step.
+      if (e.defaultPrevented && !justPanned) return;
+      justPanned = false;
+      e.preventDefault();
+      var p = at(e); post({ type: 'menu', fx: p.fx, fy: p.fy });
+    });
+  })();
   document.querySelectorAll('[data-w-error]').forEach(function (e) { errs.push(e.getAttribute('data-w-error')) });
   document.querySelectorAll('script.w-chart').forEach(function (s) {
     try {
