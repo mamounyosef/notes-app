@@ -357,17 +357,30 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
   const pageTitle = useStore((s) => (s as any).page?.title as string | undefined) || ''
   const canDesk = Boolean(desk()?.widget)
   const [menu, setMenu] = useState<DOMRect | null>(null)
-  /** Where a figure's floating bar goes: outside the block when the cell has room, so it never covers the content. */
-  const [barAt, setBarAt] = useState<'above' | 'below' | 'over'>('above')
-  const placeBar = () => {
-    const el = wrapRef.current
-    const clip = el?.closest('.cell-body') as HTMLElement | null
-    if (!el || !clip) return
-    const r = el.getBoundingClientRect()
-    const c = clip.getBoundingClientRect()
-    const need = BAR_H + 2
-    setBarAt(r.top - c.top >= need ? 'above' : c.bottom - r.bottom >= need ? 'below' : 'over')
+  /**
+   * A figure's bar floats in its own layer just above the block (below it at the top of the window),
+   * so it never covers the widget's own buttons and no cell can clip it.
+   */
+  const [hover, setHover] = useState(false)
+  const hoverTimer = useRef<ReturnType<typeof setTimeout>>()
+  const hoverOn = () => {
+    clearTimeout(hoverTimer.current)
+    setHover(true)
   }
+  const hoverOff = () => {
+    clearTimeout(hoverTimer.current)
+    hoverTimer.current = setTimeout(() => setHover(false), 220)
+  }
+  const [barPos, setBarPos] = useState<{ top: number; right: number } | null>(null)
+  const placeBar = useCallback(() => {
+    const el = wrapRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const h = BAR_H + 2
+    const top = Math.round(r.top - h >= 0 ? r.top - h : r.bottom)
+    const right = Math.round(Math.max(0, window.innerWidth - r.right))
+    setBarPos((p) => (p && p.top === top && p.right === right ? p : { top, right }))
+  }, [])
   const closeMenu = useCallback(() => setMenu(null), [])
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ text: string; file?: string; bad?: boolean } | null>(null)
@@ -452,9 +465,20 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     { label: 'Copy source', icon: <CodeI size={14} />, onClick: copySource },
   ].filter((it, i, a) => it || (a[i - 1] && i < a.length - 1)) as (MenuItem | null)[]
 
+  const floatBar = figure && !editing && (hover || active || Boolean(menu || busy || note))
   useEffect(() => {
-    if (active) placeBar()
-  }, [active])
+    if (!floatBar) return
+    placeBar()
+    // Follow the block while the page scrolls, zooms or resizes.
+    let raf = 0
+    const tick = () => {
+      placeBar()
+      raf = requestAnimationFrame(tick)
+    }
+    raf = requestAnimationFrame(tick)
+    return () => cancelAnimationFrame(raf)
+  }, [floatBar, placeBar])
+  useEffect(() => () => clearTimeout(hoverTimer.current), [])
 
   const sized = storedW != null || storedH != null
   const label = drag ? `${Math.round(drag.w ?? wrapRef.current?.offsetWidth ?? 0)} × ${Math.round(drag.h ?? displayH)}${scale < 1 ? ` · ${Math.round(scale * 100)}%` : ''}` : null
@@ -463,8 +487,9 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     <NodeViewWrapper className="html-embed-wrapper" style={{ display: 'flex', justifyContent, width: '100%' }} data-drag-handle>
       <div
         ref={wrapRef}
-        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${(boxW ?? wantW ?? Infinity) < 260 ? 'html-embed-narrow' : ''} ${active ? 'html-embed-selected' : ''} ${menu || busy || note ? 'html-embed-hold' : ''} ${drag ? 'resizing' : ''} bar-${barAt}`}
-        onMouseEnter={placeBar}
+        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${(boxW ?? wantW ?? Infinity) < 260 ? 'html-embed-narrow' : ''} ${active ? 'html-embed-selected' : ''} ${menu || busy || note ? 'html-embed-hold' : ''} ${drag ? 'resizing' : ''}`}
+        onMouseEnter={hoverOn}
+        onMouseLeave={hoverOff}
         style={{
           width: boxW ? `${boxW}px` : wantW ? `${wantW}px` : '100%',
           // Content up to MAX_NATURAL_W asks for its room, so the cell widens to show it at full size.
@@ -472,6 +497,16 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
           maxWidth: boxW || !wantW ? '100%' : undefined,
         }}
       >
+        {(figure ? (b: React.ReactElement) =>
+          floatBar && barPos
+            ? createPortal(
+                <div className="html-embed-float" style={{ top: barPos.top, right: barPos.right }} onMouseEnter={hoverOn} onMouseLeave={hoverOff}>
+                  {b}
+                </div>,
+                document.body,
+              )
+            : null
+          : (b: React.ReactElement) => b)(
         <div className="html-embed-bar" style={{ height: BAR_H }}>
           <CodeI size={14} />
           {canDesk ? (
@@ -538,7 +573,8 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
               <Pen size={13} />
             </button>
           </div>
-        </div>
+        </div>,
+        )}
 
         {!editing && doc != null && (
           <div className="html-embed-viewport" style={{ height: displayH, overflowX: scale <= MIN_SCALE && natW * scale > avail ? 'auto' : 'hidden' }}>
