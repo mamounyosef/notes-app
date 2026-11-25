@@ -357,6 +357,17 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
   const pageTitle = useStore((s) => (s as any).page?.title as string | undefined) || ''
   const canDesk = Boolean(desk()?.widget)
   const [menu, setMenu] = useState<DOMRect | null>(null)
+  /** Where a figure's floating bar goes: outside the block when the cell has room, so it never covers the content. */
+  const [barAt, setBarAt] = useState<'above' | 'below' | 'over'>('above')
+  const placeBar = () => {
+    const el = wrapRef.current
+    const clip = el?.closest('.cell-body') as HTMLElement | null
+    if (!el || !clip) return
+    const r = el.getBoundingClientRect()
+    const c = clip.getBoundingClientRect()
+    const need = BAR_H + 2
+    setBarAt(r.top - c.top >= need ? 'above' : c.bottom - r.bottom >= need ? 'below' : 'over')
+  }
   const closeMenu = useCallback(() => setMenu(null), [])
   const [busy, setBusy] = useState(false)
   const [note, setNote] = useState<{ text: string; file?: string; bad?: boolean } | null>(null)
@@ -441,6 +452,10 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     { label: 'Copy source', icon: <CodeI size={14} />, onClick: copySource },
   ].filter((it, i, a) => it || (a[i - 1] && i < a.length - 1)) as (MenuItem | null)[]
 
+  useEffect(() => {
+    if (active) placeBar()
+  }, [active])
+
   const sized = storedW != null || storedH != null
   const label = drag ? `${Math.round(drag.w ?? wrapRef.current?.offsetWidth ?? 0)} × ${Math.round(drag.h ?? displayH)}${scale < 1 ? ` · ${Math.round(scale * 100)}%` : ''}` : null
 
@@ -448,7 +463,8 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     <NodeViewWrapper className="html-embed-wrapper" style={{ display: 'flex', justifyContent, width: '100%' }} data-drag-handle>
       <div
         ref={wrapRef}
-        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${(boxW ?? wantW ?? Infinity) < 260 ? 'html-embed-narrow' : ''} ${active ? 'html-embed-selected' : ''} ${menu || busy || note ? 'html-embed-hold' : ''} ${drag ? 'resizing' : ''}`}
+        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${(boxW ?? wantW ?? Infinity) < 260 ? 'html-embed-narrow' : ''} ${active ? 'html-embed-selected' : ''} ${menu || busy || note ? 'html-embed-hold' : ''} ${drag ? 'resizing' : ''} bar-${barAt}`}
+        onMouseEnter={placeBar}
         style={{
           width: boxW ? `${boxW}px` : wantW ? `${wantW}px` : '100%',
           // Content up to MAX_NATURAL_W asks for its room, so the cell widens to show it at full size.

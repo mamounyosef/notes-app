@@ -2299,6 +2299,16 @@ select:focus {
   pointer-events: none;
   transition: opacity .12s ease;
 }
+/* Outside the block when the cell has room, so the bar never sits on the widget's own buttons. */
+.html-embed-figure.bar-above .html-embed-bar {
+  top: auto;
+  bottom: calc(100% - 1px);
+  border-radius: 8px 8px 0 0;
+}
+.html-embed-figure.bar-below .html-embed-bar {
+  top: calc(100% - 1px);
+  border-radius: 0 0 8px 8px;
+}
 .html-embed-figure:hover .html-embed-bar,
 .html-embed-figure.html-embed-hold .html-embed-bar,
 .html-embed-figure.html-embed-selected .html-embed-bar {
