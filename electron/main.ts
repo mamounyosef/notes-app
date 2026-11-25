@@ -14,6 +14,7 @@ import { setupVoice } from './voice'
 import { setupUpdate } from './update'
 import { setupDiagrams } from './diagrams'
 import { setupExporter } from './exporter'
+import { setupWidgetFiles } from './widget-files'
 import { setupClaude } from './claude'
 import { setupClaudeLink } from './claude-link'
 
@@ -654,6 +655,7 @@ setupVoice({ getWin: () => win, log: (...a) => debugLog(...a) })
 setupUpdate({ log: (...a) => debugLog(...a) })
 setupDiagrams()
 setupExporter(() => win, () => vaultPath)
+setupWidgetFiles(() => win)
 
 ipcMain.handle('asset:save', async (_e, dataUrl: string) => {
   const m = /^data:([^;]+);base64,(.*)$/s.exec(dataUrl)

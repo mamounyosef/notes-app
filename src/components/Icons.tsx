@@ -15,7 +15,9 @@ const s = (p: P) => ({
 })
 
 export const Chevron = (p: P) => (<svg {...s(p)}><path d="M9 6l6 6-6 6" /></svg>)
-export const Eye = (p: P) => (<svg {...s(p)}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>)
+export const ExternalI = (p: P) => (<svg {...s(p)}><path d="M14 4h6v6M20 4l-9 9M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5" /></svg>)
+export const MoreI = (p: P) => (<svg {...s(p)}><circle cx="5" cy="12" r="1.3" fill="currentColor" /><circle cx="12" cy="12" r="1.3" fill="currentColor" /><circle cx="19" cy="12" r="1.3" fill="currentColor" /></svg>)
+export const Eye =(p: P) => (<svg {...s(p)}><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg>)
 export const Bolt = (p: P) => (<svg {...s(p)}><path d="M13 2L4 14h7l-1 8 9-12h-7z" /></svg>)
 export const QueueI = (p: P) => (<svg {...s(p)}><path d="M4 6h11M4 11h11M4 16h7M17 13v7M14 17l3 3 3-3" /></svg>)
 export const Play = (p: P) => (<svg {...s(p)}><path d="M7 5l12 7-12 7z" /></svg>)

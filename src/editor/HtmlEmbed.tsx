@@ -11,7 +11,8 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Node, mergeAttributes } from '@tiptap/core'
 import { ReactNodeViewRenderer, NodeViewWrapper, NodeViewProps } from '@tiptap/react'
-import { CodeI, Pen, AlignLeft, AlignCenter, AlignRight, FitI } from '../components/Icons'
+import { createPortal } from 'react-dom'
+import { CodeI, Pen, AlignLeft, AlignCenter, AlignRight, FitI, ExternalI, MoreI, GlobeI, Download, ImageI, Copy } from '../components/Icons'
 import { useStore } from '../store'
 import { buildWidgetDoc, currentTheme, fromBase64, KIND_LABEL, kindOf, looksLikeHtmlDocument, sniffKind, toBase64, type WidgetKind } from '../widgets/widget'
 
@@ -27,6 +28,73 @@ function useThemeKey() {
     return () => mo.disconnect()
   }, [])
   return key
+}
+
+/* ------------------------------------------------------------------ *
+ *  Outside the app: open in a browser, save, copy
+ * ------------------------------------------------------------------ */
+
+const desk = () => (window as any).notes as any
+
+/** A name for the page and its file: its own title or first heading, else the note page's title. */
+function widgetName(src: string, kind: WidgetKind, pageTitle: string): string {
+  const strip = (s: string) => s.replace(/<[^>]+>/g, '').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&').replace(/\s+/g, ' ').trim()
+  const own = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(src)?.[1] || /<h[12][^>]*>([\s\S]*?)<\/h[12]>/i.exec(src)?.[1] || ''
+  const t = strip(own).slice(0, 70)
+  if (t) return t
+  const page = (pageTitle || '').trim()
+  return page ? `${page} - ${KIND_LABEL[kind]}` : KIND_LABEL[kind]
+}
+
+interface MenuItem {
+  label: string
+  hint?: string
+  icon: React.ReactNode
+  onClick: () => void
+}
+
+/** A small menu under the bar's "more" button; drawn over everything, closes on any click outside or Esc. */
+function WidgetMenu({ anchor, items, onClose }: { anchor: DOMRect; items: (MenuItem | null)[]; onClose: () => void }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const down = (e: PointerEvent) => !ref.current?.contains(e.target as globalThis.Node) && onClose()
+    const key = (e: KeyboardEvent) => e.key === 'Escape' && onClose()
+    const t = setTimeout(() => window.addEventListener('pointerdown', down, true), 0)
+    window.addEventListener('keydown', key, true)
+    window.addEventListener('blur', onClose)
+    return () => {
+      clearTimeout(t)
+      window.removeEventListener('pointerdown', down, true)
+      window.removeEventListener('keydown', key, true)
+      window.removeEventListener('blur', onClose)
+    }
+  }, [onClose])
+  const W = 236
+  const left = Math.max(8, Math.min(window.innerWidth - W - 8, anchor.right - W))
+  const top = Math.min(anchor.bottom + 4, window.innerHeight - 8 - items.length * 32)
+  return createPortal(
+    <div ref={ref} className="html-embed-menu" style={{ left, top, width: W }} onMouseDown={(e) => e.preventDefault()}>
+      {items.map((it, i) =>
+        it ? (
+          <button
+            key={i}
+            className="html-embed-menu-item"
+            onClick={() => {
+              onClose()
+              it.onClick()
+            }}
+          >
+            <span className="html-embed-menu-icon">{it.icon}</span>
+            <span className="html-embed-menu-label">{it.label}</span>
+            {it.hint && <span className="html-embed-menu-hint">{it.hint}</span>}
+          </button>
+        ) : (
+          <div key={i} className="html-embed-menu-sep" />
+        ),
+      )}
+    </div>,
+    document.body,
+  )
 }
 
 /* ------------------------------------------------------------------ *
@@ -285,6 +353,94 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     if (code.trim()) updateAttributes({ src: toBase64(code) })
   }
 
+  /* ---- outside the app ---- */
+  const pageTitle = useStore((s) => (s as any).page?.title as string | undefined) || ''
+  const canDesk = Boolean(desk()?.widget)
+  const [menu, setMenu] = useState<DOMRect | null>(null)
+  const closeMenu = useCallback(() => setMenu(null), [])
+  const [busy, setBusy] = useState(false)
+  const [note, setNote] = useState<{ text: string; file?: string; bad?: boolean } | null>(null)
+  const noteTimer = useRef<ReturnType<typeof setTimeout>>()
+  const say = (text: string, file?: string, bad?: boolean) => {
+    setNote({ text, file, bad })
+    clearTimeout(noteTimer.current)
+    noteTimer.current = setTimeout(() => setNote(null), file ? 6000 : 2800)
+  }
+  useEffect(() => () => clearTimeout(noteTimer.current), [])
+  const name = () => widgetName(htmlSrc, kind, pageTitle)
+  const theme = () => currentTheme(wrapRef.current)
+  /** The block as a page of its own, in the app's current colors. */
+  const pageDoc = () => buildWidgetDoc(kind, htmlSrc, theme(), { opaque: figure, standalone: { title: name() } })
+  const run = async (what: () => Promise<void>) => {
+    if (busy) return
+    setBusy(true)
+    try {
+      await what()
+    } catch (e: any) {
+      say(String(e?.message || e), undefined, true)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const openIn = (browser: 'chrome' | 'default') =>
+    run(async () => {
+      const r = await desk().widget.open(await pageDoc(), name(), browser)
+      if (!r.ok) return say(r.error || 'Could not open it', undefined, true)
+      say(r.browser === 'chrome' ? 'Opened in Chrome' : r.browser?.includes('not found') ? 'Chrome not found: opened in your default browser' : 'Opened in your browser')
+    })
+
+  const saved = (file: string | null) => {
+    if (file) say(`Saved ${file.split(/[\\/]/).pop()}`, file)
+  }
+
+  const savePage = () => run(async () => saved(await desk().widget.save(name(), 'html', await pageDoc(), false)))
+
+  /** A picture of the block at its own width (up to 3000px tall). */
+  const picture = async () => {
+    const width = Math.round(Math.max(320, Math.min(1600, natW || wrapRef.current?.offsetWidth || 760)))
+    const html = await buildWidgetDoc(kind, htmlSrc, theme(), { opaque: true })
+    const shot = await desk().agent.renderWidget({ html, width })
+    if (!shot?.ok || !shot.png) throw new Error(shot?.error || 'Could not draw the picture')
+    return shot.png as string
+  }
+  const savePng = () => run(async () => saved(await desk().widget.save(name(), 'png', await picture(), true)))
+  const copyPng = () =>
+    run(async () => {
+      const bytes = Uint8Array.from(atob(await picture()), (c) => c.charCodeAt(0))
+      await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([bytes], { type: 'image/png' }) })])
+      say('Picture copied')
+    })
+
+  /** Diagrams are SVG already: save that, sharp at any size. */
+  const isDiagram = kind !== 'html' && kind !== 'chart'
+  const saveSvg = () =>
+    run(async () => {
+      const doc = new DOMParser().parseFromString(await buildWidgetDoc(kind, htmlSrc, theme(), { opaque: true }), 'text/html')
+      const svg = doc.querySelector('.w-diagram svg')
+      if (!svg) throw new Error('No drawing to save')
+      if (!svg.getAttribute('xmlns')) svg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+      saved(await desk().widget.save(name(), 'svg', `<?xml version="1.0" encoding="UTF-8"?>\n${svg.outerHTML}`, false))
+    })
+
+  const copySource = () =>
+    run(async () => {
+      await navigator.clipboard.writeText(htmlSrc)
+      say('Source copied')
+    })
+
+  const menuItems: (MenuItem | null)[] = [
+    { label: 'Open in Chrome', hint: 'Click title', icon: <ExternalI size={14} />, onClick: () => openIn('chrome') },
+    { label: 'Open in default browser', hint: 'Ctrl+click', icon: <GlobeI size={14} />, onClick: () => openIn('default') },
+    null,
+    { label: 'Save as web page (.html)…', icon: <Download size={14} />, onClick: savePage },
+    { label: 'Save as picture (.png)…', icon: <ImageI size={14} />, onClick: savePng },
+    isDiagram ? { label: 'Save as vector (.svg)…', icon: <ImageI size={14} />, onClick: saveSvg } : null,
+    null,
+    { label: 'Copy as picture', icon: <Copy size={14} />, onClick: copyPng },
+    { label: 'Copy source', icon: <CodeI size={14} />, onClick: copySource },
+  ].filter((it, i, a) => it || (a[i - 1] && i < a.length - 1)) as (MenuItem | null)[]
+
   const sized = storedW != null || storedH != null
   const label = drag ? `${Math.round(drag.w ?? wrapRef.current?.offsetWidth ?? 0)} × ${Math.round(drag.h ?? displayH)}${scale < 1 ? ` · ${Math.round(scale * 100)}%` : ''}` : null
 
@@ -292,7 +448,7 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
     <NodeViewWrapper className="html-embed-wrapper" style={{ display: 'flex', justifyContent, width: '100%' }} data-drag-handle>
       <div
         ref={wrapRef}
-        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${(boxW ?? wantW ?? Infinity) < 260 ? 'html-embed-narrow' : ''} ${active ? 'html-embed-selected' : ''} ${drag ? 'resizing' : ''}`}
+        className={`html-embed ${figure ? 'html-embed-figure' : ''} ${(boxW ?? wantW ?? Infinity) < 260 ? 'html-embed-narrow' : ''} ${active ? 'html-embed-selected' : ''} ${menu || busy || note ? 'html-embed-hold' : ''} ${drag ? 'resizing' : ''}`}
         style={{
           width: boxW ? `${boxW}px` : wantW ? `${wantW}px` : '100%',
           // Content up to MAX_NATURAL_W asks for its room, so the cell widens to show it at full size.
@@ -302,10 +458,51 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
       >
         <div className="html-embed-bar" style={{ height: BAR_H }}>
           <CodeI size={14} />
-          <span className="html-embed-label">{KIND_LABEL[kind]}</span>
+          {canDesk ? (
+            <button
+              className="html-embed-label html-embed-open"
+              title="Open in Chrome (Ctrl+click: default browser)"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => openIn(e.ctrlKey || e.metaKey ? 'default' : 'chrome')}
+            >
+              {KIND_LABEL[kind]}
+              <ExternalI size={11} />
+            </button>
+          ) : (
+            <span className="html-embed-label">{KIND_LABEL[kind]}</span>
+          )}
           {scale < 1 && <span className="html-embed-scale" title="Shown smaller to fit; drag the right edge or widen the cell to enlarge">{Math.round(scale * 100)}%</span>}
+          {busy && <span className="html-embed-note">Working…</span>}
+          {!busy && note && (
+            <span className={`html-embed-note ${note.bad ? 'bad' : 'good'}`} title={note.file || note.text}>
+              {note.text}
+              {note.file && (
+                <button className="html-embed-note-link" onMouseDown={(e) => e.stopPropagation()} onClick={() => desk().exporter.reveal(note.file)}>
+                  Show in folder
+                </button>
+              )}
+            </span>
+          )}
           <div style={{ flex: 1 }} />
           <div className="html-embed-actions" onMouseDown={(e) => e.stopPropagation()}>
+            {canDesk && (
+              <>
+                <button className="html-embed-btn" title="Open in Chrome" onClick={() => openIn('chrome')}>
+                  <ExternalI size={13} />
+                </button>
+                <button className="html-embed-btn" title="Save as web page (.html)" onClick={savePage}>
+                  <Download size={13} />
+                </button>
+                <button
+                  className={`html-embed-btn ${menu ? 'active' : ''}`}
+                  title="More: open, save, copy"
+                  onClick={(e) => setMenu(menu ? null : (e.currentTarget as HTMLElement).getBoundingClientRect())}
+                >
+                  <MoreI size={13} />
+                </button>
+                <div className="html-embed-divider" />
+              </>
+            )}
             <button className={`html-embed-btn ${textAlign === 'left' ? 'active' : ''}`} title="Align left" onClick={() => setAlign('left')}>
               <AlignLeft size={13} />
             </button>
@@ -371,6 +568,7 @@ function HtmlEmbedView({ node, updateAttributes, selected, editor }: NodeViewPro
           </>
         )}
         {label && <div className="html-embed-size">{label}</div>}
+        {menu && <WidgetMenu anchor={menu} items={menuItems} onClose={closeMenu} />}
       </div>
     </NodeViewWrapper>
   )

@@ -474,11 +474,11 @@ const WIRES = String.raw`(function () {
 /** Runs in the block: charts, math, then reports size, errors and "done". */
 const RUNTIME = String.raw`(async function () {
   var T = window.__theme, errs = window.__errors, id = window.name;
-  function post(m) { try { m.__widget = id; parent.postMessage(m, '*') } catch (e) {} }
+  function post(m) { if (window.__standalone) return; try { m.__widget = id; parent.postMessage(m, '*') } catch (e) {} }
   // A right (or middle) drag moves the page around, like on any other cell; a
   // right click opens the cell's menu. A block that uses those buttons itself
-  // (its handler cancels the event) keeps them.
-  (function () {
+  // (its handler cancels the event) keeps them. Not in a page of its own.
+  if (!window.__standalone) (function () {
     var pan = null, justPanned = false;
     function at(e) { return { fx: e.clientX / (innerWidth || 1), fy: e.clientY / (innerHeight || 1) } }
     addEventListener('pointerdown', function (e) {
@@ -752,6 +752,8 @@ const RUNTIME = String.raw`(async function () {
 export interface BuildOptions {
   /** Paint the theme background (for pictures of the block). */
   opaque?: boolean
+  /** A page of its own, for a browser or a saved file: scrolls, has margins and a title, keeps the right click. */
+  standalone?: { title: string }
 }
 
 /** The full HTML document a block shows in its sandbox. */
@@ -811,7 +813,13 @@ export async function buildWidgetDoc(kind: WidgetKind, src: string, t: WidgetThe
         `if(window.Chart){var d=Chart.defaults;d.color=${JSON.stringify(t.dim)};d.borderColor=${JSON.stringify(mix(t.bg, t.text, 0.12))};d.font.family=${JSON.stringify(t.font)};d.font.size=13;d.maintainAspectRatio=false;d.plugins.legend.labels.color=${JSON.stringify(t.text)};d.plugins.title.color=${JSON.stringify(t.text)};${opts.opaque ? 'd.animation=false;' : ''}}`,
       )
     : ''
-  const head = `<meta charset="utf-8"><meta name="color-scheme" content="${t.dark ? 'dark' : 'light'}">${baseStyle(t, Boolean(opts.opaque), full)}${setup}${libs}${chartDefaults}`
+  const alone = opts.standalone
+  // A page of its own: the theme's background (pasted pages keep their own), room around it, and it scrolls.
+  const aloneStyle = alone
+    ? `<style>${full ? '' : `html{background:${t.bg}}html,body{min-height:100%}body{overflow:auto !important;padding:32px 40px !important;max-width:1400px;margin:0 auto !important}`}</style>`
+    : ''
+  const aloneHead = alone ? `${full && /<title[\s>]/i.test(body) ? '' : `<title>${escHtml(alone.title)}</title>`}<meta name="viewport" content="width=device-width, initial-scale=1">${inlineScript('window.__standalone=true;')}` : ''
+  const head = `<meta charset="utf-8"><meta name="color-scheme" content="${t.dark ? 'dark' : 'light'}">${aloneHead}${baseStyle(t, Boolean(opts.opaque), full)}${aloneStyle}${setup}${libs}${chartDefaults}`
   const runtime = inlineScript(RUNTIME)
 
   if (full) {

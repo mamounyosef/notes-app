@@ -75,6 +75,13 @@ const api = {
     resolvePath: (p: string) => ipcRenderer.invoke('export:resolvePath', p) as Promise<string>,
     open: (p: string) => ipcRenderer.invoke('export:open', p) as Promise<string>,
   },
+  /** HTML blocks outside the app (electron/widget-files.ts). */
+  widget: {
+    open: (html: string, name: string, browser: 'chrome' | 'default') =>
+      ipcRenderer.invoke('widget:open', html, name, browser) as Promise<{ ok: boolean; file?: string; browser?: string; error?: string }>,
+    save: (name: string, ext: 'html' | 'png' | 'svg', data: string, base64: boolean) =>
+      ipcRenderer.invoke('widget:save', name, ext, data, base64) as Promise<string | null>,
+  },
   openExternal: (url: string) => ipcRenderer.invoke('open:external', url) as Promise<void>,
   openFileDialog: () => ipcRenderer.invoke('dialog:openFile') as Promise<string | null>,
   confirm: (message: string, okLabel?: string) => ipcRenderer.invoke('dialog:confirm', message, okLabel) as Promise<boolean>,
